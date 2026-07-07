@@ -51,7 +51,23 @@ _Avoid_: admin panel, backoffice
 
 **Cover Art**:
 The single image associated with a Show, displayed by podcast clients.
+Part of the Public Surface: served without authentication, because podcast
+clients fetch artwork outside their authenticated feed session.
 _Avoid_: artwork, thumbnail, logo
+
+**Public Surface**:
+The unauthenticated GET endpoints: the landing page, Show Pages, Cover
+Art, and static assets. Exposes a Show's identity (title, description,
+Cover Art) but never its content — feeds, Episodes, and audio stay behind
+credentials. The landing page lists nothing, so Show IDs are not
+enumerable.
+_Avoid_: public site, anonymous access
+
+**Show Page**:
+The public HTML page for one Show (`/shows/{show}`): Cover Art, title,
+description, and subscribe instructions with the feed URL. Shows no
+Episode data.
+_Avoid_: landing page (that is `/`), show site
 
 **Reader**:
 The credential/role that may only consume feeds, Episodes, and Cover Art

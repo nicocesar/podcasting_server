@@ -120,8 +120,47 @@ curl -u "${WRITER}" -X PUT "${URL}/shows/ai-news/image" \
   -H 'Content-Type: image/jpeg' --data-binary @cover.jpg
 ```
 
-## 9. Subscribe in AntennaPod
+## 9. Publish a test episode
+
+Any MP3 works; if you don't have one handy, generate a 3-second tone:
+
+```sh
+ffmpeg -f lavfi -i "sine=frequency=440:duration=3" -q:a 9 test.mp3
+```
+
+Publish it through the Publishing Contract (`PUT` is idempotent — re-running
+replaces the episode, exactly what the Generator will do):
+
+```sh
+curl -u "${WRITER}" -X PUT \
+  -F 'metadata={"title":"Test episode","description":"Publishing smoke test.","duration_seconds":3};type=application/json' \
+  -F 'audio=@test.mp3;type=audio/mpeg' \
+  "${URL}/shows/ai-news/episodes/$(date +%F)-test"
+```
+
+Verify it end to end — the episode in the feed, then the audio download
+(in prod this is a 302 to a signed GCS URL, hence `-L`):
+
+```sh
+export READER=$(gcloud secrets versions access latest --secret=podcast-reader-credentials)
+
+curl -u "${READER}" "${URL}/shows/ai-news/feed.xml"
+curl -u "${READER}" -L -o /dev/null -w '%{http_code} %{size_download} bytes\n' \
+  "${URL}/shows/ai-news/episodes/$(date +%F)-test.mp3"
+```
+
+Clean up when done:
+
+```sh
+curl -u "${WRITER}" -X DELETE "${URL}/shows/ai-news/episodes/$(date +%F)-test"
+```
+
+## 10. Subscribe in AntennaPod
 
 Add podcast by RSS address: `${URL}/shows/ai-news/feed.xml` — AntennaPod
 will get a 401, prompt for username/password, and store the reader
 credentials for both feed refreshes and episode downloads.
+
+The show also has a public page (cover, description, feed URL — no
+episode data) at `${URL}/shows/ai-news`, handy for grabbing the feed URL
+on a new device.

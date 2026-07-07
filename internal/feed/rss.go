@@ -19,11 +19,11 @@ type rss struct {
 }
 
 type channel struct {
-	Title         string       `xml:"title"`
-	Link          string       `xml:"link"`
-	Description   string       `xml:"description"`
-	Language      string       `xml:"language,omitempty"`
-	LastBuildDate string       `xml:"lastBuildDate,omitempty"`
+	Title         string `xml:"title"`
+	Link          string `xml:"link"`
+	Description   string `xml:"description"`
+	Language      string `xml:"language,omitempty"`
+	LastBuildDate string `xml:"lastBuildDate,omitempty"`
 	// A private feed: ask directories not to index it should the URL leak.
 	ItunesBlock string       `xml:"itunes:block"`
 	Image       *itunesImage `xml:"itunes:image,omitempty"`

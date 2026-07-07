@@ -27,8 +27,8 @@ import (
 )
 
 const (
-	kindShow    = "Show"
-	kindEpisode = "Episode"
+	kindShow     = "Show"
+	kindEpisode  = "Episode"
 	signedURLTTL = 15 * time.Minute
 )
 

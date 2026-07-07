@@ -15,8 +15,12 @@ Publishing Contract below.
 - **Datastore** holds show/episode metadata; **GCS** holds audio and cover
   art. Audio downloads are 302 redirects to 15-minute signed URLs, so the
   server never streams audio.
-- Two credentials (`user:password`): **Reader** (the phone; feeds, audio,
-  covers) and **Writer** (the Generator and you; publishing + management).
+- Two credentials (`user:password`): **Reader** (the phone; feeds and
+  audio) and **Writer** (the Generator and you; publishing + management).
+  Cover art and per-show HTML pages are public (ADR 0003).
+- HTML pages are `html/template` files under `cmd/server/templates`
+  (layout + pages + `fragments/`), shipped in the binary via `go:embed` —
+  editing them means rebuild + redeploy.
 
 ## Local development
 
@@ -40,13 +44,25 @@ data/
 
 ## API
 
+Public surface — no auth (see [ADR 0003](docs/adr/0003-public-surface-cover-and-show-page.md)):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | bland landing page; lists nothing |
+| `GET /shows/{show}` | show page: cover, title, description, feed URL — no episode data |
+| `GET /shows/{show}/cover` | cover art (public so any podcast client's artwork fetch works) |
+| `GET /static/*` | page assets |
+
+A show's identity is public for anyone who guesses its ID, so keep show
+descriptions non-sensitive. Episode titles, summaries, and audio stay
+private.
+
 Read side (Reader or Writer credentials):
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /shows/{show}/feed.xml` | podcast RSS, all episodes newest-first |
 | `GET /shows/{show}/episodes/{slug}.mp3` | audio (302 to signed URL in prod) |
-| `GET /shows/{show}/cover` | cover art |
 
 Write side (Writer credentials):
 

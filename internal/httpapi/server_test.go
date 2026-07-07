@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -25,12 +26,18 @@ func newTestServer(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(New(Config{
+	handler, err := New(Config{
 		Store:       st,
 		ReaderCreds: readerCreds,
 		WriterCreds: writerCreds,
-		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}))
+		// The real embedded assets, via the filesystem.
+		Assets: os.DirFS("../../cmd/server"),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -102,6 +109,68 @@ func TestAuth(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != c.want {
 			t.Errorf("%s: got %d, want %d", c.name, resp.StatusCode, c.want)
+		}
+	}
+}
+
+func TestPublicSurface(t *testing.T) {
+	ts := newTestServer(t)
+	createShow(t, ts, "ai-news")
+	resp := do(t, "PUT", ts.URL+"/shows/ai-news/image", writerCreds, strings.NewReader("JPEG"), "image/jpeg")
+	resp.Body.Close()
+	resp = publishEpisode(t, ts, "ai-news", "2026-07-06-morning",
+		`{"title":"Secret Episode Title","description":"Secret summary."}`, "MP3")
+	resp.Body.Close()
+
+	// Public Surface: no credentials needed (ADR 0003).
+	for path, want := range map[string]int{
+		"/":                    200,
+		"/shows/ai-news":       200,
+		"/shows/ai-news/cover": 200,
+		"/static/style.css":    200,
+		"/shows/no-such-show":  404,
+		"/no/such/path":        404,
+	} {
+		resp := do(t, "GET", ts.URL+path, "", nil, "")
+		resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("GET %s without creds: got %d, want %d", path, resp.StatusCode, want)
+		}
+	}
+
+	// The Show Page exposes identity, never Episode data.
+	resp = do(t, "GET", ts.URL+"/shows/ai-news", "", nil, "")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	page := string(body)
+	for _, want := range []string{"AI News", "/shows/ai-news/feed.xml", "/shows/ai-news/cover"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("show page missing %q:\n%s", want, page)
+		}
+	}
+	for _, leak := range []string{"Secret Episode Title", "Secret summary", "2026-07-06-morning"} {
+		if strings.Contains(page, leak) {
+			t.Errorf("show page leaks episode data %q:\n%s", leak, page)
+		}
+	}
+
+	// The landing page enumerates nothing.
+	resp = do(t, "GET", ts.URL+"/", "", nil, "")
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if strings.Contains(string(body), "ai-news") {
+		t.Errorf("landing page lists shows:\n%s", body)
+	}
+
+	// Content stays authenticated.
+	for _, path := range []string{
+		"/shows/ai-news/feed.xml",
+		"/shows/ai-news/episodes/2026-07-06-morning.mp3",
+	} {
+		resp := do(t, "GET", ts.URL+path, "", nil, "")
+		resp.Body.Close()
+		if resp.StatusCode != 401 {
+			t.Errorf("GET %s without creds: got %d, want 401", path, resp.StatusCode)
 		}
 	}
 }

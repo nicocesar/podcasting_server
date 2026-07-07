@@ -4,12 +4,15 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -33,7 +36,10 @@ type Config struct {
 	// read feeds/audio/covers; Writer may do everything.
 	ReaderCreds string
 	WriterCreds string
-	Logger      *slog.Logger
+	// Assets holds the "templates" and "static" directories for the
+	// Public Surface pages (cmd/server embeds and passes them).
+	Assets fs.FS
+	Logger *slog.Logger
 }
 
 type server struct {
@@ -42,9 +48,13 @@ type server struct {
 	readerHash [32]byte
 	writerHash [32]byte
 	log        *slog.Logger
+
+	tmplHome     *template.Template
+	tmplShow     *template.Template
+	tmplNotFound *template.Template
 }
 
-func New(cfg Config) http.Handler {
+func New(cfg Config) (http.Handler, error) {
 	s := &server{
 		store:      cfg.Store,
 		baseURL:    strings.TrimSuffix(cfg.BaseURL, "/"),
@@ -56,15 +66,45 @@ func New(cfg Config) http.Handler {
 		s.log = slog.Default()
 	}
 
+	// Each page is layout + its content template (+ shared fragments).
+	for _, p := range []struct {
+		dst   **template.Template
+		files []string
+	}{
+		{&s.tmplHome, []string{"templates/layout.html", "templates/home.html"}},
+		{&s.tmplShow, []string{"templates/layout.html", "templates/show.html", "templates/fragments/*.html"}},
+		{&s.tmplNotFound, []string{"templates/layout.html", "templates/notfound.html"}},
+	} {
+		t, err := template.ParseFS(cfg.Assets, p.files...)
+		if err != nil {
+			return nil, fmt.Errorf("parse templates: %w", err)
+		}
+		*p.dst = t
+	}
+	static, err := fs.Sub(cfg.Assets, "static")
+	if err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
 
+	// Public Surface (no auth; ADR 0003): a Show's identity, not its
+	// content. The catch-all makes every unmatched path a styled 404.
+	mux.HandleFunc("GET /{$}", s.handleHome)
+	mux.HandleFunc("GET /shows/{show}", s.handleShowPage)
+	mux.HandleFunc("GET /shows/{show}/cover", s.handleCover)
+	mux.Handle("GET /static/", http.StripPrefix("/static/",
+		cacheControl("public, max-age=86400", http.FileServerFS(static))))
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		s.renderNotFound(w)
+	})
+
 	// Read side (AntennaPod).
 	mux.HandleFunc("GET /shows/{show}/feed.xml", s.auth(false, s.handleFeed))
 	mux.HandleFunc("GET /shows/{show}/episodes/{file}", s.auth(false, s.handleAudio))
-	mux.HandleFunc("GET /shows/{show}/cover", s.auth(false, s.handleCover))
 
 	// Write side (Generator + owner).
 	mux.HandleFunc("GET /shows", s.auth(true, s.handleListShows))
@@ -75,7 +115,7 @@ func New(cfg Config) http.Handler {
 	mux.HandleFunc("PUT /shows/{show}/episodes/{slug}", s.auth(true, s.handlePublish))
 	mux.HandleFunc("DELETE /shows/{show}/episodes/{slug}", s.auth(true, s.handleDeleteEpisode))
 
-	return s.logged(mux)
+	return s.logged(mux), nil
 }
 
 // --- middleware ---
@@ -187,7 +227,63 @@ func (s *server) handleCover(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cover.Close()
 	w.Header().Set("Content-Type", contentType)
+	// Public and cacheable: a replaced cover may take up to an hour to
+	// reach clients (ADR 0003).
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 	io.Copy(w, cover)
+}
+
+// --- Public Surface pages (ADR 0003) ---
+
+func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, http.StatusOK, s.tmplHome, nil)
+}
+
+func (s *server) handleShowPage(w http.ResponseWriter, r *http.Request) {
+	show, err := s.store.GetShow(r.Context(), r.PathValue("show"))
+	if errors.Is(err, store.ErrNotFound) {
+		s.renderNotFound(w)
+		return
+	}
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	data := struct {
+		Show     store.Show
+		FeedURL  string
+		CoverURL string
+	}{
+		Show:    show,
+		FeedURL: s.base(r) + "/shows/" + show.ID + "/feed.xml",
+	}
+	if show.CoverType != "" {
+		data.CoverURL = "/shows/" + show.ID + "/cover"
+	}
+	s.render(w, http.StatusOK, s.tmplShow, data)
+}
+
+func (s *server) renderNotFound(w http.ResponseWriter) {
+	s.render(w, http.StatusNotFound, s.tmplNotFound, nil)
+}
+
+// render buffers first so a template error can still become a 500.
+func (s *server) render(w http.ResponseWriter, status int, t *template.Template, data any) {
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	buf.WriteTo(w)
+}
+
+func cacheControl(value string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", value)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // --- write side ---
