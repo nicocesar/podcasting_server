@@ -1,0 +1,58 @@
+timeout: 1600s
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  # Build the image name from PROJECT_ID using the ${...} form
+  _IMAGE: gcr.io/${PROJECT_ID}/github.com/nicocesar/podcasting_server
+  _CACHE_IMAGE: gcr.io/${PROJECT_ID}/github.com/nicocesar/podcasting_server:buildcache
+  _SERVICE: podcasting-server
+  _REGION: us-central1
+  _BUCKET: ${PROJECT_ID}-podcast-audio
+  _SERVICE_ACCOUNT: podcasting-server@${PROJECT_ID}.iam.gserviceaccount.com
+
+steps:
+  # (Optional) sanity check: print what we'll use
+  - name: gcr.io/cloud-builders/gcloud
+    entrypoint: bash
+    args:
+      - -lc
+      - |
+        echo "PROJECT_ID=${PROJECT_ID}"
+        echo "SHORT_SHA=${SHORT_SHA}"
+        echo "_IMAGE=${_IMAGE}"
+        echo "_CACHE_IMAGE=${_CACHE_IMAGE}"
+
+  # Create & bootstrap a buildx builder (BuildKit)
+  - name: gcr.io/cloud-builders/docker
+    args: ["buildx", "create", "--use", "--name", "cb-bx"]
+  - name: gcr.io/cloud-builders/docker
+    args: ["buildx", "inspect", "--bootstrap"]
+
+  # Build with registry cache and push
+  - name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args:
+      - buildx
+      - build
+      - --tag=${_IMAGE}:${SHORT_SHA}
+      - --cache-from=type=registry,ref=${_CACHE_IMAGE}
+      - --cache-to=type=registry,ref=${_CACHE_IMAGE},mode=max
+      - --push
+      - .
+
+  # Deploy to Cloud Run. IAM allows unauthenticated; the app enforces
+  # Basic auth itself (AntennaPod can't do Google IAM).
+  - name: gcr.io/google.com/cloudsdktool/google-cloud-cli
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_IMAGE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --service-account=${_SERVICE_ACCOUNT}
+      - --set-env-vars=STORAGE=gcp,GCS_BUCKET=${_BUCKET}
+      - --set-secrets=READER_CREDENTIALS=podcast-reader-credentials:latest,WRITER_CREDENTIALS=podcast-writer-credentials:latest
