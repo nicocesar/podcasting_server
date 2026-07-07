@@ -5,6 +5,7 @@ go 1.25.8
 require (
 	cloud.google.com/go/datastore v1.24.0
 	cloud.google.com/go/storage v1.63.0
+	github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300
 	google.golang.org/api v0.287.0
 )
 

@@ -133,7 +133,7 @@ replaces the episode, exactly what the Generator will do):
 
 ```sh
 curl -u "${WRITER}" -X PUT \
-  -F 'metadata={"title":"Test episode","description":"Publishing smoke test.","duration_seconds":3};type=application/json' \
+  -F 'metadata={"title":"Test episode","description":"Publishing smoke test."};type=application/json' \
   -F 'audio=@test.mp3;type=audio/mpeg' \
   "${URL}/shows/ai-news/episodes/$(date +%F)-test"
 ```

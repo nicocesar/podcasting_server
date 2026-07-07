@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nicocesar/podcasting_server/internal/audio"
 	"github.com/nicocesar/podcasting_server/internal/feed"
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
@@ -95,6 +96,9 @@ func New(cfg Config) (http.Handler, error) {
 	// content. The catch-all makes every unmatched path a styled 404.
 	mux.HandleFunc("GET /{$}", s.handleHome)
 	mux.HandleFunc("GET /shows/{show}", s.handleShowPage)
+	mux.HandleFunc("GET /shows/{show}/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/shows/"+r.PathValue("show"), http.StatusMovedPermanently)
+	})
 	mux.HandleFunc("GET /shows/{show}/cover", s.handleCover)
 	mux.Handle("GET /static/", http.StripPrefix("/static/",
 		cacheControl("public, max-age=86400", http.FileServerFS(static))))
@@ -404,12 +408,26 @@ func (s *server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		meta.PublishedAt = time.Now().UTC()
 	}
 
-	audio, _, err := r.FormFile("audio")
+	audioFile, _, err := r.FormFile("audio")
 	if err != nil {
 		http.Error(w, `missing "audio" file field`, http.StatusBadRequest)
 		return
 	}
-	defer audio.Close()
+	defer audioFile.Close()
+
+	// A dumb publisher may omit the duration; estimate it from the MP3
+	// frames. An explicit duration_seconds always wins (ADR 0004).
+	if meta.DurationSeconds == 0 {
+		if d, err := audio.MP3Duration(audioFile); err == nil {
+			meta.DurationSeconds = int(d.Round(time.Second).Seconds())
+		} else {
+			s.log.Warn("could not estimate duration", "show", showID, "slug", slug, "err", err)
+		}
+		if _, err := audioFile.Seek(0, io.SeekStart); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
 
 	_, replaced := s.episodeExists(r, showID, slug)
 	ep, err := s.store.UpsertEpisode(r.Context(), store.Episode{
@@ -420,7 +438,7 @@ func (s *server) handlePublish(w http.ResponseWriter, r *http.Request) {
 		PublishedAt: meta.PublishedAt.UTC(),
 		DurationSec: meta.DurationSeconds,
 		AudioType:   "audio/mpeg",
-	}, audio)
+	}, audioFile)
 	if err != nil {
 		s.fail(w, err)
 		return

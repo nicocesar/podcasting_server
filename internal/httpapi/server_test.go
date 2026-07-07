@@ -126,6 +126,7 @@ func TestPublicSurface(t *testing.T) {
 	for path, want := range map[string]int{
 		"/":                    200,
 		"/shows/ai-news":       200,
+		"/shows/ai-news/":      200, // trailing slash redirects to the Show Page
 		"/shows/ai-news/cover": 200,
 		"/static/style.css":    200,
 		"/shows/no-such-show":  404,
@@ -248,6 +249,61 @@ func TestPublishFeedAndDownload(t *testing.T) {
 	rangeResp.Body.Close()
 	if rangeResp.StatusCode != http.StatusPartialContent || string(partial) != "BYTES" {
 		t.Fatalf("range: %d %q", rangeResp.StatusCode, partial)
+	}
+}
+
+// cbrMP3 builds a valid MPEG-1 Layer III stream: n CBR frames at
+// 128 kbps / 44.1 kHz (417 bytes, 1152 samples ≈ 26.12 ms each).
+func cbrMP3(n int) string {
+	frame := make([]byte, 417)
+	copy(frame, []byte{0xFF, 0xFB, 0x90, 0x00})
+	return strings.Repeat(string(frame), n)
+}
+
+func TestPublishEstimatesDuration(t *testing.T) {
+	ts := newTestServer(t)
+	createShow(t, ts, "ai-news")
+
+	// 383 frames ≈ 10.0 s. No duration_seconds → the server estimates.
+	resp := publishEpisode(t, ts, "ai-news", "2026-07-07-noon",
+		`{"title":"Estimated"}`, cbrMP3(383))
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("publish: %d %s", resp.StatusCode, b)
+	}
+	var ep struct {
+		DurationSec int   `json:"duration_seconds"`
+		AudioSize   int64 `json:"audio_size"`
+	}
+	json.NewDecoder(resp.Body).Decode(&ep)
+	resp.Body.Close()
+	if ep.DurationSec != 10 {
+		t.Errorf("estimated duration: got %d, want 10", ep.DurationSec)
+	}
+	if ep.AudioSize != 383*417 {
+		t.Errorf("audio must be stored whole after estimation: got %d, want %d", ep.AudioSize, 383*417)
+	}
+
+	// An explicit duration_seconds overrides the estimate.
+	resp = publishEpisode(t, ts, "ai-news", "2026-07-07-noon",
+		`{"title":"Explicit","duration_seconds":42}`, cbrMP3(383))
+	json.NewDecoder(resp.Body).Decode(&ep)
+	resp.Body.Close()
+	if ep.DurationSec != 42 {
+		t.Errorf("explicit duration: got %d, want 42", ep.DurationSec)
+	}
+
+	// Unparseable audio publishes fine, just without a duration.
+	resp = publishEpisode(t, ts, "ai-news", "2026-07-07-evening",
+		`{"title":"Garbage"}`, "FAKEMP3BYTES")
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("garbage publish: %d", resp.StatusCode)
+	}
+	ep.DurationSec = 0 // the field is omitempty; a stale value must not pass
+	json.NewDecoder(resp.Body).Decode(&ep)
+	resp.Body.Close()
+	if ep.DurationSec != 0 {
+		t.Errorf("garbage duration: got %d, want 0", ep.DurationSec)
 	}
 }
 

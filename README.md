@@ -82,12 +82,13 @@ Show IDs and slugs match `^[a-z0-9][a-z0-9._-]*$`.
 
 - `metadata` — JSON: `title` (required), `description` (the full generated
   summary text; shown as show notes), `published_at` (RFC 3339, default
-  now), `duration_seconds`
+  now), `duration_seconds` (optional — when omitted the server estimates
+  it from the MP3's frames; send it to override)
 - `audio` — the MP3 bytes
 
 ```sh
 curl -u "generator:PASSWORD" -X PUT \
-  -F 'metadata={"title":"Morning Briefing — July 6","description":"...","duration_seconds":312};type=application/json' \
+  -F 'metadata={"title":"Morning Briefing — July 6","description":"..."};type=application/json' \
   -F 'audio=@briefing.mp3;type=audio/mpeg' \
   https://HOST/shows/ai-news/episodes/2026-07-06-morning
 ```
