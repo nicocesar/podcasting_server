@@ -83,7 +83,9 @@ Management API (publish token; always scoped to the caller):
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /me` · `PUT /me` | feed settings (JSON: `title`, `description`, `language`) |
+| `GET /me` | the **Dashboard** in a browser (invite links, share episodes, friend search); JSON for curl |
+| `PUT /me` | feed settings (JSON: `title`, `description`, `language`) |
+| `GET /me/users?q=` | member search for the share box (self excluded, max 20 hits) |
 | `PUT /me/image` | upload cover art (body = JPEG or PNG bytes) |
 | `GET /me/feed` | the feed as JSON, with provenance (`owner`, `sharer`) |
 | `GET /me/episodes` | own episodes (JSON) |
@@ -101,6 +103,12 @@ Growth is by invitation (ADR 0007): any user can mint an invite; the
 invitee opens the link, picks a username, and gets credentials shown once.
 There is no open signup and no email anywhere in the system.
 
+The **Dashboard** at `https://HOST/me` is the browser home for all of the
+above: open it, enter `username:publish-token` at the Basic-auth prompt,
+and you get one-click invite links, per-episode "share with…" boxes with
+member autocomplete, and pending-invite management. Members can find each
+other by name there; nothing is searchable without credentials.
+
 Admin — fallback provisioning and recovery (`Authorization: Bearer $ADMIN_TOKEN`):
 
 | Endpoint | Purpose |
@@ -109,6 +117,19 @@ Admin — fallback provisioning and recovery (`Authorization: Bearer $ADMIN_TOKE
 | `POST /admin/users/{user}/credentials` | rotate a user's lost credentials (content and feed URL untouched) |
 | `GET /admin/users` | list users |
 | `DELETE /admin/users/{user}` | delete a user, their episodes, and every reference to them |
+
+When a user loses their once-shown credentials, rotate them — episodes,
+shares, and the feed URL survive; only the secrets change (ADR 0007):
+
+```sh
+curl -H "Authorization: Bearer ${ADMIN_TOKEN}" -X POST \
+  https://HOST/admin/users/alice/credentials
+# → {"id":"alice","read_credentials":"alice:NEW...","publish_token":"NEW...","feed_url":...}
+```
+
+The old read credential and publish token stop working immediately: the
+user re-enters the new password in their podcast app and updates
+`PODCAST_PUBLISH_CREDENTIALS` wherever their Generator runs.
 
 User IDs and slugs match `^[a-z0-9][a-z0-9._-]*$`.
 

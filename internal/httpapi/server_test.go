@@ -702,6 +702,71 @@ func TestInviteRevocationAndExpiry(t *testing.T) {
 	}
 }
 
+func TestDashboardAndUserSearch(t *testing.T) {
+	ts := newTestServer(t)
+	alice := createUser(t, ts, "alice")
+	createUser(t, ts, "bob")
+	createUser(t, ts, "bonnie")
+	resp := publishEpisode(t, ts, alice, "2026-07-08-morning", `{"title":"Morning Update"}`, "AUDIO")
+	resp.Body.Close()
+
+	// curl-style GET /me keeps returning JSON.
+	resp = do(t, "GET", ts.URL+"/me", alice.publishCreds(), nil, "")
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("GET /me default content type: %q", ct)
+	}
+	resp.Body.Close()
+
+	// A browser (Accept: text/html) gets the Dashboard with the feed
+	// URL, the episode, and the invite button.
+	req, _ := http.NewRequest("GET", ts.URL+"/me", nil)
+	user, pass, _ := strings.Cut(alice.publishCreds(), ":")
+	req.SetBasicAuth(user, pass)
+	req.Header.Set("Accept", "text/html")
+	htmlResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(htmlResp.Body)
+	htmlResp.Body.Close()
+	page := string(body)
+	if htmlResp.StatusCode != 200 || !strings.Contains(htmlResp.Header.Get("Content-Type"), "text/html") {
+		t.Fatalf("dashboard: %d %q", htmlResp.StatusCode, htmlResp.Header.Get("Content-Type"))
+	}
+	for _, want := range []string{"Morning Update", "/users/alice/feed.xml", "mk-invite", "share-to"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+
+	// Member search: substring match, self excluded, auth required.
+	resp = do(t, "GET", ts.URL+"/me/users?q=bo", alice.publishCreds(), nil, "")
+	var hits []struct {
+		ID string `json:"id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&hits)
+	resp.Body.Close()
+	if len(hits) != 2 || hits[0].ID != "bob" || hits[1].ID != "bonnie" {
+		t.Fatalf("search bo: %+v", hits)
+	}
+	resp = do(t, "GET", ts.URL+"/me/users?q=alice", alice.publishCreds(), nil, "")
+	json.NewDecoder(resp.Body).Decode(&hits)
+	resp.Body.Close()
+	if len(hits) != 0 {
+		t.Fatalf("search must exclude self: %+v", hits)
+	}
+	resp = do(t, "GET", ts.URL+"/me/users?q=bo", "", nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("unauthenticated search: got %d, want 401", resp.StatusCode)
+	}
+	resp = do(t, "GET", ts.URL+"/me/users?q=bo", alice.ReadCredentials, nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Fatalf("read-credential search: got %d, want 403", resp.StatusCode)
+	}
+}
+
 func TestCredentialRotation(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")

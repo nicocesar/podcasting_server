@@ -57,11 +57,12 @@ type server struct {
 	adminHash [32]byte
 	log       *slog.Logger
 
-	tmplHome     *template.Template
-	tmplUser     *template.Template
-	tmplInvite   *template.Template
-	tmplWelcome  *template.Template
-	tmplNotFound *template.Template
+	tmplHome      *template.Template
+	tmplUser      *template.Template
+	tmplInvite    *template.Template
+	tmplWelcome   *template.Template
+	tmplDashboard *template.Template
+	tmplNotFound  *template.Template
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -87,6 +88,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplUser, []string{"templates/layout.html", "templates/user.html", "templates/fragments/*.html"}},
 		{&s.tmplInvite, []string{"templates/layout.html", "templates/invite.html"}},
 		{&s.tmplWelcome, []string{"templates/layout.html", "templates/welcome.html", "templates/fragments/*.html"}},
+		{&s.tmplDashboard, []string{"templates/layout.html", "templates/dashboard.html"}},
 		{&s.tmplNotFound, []string{"templates/layout.html", "templates/notfound.html"}},
 	} {
 		t, err := template.ParseFS(cfg.Assets, p.files...)
@@ -131,6 +133,10 @@ func New(cfg Config) (http.Handler, error) {
 	// Everything is scoped to the caller: publishing into someone else's
 	// feed is inexpressible (ADR 0005).
 	mux.HandleFunc("GET /me", s.auth(true, s.handleGetMe))
+	mux.HandleFunc("GET /me/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/me", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /me/users", s.auth(true, s.handleSearchUsers))
 	mux.HandleFunc("PUT /me", s.auth(true, s.handleUpdateMe))
 	mux.HandleFunc("PUT /me/image", s.auth(true, s.handleSetCover))
 	mux.HandleFunc("GET /me/feed", s.auth(true, s.handleListFeed))
@@ -445,8 +451,72 @@ func cacheControl(value string, next http.Handler) http.Handler {
 
 // --- Management API (/me) ---
 
+// handleGetMe answers browsers with the Dashboard page and everything
+// else with JSON. The browser's Basic-auth prompt (username + publish
+// token) is the login.
 func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.User) {
-	s.writeJSON(w, http.StatusOK, u)
+	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		s.writeJSON(w, http.StatusOK, u)
+		return
+	}
+	episodes, err := s.store.ListEpisodes(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	invs, err := s.store.ListInvites(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	pending := []inviteView{}
+	for _, inv := range invs {
+		if v := s.inviteView(r, inv); v.Status == "pending" {
+			pending = append(pending, v)
+		}
+	}
+	s.render(w, http.StatusOK, s.tmplDashboard, struct {
+		User     store.User
+		FeedURL  string
+		UserPage string
+		Episodes []store.Episode
+		Invites  []inviteView
+	}{
+		User:     u,
+		FeedURL:  s.base(r) + "/users/" + u.ID + "/feed.xml",
+		UserPage: "/users/" + u.ID,
+		Episodes: episodes,
+		Invites:  pending,
+	})
+}
+
+// handleSearchUsers is the member directory behind the Dashboard's
+// share box: authenticated members may find each other by name; the
+// Public Surface still exposes nothing.
+func (s *server) handleSearchUsers(w http.ResponseWriter, r *http.Request, u store.User) {
+	q := strings.ToLower(r.URL.Query().Get("q"))
+	users, err := s.store.ListUsers(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	type hit struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	hits := []hit{}
+	for _, v := range users {
+		if v.ID == u.ID {
+			continue
+		}
+		if q == "" || strings.Contains(strings.ToLower(v.ID), q) || strings.Contains(strings.ToLower(v.Title), q) {
+			hits = append(hits, hit{ID: v.ID, Title: v.Title})
+			if len(hits) == 20 {
+				break
+			}
+		}
+	}
+	s.writeJSON(w, http.StatusOK, hits)
 }
 
 func (s *server) handleUpdateMe(w http.ResponseWriter, r *http.Request, u store.User) {

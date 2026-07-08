@@ -1,0 +1,124 @@
+{{define "title"}}{{.User.Title}}{{end}}
+{{define "content"}}
+<article class="card">
+  <h1>{{.User.Title}}</h1>
+  <p class="muted">@{{.User.ID}} · <a href="{{.UserPage}}">subscribe page</a></p>
+  <code class="feed-url" title="Your private feed URL">{{.FeedURL}}</code>
+
+  <section class="panel">
+    <h2>Invite a friend</h2>
+    <p class="muted">Creates a single-use link, valid for 7 days. Send it to
+    one person; they pick a username and get their own feed.</p>
+    <div class="actions">
+      <button id="mk-invite">Create invite link</button>
+    </div>
+    <div id="new-invite" class="invite-row" hidden>
+      <code class="feed-url"></code>
+      <button class="copy" data-copy>Copy</button>
+    </div>
+    {{if .Invites}}
+    <h3 class="muted">Pending invites</h3>
+    {{range .Invites}}
+    <div class="invite-row" data-token="{{.Token}}">
+      <code class="feed-url">{{.URL}}</code>
+      <button class="copy" data-copy>Copy</button>
+      <button class="danger" data-revoke>Revoke</button>
+    </div>
+    {{end}}
+    {{end}}
+  </section>
+
+  <section class="panel">
+    <h2>Your episodes</h2>
+    {{if not .Episodes}}<p class="muted">Nothing published yet.</p>{{end}}
+    {{range .Episodes}}
+    <div class="episode" data-owner="{{.OwnerID}}" data-slug="{{.Slug}}">
+      <div class="ep-head">
+        <strong>{{.Title}}</strong>
+        <span class="muted">{{.Slug}}</span>
+      </div>
+      <div class="actions">
+        <input class="share-to" list="users-dl" placeholder="friend's username…"
+               autocomplete="off" spellcheck="false">
+        <button data-share>Share</button>
+        <button data-ep-invite title="Invite someone new; this episode will be in their feed">Invite with this</button>
+      </div>
+      <p class="msg muted" hidden></p>
+    </div>
+    {{end}}
+    <datalist id="users-dl"></datalist>
+  </section>
+</article>
+
+<script>
+async function api(path, opts = {}) {
+  if (opts.body) opts.headers = {"Content-Type": "application/json"};
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.text()).trim() || r.status);
+  return r.status === 204 ? null : r.json();
+}
+
+function wireCopy(row) {
+  row.querySelector("[data-copy]").onclick = async (e) => {
+    await navigator.clipboard.writeText(row.querySelector("code").textContent);
+    e.target.textContent = "Copied ✓";
+    setTimeout(() => (e.target.textContent = "Copy"), 1500);
+  };
+}
+document.querySelectorAll(".invite-row").forEach(wireCopy);
+
+document.querySelectorAll("[data-revoke]").forEach((btn) => {
+  btn.onclick = async () => {
+    const row = btn.closest(".invite-row");
+    await api("/me/invites/" + row.dataset.token, {method: "DELETE"});
+    row.remove();
+  };
+});
+
+async function mintInvite(payload) {
+  const inv = await api("/me/invites", {method: "POST", body: JSON.stringify(payload || {})});
+  const row = document.getElementById("new-invite");
+  row.querySelector("code").textContent = inv.url;
+  row.hidden = false;
+  wireCopy(row);
+  row.scrollIntoView({block: "nearest"});
+  return inv;
+}
+document.getElementById("mk-invite").onclick = () => mintInvite().catch(alert);
+
+// Friend search: any share box feeds the shared datalist as you type.
+let searchTimer;
+document.querySelectorAll(".share-to").forEach((input) => {
+  input.oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(async () => {
+      const hits = await api("/me/users?q=" + encodeURIComponent(input.value));
+      document.getElementById("users-dl").innerHTML = hits
+        .map((h) => `<option value="${h.id}">${h.title}</option>`)
+        .join("");
+    }, 150);
+  };
+});
+
+document.querySelectorAll(".episode").forEach((ep) => {
+  const msg = ep.querySelector(".msg");
+  const say = (text) => { msg.textContent = text; msg.hidden = false; };
+  ep.querySelector("[data-share]").onclick = async () => {
+    const to = ep.querySelector(".share-to").value.trim();
+    if (!to) return say("Type a username first.");
+    try {
+      await api(`/me/feed/${ep.dataset.owner}/${ep.dataset.slug}/share`,
+        {method: "POST", body: JSON.stringify({to})});
+      say(`Shared with ${to} ✓ — it's already in their feed.`);
+      ep.querySelector(".share-to").value = "";
+    } catch (err) { say("Could not share: " + err.message); }
+  };
+  ep.querySelector("[data-ep-invite]").onclick = async () => {
+    try {
+      await mintInvite({owner: ep.dataset.owner, slug: ep.dataset.slug});
+      say("Invite created above — copy it and send it; this episode will be waiting in their new feed.");
+    } catch (err) { say("Could not create invite: " + err.message); }
+  };
+});
+</script>
+{{end}}
