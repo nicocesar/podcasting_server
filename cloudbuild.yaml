@@ -55,4 +55,4 @@ steps:
       - --allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
       - --set-env-vars=STORAGE=gcp,GCS_BUCKET=${_BUCKET}
-      - --set-secrets=READER_CREDENTIALS=podcast-reader-credentials:latest,WRITER_CREDENTIALS=podcast-writer-credentials:latest
+      - --set-secrets=ADMIN_TOKEN=podcast-admin-token:latest

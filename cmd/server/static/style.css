@@ -78,3 +78,46 @@ h2 { font-size: 1rem; margin: 0 0 0.5rem; }
   word-break: break-all;
   user-select: all;
 }
+
+.error { color: #d43d3d; }
+.warn { color: var(--accent); }
+
+.join { display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; }
+
+.join label { font-size: 0.9rem; color: var(--muted); }
+
+.join input {
+  padding: 0.6rem 0.9rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.join button {
+  padding: 0.6rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.creds dt { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
+
+.creds dd {
+  margin: 0.25rem 0 0;
+}
+
+.creds code {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  word-break: break-all;
+  user-select: all;
+}

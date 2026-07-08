@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/nicocesar/podcasting_server/internal/httpapi"
 	"github.com/nicocesar/podcasting_server/internal/store"
@@ -38,27 +37,16 @@ func env(key, fallback string) string {
 	return fallback
 }
 
-func credential(key string) (string, error) {
-	v := os.Getenv(key)
-	if !strings.Contains(v, ":") {
-		return "", fmt.Errorf(`%s must be set to "user:password"`, key)
-	}
-	return v, nil
-}
-
 func run(log *slog.Logger) error {
 	ctx := context.Background()
 
-	reader, err := credential("READER_CREDENTIALS")
-	if err != nil {
-		return err
-	}
-	writer, err := credential("WRITER_CREDENTIALS")
-	if err != nil {
-		return err
+	adminToken := os.Getenv("ADMIN_TOKEN")
+	if adminToken == "" {
+		return fmt.Errorf("ADMIN_TOKEN must be set (guards user provisioning)")
 	}
 
 	var st store.Store
+	var err error
 	backend := env("STORAGE", "fs")
 	switch backend {
 	case "fs":
@@ -83,12 +71,11 @@ func run(log *slog.Logger) error {
 	}
 
 	handler, err := httpapi.New(httpapi.Config{
-		Store:       st,
-		BaseURL:     os.Getenv("BASE_URL"),
-		ReaderCreds: reader,
-		WriterCreds: writer,
-		Assets:      assetsFS,
-		Logger:      log,
+		Store:      st,
+		BaseURL:    os.Getenv("BASE_URL"),
+		AdminToken: adminToken,
+		Assets:     assetsFS,
+		Logger:     log,
 	})
 	if err != nil {
 		return err

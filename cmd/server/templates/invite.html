@@ -1,0 +1,18 @@
+{{define "title"}}You're invited{{end}}
+{{define "content"}}
+<article class="card">
+  <h1>You're invited</h1>
+  <p><strong>{{.Inviter}}</strong> invited you to join this private podcast
+  server{{if .EpisodeTitle}} and hear <em>{{.EpisodeTitle}}</em>{{end}}.</p>
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+  <form method="post" class="join">
+    <label for="username">Pick your username</label>
+    <input id="username" name="username" value="{{.Username}}"
+           pattern="[a-z0-9][a-z0-9._-]*" maxlength="128" required autofocus
+           autocomplete="off" spellcheck="false">
+    <button type="submit">Join</button>
+  </form>
+  <p class="muted">Lowercase letters, digits, dots, dashes, underscores.
+  This is how others will address you — choose once, it does not change.</p>
+</article>
+{{end}}

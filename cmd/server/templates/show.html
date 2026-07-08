@@ -1,9 +1,0 @@
-{{define "title"}}{{.Show.Title}}{{end}}
-{{define "content"}}
-<article class="card">
-  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}" alt="Cover art for {{.Show.Title}}">{{end}}
-  <h1>{{.Show.Title}}</h1>
-  {{with .Show.Description}}<p class="description">{{.}}</p>{{end}}
-  {{template "subscribe" .}}
-</article>
-{{end}}

@@ -1,0 +1,16 @@
+{{define "title"}}Welcome, {{.Username}}{{end}}
+{{define "content"}}
+<article class="card">
+  <h1>Welcome, {{.Username}}</h1>
+  <p>Your Personal Feed is ready{{if .SharedTitle}} — <em>{{.SharedTitle}}</em>
+  is already in it{{end}}.</p>
+  <p class="warn"><strong>Save these now — they are shown exactly once.</strong></p>
+  <dl class="creds">
+    <dt>Feed credentials (for your podcast app)</dt>
+    <dd><code>{{.ReadCredentials}}</code></dd>
+    <dt>Publish token (for publishing and sharing via the API)</dt>
+    <dd><code>{{.PublishToken}}</code></dd>
+  </dl>
+  {{template "subscribe" .}}
+</article>
+{{end}}

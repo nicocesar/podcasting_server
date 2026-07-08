@@ -1,9 +1,8 @@
 .PHONY: run test build docker deploy
 
-# Local development: filesystem backend in ./data, throwaway credentials.
+# Local development: filesystem backend in ./data, throwaway admin token.
 run:
-	READER_CREDENTIALS=reader:reader \
-	WRITER_CREDENTIALS=writer:writer \
+	ADMIN_TOKEN=admin \
 	STORAGE=fs DATA_DIR=./data \
 	go run ./cmd/server
 
