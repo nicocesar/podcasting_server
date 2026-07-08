@@ -59,26 +59,24 @@ func (s *Store) UpsertUser(_ context.Context, u store.User) error {
 	return writeJSON(filepath.Join(dir, userFile), newUserRecord(u))
 }
 
-// userRecord persists the fields User hides from API JSON (hashes and the
-// cover secret carry json:"-" so they never leak through handlers).
+// userRecord persists the fields User hides from API JSON (the secrets
+// carry json:"-" so they never leak through handlers).
 type userRecord struct {
 	store.User
-	CoverSecret string `json:"cover_secret"`
-	ReadHash    string `json:"read_hash"`
+	FeedToken   string `json:"feed_token"`
 	PublishHash string `json:"publish_hash"`
 }
 
 func (r userRecord) user(id string) store.User {
 	u := r.User
 	u.ID = id // directory name is canonical
-	u.CoverSecret = r.CoverSecret
-	u.ReadHash = r.ReadHash
+	u.FeedToken = r.FeedToken
 	u.PublishHash = r.PublishHash
 	return u
 }
 
 func newUserRecord(u store.User) userRecord {
-	return userRecord{User: u, CoverSecret: u.CoverSecret, ReadHash: u.ReadHash, PublishHash: u.PublishHash}
+	return userRecord{User: u, FeedToken: u.FeedToken, PublishHash: u.PublishHash}
 }
 
 func (s *Store) GetUser(_ context.Context, id string) (store.User, error) {
@@ -89,8 +87,8 @@ func (s *Store) GetUser(_ context.Context, id string) (store.User, error) {
 	return r.user(id), nil
 }
 
-func (s *Store) GetUserByCoverSecret(ctx context.Context, secret string) (store.User, error) {
-	if secret == "" {
+func (s *Store) GetUserByFeedToken(ctx context.Context, token string) (store.User, error) {
+	if token == "" {
 		return store.User{}, store.ErrNotFound
 	}
 	users, err := s.ListUsers(ctx)
@@ -98,7 +96,7 @@ func (s *Store) GetUserByCoverSecret(ctx context.Context, secret string) (store.
 		return store.User{}, err
 	}
 	for _, u := range users {
-		if u.CoverSecret == secret {
+		if u.FeedToken == token {
 			return u, nil
 		}
 	}

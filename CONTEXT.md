@@ -11,7 +11,7 @@ produced elsewhere; this context stores, lists, serves, and shares them.
 
 **User**:
 A person with an account: exactly one Personal Feed, a publish token (used
-by their Generator), and a read credential (used by their podcast client).
+by their Generator), and a Feed Token (used by their podcast client).
 _Avoid_: account, member, reader, writer
 
 **Owner**:
@@ -30,6 +30,13 @@ _Avoid_: forwarder, sender
 A User's single private RSS feed: a view over Episode references — their
 own plus those shared with them — never a container holding copies.
 _Avoid_: show, channel, subscription
+
+**Feed Token**:
+The unguessable capability that is the entire read side: whoever holds
+the feed URL can read the Personal Feed, its audio, and its Cover Art —
+no password, no login dialog. Shown as a URL and a QR code; the owner can
+reset it at any time, which kills the old URL instantly.
+_Avoid_: read credential, reader password, feed password
 
 **Episode**:
 One playable item: an MP3 plus its metadata (title, description holding the
@@ -60,9 +67,8 @@ _Avoid_: sub-feed, playlist, smart feed
 
 **Cover Art**:
 The single image associated with a Personal Feed, displayed by podcast
-clients. Part of the Public Surface: served without authentication at an
-unguessable URL, because podcast clients fetch artwork outside their
-authenticated feed session.
+clients. Served inside the Feed Token namespace, so any client that can
+read the feed can fetch the artwork the same way.
 _Avoid_: artwork, thumbnail, logo
 
 ### Membership
@@ -76,8 +82,9 @@ _Avoid_: signup link, referral, access code
 
 **Redemption**:
 The act of turning an Invite into a User on the public invite page: the
-invitee picks their username and receives their credentials, shown
-exactly once. The only way to join — there is no open signup.
+invitee picks their username and receives their feed URL and publish
+token, shown exactly once. The only way to join — there is no open
+signup.
 _Avoid_: registration, signup, onboarding
 
 ### Sharing
@@ -123,8 +130,8 @@ consumes.
 _Avoid_: admin panel, backoffice
 
 **Public Surface**:
-The unauthenticated endpoints: the landing page, Cover Art, static assets,
-and the Redemption page for a valid Invite token. There is no public page
-for a Personal Feed — subscribe instructions live behind login. The
+The endpoints reachable with no secret at all: the landing page, static
+assets, and the Redemption page for a valid Invite token. Everything else
+requires a capability (Feed Token, Invite) or the publish token. The
 landing page lists nothing, so neither Users nor feeds are enumerable.
 _Avoid_: public site, anonymous access

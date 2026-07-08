@@ -188,3 +188,20 @@ button.copy { background: var(--muted); }
 }
 
 .msg { font-size: 0.85rem; margin: 0.25rem 0 0; }
+
+.qr {
+  background: #fff;
+  padding: 0.5rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+a.button {
+  display: inline-block;
+  padding: 0.6rem 1rem;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 8px;
+  text-decoration: none;
+}

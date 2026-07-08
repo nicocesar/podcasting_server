@@ -82,9 +82,21 @@ func (s *Store) UpsertUser(ctx context.Context, u store.User) error {
 	return err
 }
 
+// ignoreFieldMismatch drops datastore.ErrFieldMismatch: entities written
+// before a schema change may carry properties the User struct no longer
+// has (e.g. read_hash/cover_secret from before ADR 0008); they are noise,
+// not errors.
+func ignoreFieldMismatch(err error) error {
+	var fm *datastore.ErrFieldMismatch
+	if errors.As(err, &fm) {
+		return nil
+	}
+	return err
+}
+
 func (s *Store) GetUser(ctx context.Context, id string) (store.User, error) {
 	var u store.User
-	if err := s.ds.Get(ctx, userKey(id), &u); err != nil {
+	if err := ignoreFieldMismatch(s.ds.Get(ctx, userKey(id), &u)); err != nil {
 		if errors.Is(err, datastore.ErrNoSuchEntity) {
 			return store.User{}, store.ErrNotFound
 		}
@@ -94,14 +106,14 @@ func (s *Store) GetUser(ctx context.Context, id string) (store.User, error) {
 	return u, nil
 }
 
-func (s *Store) GetUserByCoverSecret(ctx context.Context, secret string) (store.User, error) {
-	if secret == "" {
+func (s *Store) GetUserByFeedToken(ctx context.Context, token string) (store.User, error) {
+	if token == "" {
 		return store.User{}, store.ErrNotFound
 	}
 	var users []store.User
-	q := datastore.NewQuery(kindUser).FilterField("cover_secret", "=", secret).Limit(1)
+	q := datastore.NewQuery(kindUser).FilterField("feed_token", "=", token).Limit(1)
 	keys, err := s.ds.GetAll(ctx, q, &users)
-	if err != nil {
+	if err = ignoreFieldMismatch(err); err != nil {
 		return store.User{}, err
 	}
 	if len(users) == 0 {
@@ -114,7 +126,7 @@ func (s *Store) GetUserByCoverSecret(ctx context.Context, secret string) (store.
 func (s *Store) ListUsers(ctx context.Context) ([]store.User, error) {
 	var users []store.User
 	keys, err := s.ds.GetAll(ctx, datastore.NewQuery(kindUser), &users)
-	if err != nil {
+	if err = ignoreFieldMismatch(err); err != nil {
 		return nil, err
 	}
 	for i, k := range keys {

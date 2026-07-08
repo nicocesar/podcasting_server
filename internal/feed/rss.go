@@ -59,17 +59,19 @@ type enclosure struct {
 // RSS renders u's Personal Feed. episodes mixes the user's own episodes
 // with those shared into the feed — each carries its Owner — and must
 // already be sorted newest-first. baseURL is the server's external base
-// URL without a trailing slash.
+// URL without a trailing slash. All links live under the Feed Token
+// capability namespace (ADR 0008), so clients never authenticate.
 func RSS(u store.User, episodes []store.Episode, baseURL string) ([]byte, error) {
+	feedBase := fmt.Sprintf("%s/f/%s", baseURL, u.FeedToken)
 	ch := channel{
 		Title:       u.Title,
-		Link:        fmt.Sprintf("%s/users/%s", baseURL, u.ID),
+		Link:        feedBase,
 		Description: u.Description,
 		Language:    u.Language,
 		ItunesBlock: "Yes",
 	}
-	if u.CoverType != "" && u.CoverSecret != "" {
-		ch.Image = &itunesImage{Href: fmt.Sprintf("%s/covers/%s", baseURL, u.CoverSecret)}
+	if u.CoverType != "" {
+		ch.Image = &itunesImage{Href: feedBase + "/cover"}
 	}
 	if len(episodes) > 0 {
 		ch.LastBuildDate = episodes[0].PublishedAt.UTC().Format(time.RFC1123Z)
@@ -85,9 +87,9 @@ func RSS(u store.User, episodes []store.Episode, baseURL string) ([]byte, error)
 			Description: ep.Description,
 			Author:      ep.OwnerID,
 			Enclosure: enclosure{
-				// Canonical, owner-addressed URL: the same enclosure in every
-				// feed the episode is shared into.
-				URL:    fmt.Sprintf("%s/users/%s/episodes/%s.mp3", baseURL, ep.OwnerID, ep.Slug),
+				// Owner-addressed inside this feed's capability namespace;
+				// the GUID keeps the item identical across feeds.
+				URL:    fmt.Sprintf("%s/%s/%s.mp3", feedBase, ep.OwnerID, ep.Slug),
 				Length: ep.AudioSize,
 				Type:   ep.AudioType,
 			},

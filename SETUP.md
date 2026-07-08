@@ -117,7 +117,7 @@ export ADMIN=$(gcloud secrets versions access latest --secret=podcast-admin-toke
 curl -H "Authorization: Bearer ${ADMIN}" -X PUT "${URL}/admin/users/nico" \
   -H 'Content-Type: application/json' \
   -d '{"title":"Nico'"'"'s briefings","description":"Hourly AI briefings","language":"en"}'
-# → {"id":"nico","read_credentials":"nico:...","publish_token":"...","feed_url":...}
+# → {"id":"nico","publish_token":"...","feed_url":"https://.../f/<token>/feed.xml"}
 
 export TOKEN=<publish_token from above>
 curl -u "nico:${TOKEN}" -X PUT "${URL}/me/image" \
@@ -143,13 +143,14 @@ curl -u "nico:${TOKEN}" -X PUT \
 ```
 
 Verify it end to end — the episode in the feed, then the audio download
-(in prod this is a 302 to a signed GCS URL, hence `-L`). Use the
-`read_credentials` returned at provisioning:
+(in prod this is a 302 to a signed GCS URL, hence `-L`). The `feed_url`
+returned at provisioning is the key; no other credentials:
 
 ```sh
-curl -u "nico:READ_PASSWORD" "${URL}/users/nico/feed.xml"
-curl -u "nico:READ_PASSWORD" -L -o /dev/null -w '%{http_code} %{size_download} bytes\n' \
-  "${URL}/users/nico/episodes/$(date +%F)-test.mp3"
+export FEED=<feed_url from provisioning>   # https://.../f/<token>/feed.xml
+curl "${FEED}"
+curl -L -o /dev/null -w '%{http_code} %{size_download} bytes\n' \
+  "${FEED%/feed.xml}/nico/$(date +%F)-test.mp3"
 ```
 
 Clean up when done (removes it from every feed it was shared into):
@@ -160,11 +161,9 @@ curl -u "nico:${TOKEN}" -X DELETE "${URL}/me/episodes/$(date +%F)-test"
 
 ## 10. Subscribe in AntennaPod
 
-Add podcast by RSS address: `${URL}/users/nico/feed.xml` — AntennaPod
-will get a 401, prompt for username/password, and store the read
-credentials for both feed refreshes and episode downloads.
-
-The subscribe page (cover, title, feed URL — no episode data) is at
-`${URL}/users/nico` behind the same credentials, handy for grabbing the
-feed URL on a new device. There is no public page for a Personal Feed
-(ADR 0005).
+Open the subscribe page — the feed URL minus `/feed.xml` — on a laptop
+and scan the QR code with the phone, or tap "Open in AntennaPod" on the
+phone itself. The URL is the key: no username, no password dialog
+(ADR 0008). Lost the URL? It is always on the Dashboard at `${URL}/me`
+(Basic auth: username + publish token), which also has the reset button
+should the URL ever leak.

@@ -2,8 +2,14 @@
 {{define "content"}}
 <article class="card">
   <h1>{{.User.Title}}</h1>
-  <p class="muted">@{{.User.ID}} · <a href="{{.UserPage}}">subscribe page</a></p>
-  <code class="feed-url" title="Your private feed URL">{{.FeedURL}}</code>
+  <p class="muted">@{{.User.ID}} · <a href="{{.FeedPage}}">subscribe page with QR</a> ·
+  <a href="{{.DeepLink}}">open in AntennaPod</a></p>
+  <div class="invite-row" id="feed-row">
+    <code class="feed-url" title="Your private feed URL — the URL is the key">{{.FeedURL}}</code>
+    <button class="copy" data-copy>Copy</button>
+    <button class="danger" id="reset-feed"
+            title="Mint a new feed URL; the old one stops working and every device must resubscribe">Reset</button>
+  </div>
 
   <section class="panel">
     <h2>Invite a friend</h2>
@@ -66,6 +72,13 @@ function wireCopy(row) {
   };
 }
 document.querySelectorAll(".invite-row").forEach(wireCopy);
+
+document.getElementById("reset-feed").onclick = async () => {
+  if (!confirm("Mint a new feed URL? The current one stops working immediately and your podcast app must resubscribe (scan the new QR)."))
+    return;
+  await api("/me/feed-token", {method: "POST"});
+  location.reload();
+};
 
 document.querySelectorAll("[data-revoke]").forEach((btn) => {
   btn.onclick = async () => {

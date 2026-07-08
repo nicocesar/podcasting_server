@@ -4,13 +4,13 @@
   <h1>Welcome, {{.Username}}</h1>
   <p>Your Personal Feed is ready{{if .SharedTitle}} — <em>{{.SharedTitle}}</em>
   is already in it{{end}}.</p>
-  <p class="warn"><strong>Save these now — they are shown exactly once.</strong></p>
+  {{template "subscribe" .}}
+  <p class="warn"><strong>Save this now — it is shown exactly once.</strong></p>
   <dl class="creds">
-    <dt>Feed credentials (for your podcast app)</dt>
-    <dd><code>{{.ReadCredentials}}</code></dd>
-    <dt>Publish token (for publishing and sharing via the API)</dt>
+    <dt>Publish token (for publishing, sharing, and the dashboard at /me)</dt>
     <dd><code>{{.PublishToken}}</code></dd>
   </dl>
-  {{template "subscribe" .}}
+  <p class="muted">Lost the feed URL? Open <code>/me</code> with your
+  username and publish token — it is always there.</p>
 </article>
 {{end}}

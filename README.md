@@ -16,10 +16,11 @@ the Publishing Contract below.
 - **Datastore** holds user/episode/share metadata; **GCS** holds audio and
   cover art. Audio downloads are 302 redirects to 15-minute signed URLs,
   so the server never streams audio.
-- Each user has two credentials (ADR 0005): a **read credential**
-  (`user:password`, for the phone) and a **publish token** (used as the
-  Basic-auth password by their Generator and for the `/me` Management
-  API). Ownership is the credential: whoever publishes an episode owns it.
+- Each user has two secrets (ADR 0005/0008): a **Feed Token** — the
+  capability URL their podcast client subscribes to, no password dialog —
+  and a **publish token** (the Basic-auth password for their Generator
+  and the `/me` Management API). Ownership is the credential: whoever
+  publishes an episode owns it.
 - An episode exists once, under its owner; shares are **references**
   (ADR 0006). The owner's republish or delete propagates to every feed.
 - HTML pages are `html/template` files under `cmd/server/templates`
@@ -37,7 +38,7 @@ Provision a user and publish:
 
 ```sh
 curl -H "Authorization: Bearer admin" -X PUT localhost:8080/admin/users/alice
-# → {"id":"alice","read_credentials":"alice:...","publish_token":"...","feed_url":...}
+# → {"id":"alice","publish_token":"...","feed_url":"http://localhost:8080/f/<token>/feed.xml"}
 ```
 
 The filesystem backend (dev only) is read live — drop or edit files and
@@ -63,17 +64,19 @@ enumerable; feeds, episodes, and audio all require credentials.
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | bland landing page; lists nothing |
-| `GET /covers/{secret}` | cover art (public so any podcast client's artwork fetch works) |
 | `GET`/`POST /invites/{token}` | invite redemption page — the only way to join (ADR 0007) |
 | `GET /static/*` | page assets |
 
-Read side (read credential or publish token; only your own feed):
+Read side — the Feed Token namespace (ADR 0008; the URL is the key, no
+other auth):
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /users/{user}` | subscribe page: cover, title, feed URL (login required) |
-| `GET /users/{user}/feed.xml` | Personal Feed RSS: own + shared episodes, newest-first |
-| `GET /users/{owner}/episodes/{slug}.mp3` | audio (302 to signed URL in prod); owner or share-holders only |
+| `GET /f/{token}` | subscribe page: cover, title, feed URL, QR, AntennaPod link |
+| `GET /f/{token}/feed.xml` | Personal Feed RSS: own + shared episodes, newest-first |
+| `GET /f/{token}/{owner}/{slug}.mp3` | audio (302 to signed URL in prod); episodes in this feed only |
+| `GET /f/{token}/cover` | cover art |
+| `GET /f/{token}/qr.png` | the feed URL as a scannable QR code |
 
 Feed Variants (ADR 0005) — query params on `feed.xml` and `/me/feed`:
 `?filter=mine`, `?filter=shared`, `?from=<owner>`, `?from=me`. Each RSS
@@ -85,6 +88,7 @@ Management API (publish token; always scoped to the caller):
 |---|---|
 | `GET /me` | the **Dashboard** in a browser (invite links, share episodes, friend search); JSON for curl |
 | `PUT /me` | feed settings (JSON: `title`, `description`, `language`) |
+| `POST /me/feed-token` | reset the Feed Token: new feed URL, old one dies instantly |
 | `GET /me/users?q=` | member search for the share box (self excluded, max 20 hits) |
 | `PUT /me/image` | upload cover art (body = JPEG or PNG bytes) |
 | `GET /me/feed` | the feed as JSON, with provenance (`owner`, `sharer`) |
@@ -113,8 +117,8 @@ Admin — fallback provisioning and recovery (`Authorization: Bearer $ADMIN_TOKE
 
 | Endpoint | Purpose |
 |---|---|
-| `PUT /admin/users/{user}` | create a user; returns credentials **once** (only hashes are stored) |
-| `POST /admin/users/{user}/credentials` | rotate a user's lost credentials (content and feed URL untouched) |
+| `PUT /admin/users/{user}` | create a user; returns the feed URL and publish token **once** |
+| `POST /admin/users/{user}/credentials` | rotate a user's lost secrets — new feed URL + publish token, content untouched |
 | `GET /admin/users` | list users |
 | `DELETE /admin/users/{user}` | delete a user, their episodes, and every reference to them |
 
@@ -124,12 +128,12 @@ shares, and the feed URL survive; only the secrets change (ADR 0007):
 ```sh
 curl -H "Authorization: Bearer ${ADMIN_TOKEN}" -X POST \
   https://HOST/admin/users/alice/credentials
-# → {"id":"alice","read_credentials":"alice:NEW...","publish_token":"NEW...","feed_url":...}
+# → {"id":"alice","publish_token":"NEW...","feed_url":"https://HOST/f/NEWTOKEN/feed.xml"}
 ```
 
-The old read credential and publish token stop working immediately: the
-user re-enters the new password in their podcast app and updates
-`PODCAST_PUBLISH_CREDENTIALS` wherever their Generator runs.
+The old feed URL and publish token stop working immediately: the user
+resubscribes their podcast app (scan the QR at the new `/f/{token}` page)
+and updates `PODCAST_PUBLISH_CREDENTIALS` wherever their Generator runs.
 
 User IDs and slugs match `^[a-z0-9][a-z0-9._-]*$`.
 

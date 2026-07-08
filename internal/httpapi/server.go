@@ -18,10 +18,13 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
 	"time"
+
+	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/nicocesar/podcasting_server/internal/audio"
 	"github.com/nicocesar/podcasting_server/internal/feed"
@@ -107,12 +110,10 @@ func New(cfg Config) (http.Handler, error) {
 		fmt.Fprintln(w, "ok")
 	})
 
-	// Public Surface (no auth; ADR 0003/0005): the landing page, Cover
-	// Art behind an unguessable secret, and static assets. Nothing about
-	// a User is enumerable. The catch-all makes every unmatched path a
-	// styled 404.
+	// Public Surface (no auth; ADR 0003/0005): the landing page and
+	// static assets. Nothing about a User is enumerable. The catch-all
+	// makes every unmatched path a styled 404.
 	mux.HandleFunc("GET /{$}", s.handleHome)
-	mux.HandleFunc("GET /covers/{secret}", s.handleCover)
 	// The Redemption page: the only way to join (ADR 0007). Invalid,
 	// expired, and redeemed tokens are indistinguishable from any other
 	// 404.
@@ -124,34 +125,41 @@ func New(cfg Config) (http.Handler, error) {
 		s.renderNotFound(w)
 	})
 
-	// Read side (AntennaPod, with the user's read credential).
-	mux.HandleFunc("GET /users/{user}", s.auth(false, s.handleUserPage))
-	mux.HandleFunc("GET /users/{user}/feed.xml", s.auth(false, s.handleFeed))
-	mux.HandleFunc("GET /users/{user}/episodes/{file}", s.auth(false, s.handleAudio))
+	// Read side (ADR 0008): the Feed Token capability namespace. The
+	// URL is the credential — podcast clients never see an auth dialog.
+	mux.HandleFunc("GET /f/{token}", s.feed(s.handleFeedLanding))
+	mux.HandleFunc("GET /f/{token}/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/f/"+r.PathValue("token"), http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /f/{token}/feed.xml", s.feed(s.handleFeed))
+	mux.HandleFunc("GET /f/{token}/cover", s.feed(s.handleCover))
+	mux.HandleFunc("GET /f/{token}/qr.png", s.feed(s.handleQR))
+	mux.HandleFunc("GET /f/{token}/{owner}/{file}", s.feed(s.handleAudio))
 
 	// Publishing Contract + Management API (the user's publish token).
 	// Everything is scoped to the caller: publishing into someone else's
 	// feed is inexpressible (ADR 0005).
-	mux.HandleFunc("GET /me", s.auth(true, s.handleGetMe))
+	mux.HandleFunc("GET /me", s.auth(s.handleGetMe))
 	mux.HandleFunc("GET /me/{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/me", http.StatusMovedPermanently)
 	})
-	mux.HandleFunc("GET /me/users", s.auth(true, s.handleSearchUsers))
-	mux.HandleFunc("PUT /me", s.auth(true, s.handleUpdateMe))
-	mux.HandleFunc("PUT /me/image", s.auth(true, s.handleSetCover))
-	mux.HandleFunc("GET /me/feed", s.auth(true, s.handleListFeed))
-	mux.HandleFunc("GET /me/episodes", s.auth(true, s.handleListEpisodes))
-	mux.HandleFunc("PUT /me/episodes/{slug}", s.auth(true, s.handlePublish))
-	mux.HandleFunc("DELETE /me/episodes/{slug}", s.auth(true, s.handleDeleteEpisode))
-	mux.HandleFunc("POST /me/feed/{owner}/{slug}/share", s.auth(true, s.handleShare))
-	mux.HandleFunc("DELETE /me/feed/{owner}/{slug}", s.auth(true, s.handleRemoveShare))
-	mux.HandleFunc("PUT /me/blocks/{user}", s.auth(true, s.handleSetList))
-	mux.HandleFunc("DELETE /me/blocks/{user}", s.auth(true, s.handleSetList))
-	mux.HandleFunc("PUT /me/mutes/{user}", s.auth(true, s.handleSetList))
-	mux.HandleFunc("DELETE /me/mutes/{user}", s.auth(true, s.handleSetList))
-	mux.HandleFunc("POST /me/invites", s.auth(true, s.handleCreateInvite))
-	mux.HandleFunc("GET /me/invites", s.auth(true, s.handleListInvites))
-	mux.HandleFunc("DELETE /me/invites/{token}", s.auth(true, s.handleRevokeInvite))
+	mux.HandleFunc("GET /me/users", s.auth(s.handleSearchUsers))
+	mux.HandleFunc("PUT /me", s.auth(s.handleUpdateMe))
+	mux.HandleFunc("PUT /me/image", s.auth(s.handleSetCover))
+	mux.HandleFunc("POST /me/feed-token", s.auth(s.handleResetFeedToken))
+	mux.HandleFunc("GET /me/feed", s.auth(s.handleListFeed))
+	mux.HandleFunc("GET /me/episodes", s.auth(s.handleListEpisodes))
+	mux.HandleFunc("PUT /me/episodes/{slug}", s.auth(s.handlePublish))
+	mux.HandleFunc("DELETE /me/episodes/{slug}", s.auth(s.handleDeleteEpisode))
+	mux.HandleFunc("POST /me/feed/{owner}/{slug}/share", s.auth(s.handleShare))
+	mux.HandleFunc("DELETE /me/feed/{owner}/{slug}", s.auth(s.handleRemoveShare))
+	mux.HandleFunc("PUT /me/blocks/{user}", s.auth(s.handleSetList))
+	mux.HandleFunc("DELETE /me/blocks/{user}", s.auth(s.handleSetList))
+	mux.HandleFunc("PUT /me/mutes/{user}", s.auth(s.handleSetList))
+	mux.HandleFunc("DELETE /me/mutes/{user}", s.auth(s.handleSetList))
+	mux.HandleFunc("POST /me/invites", s.auth(s.handleCreateInvite))
+	mux.HandleFunc("GET /me/invites", s.auth(s.handleListInvites))
+	mux.HandleFunc("DELETE /me/invites/{token}", s.auth(s.handleRevokeInvite))
 
 	// Admin: fallback provisioning and credential recovery (ADR 0007).
 	mux.HandleFunc("GET /admin/users", s.admin(s.handleListUsers))
@@ -177,31 +185,34 @@ func hashEqual(a, b string) bool {
 
 type authedHandler func(w http.ResponseWriter, r *http.Request, u store.User)
 
-// auth resolves Basic auth against the user's two credentials: the read
-// credential (podcast client) and the publish token (Generator and
-// Management API). The publish token may do everything; the read
-// credential only read-side endpoints (needWrite=false).
-func (s *server) auth(needWrite bool, h authedHandler) http.HandlerFunc {
+// auth resolves Basic auth (username + publish token) for the Publishing
+// Contract, the Management API, and the Dashboard. The read side does
+// not authenticate at all — it lives under /f/{token} (ADR 0008).
+func (s *server) auth(h authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID, secret, ok := r.BasicAuth()
 		if ok && store.ValidID(userID) {
 			u, err := s.store.GetUser(r.Context(), userID)
-			if err == nil {
-				got := credHash(userID, secret)
-				isWriter := hashEqual(got, u.PublishHash)
-				isReader := hashEqual(got, u.ReadHash)
-				if isWriter || (!needWrite && isReader) {
-					h(w, r, u)
-					return
-				}
-				if isReader {
-					http.Error(w, "publish token required", http.StatusForbidden)
-					return
-				}
+			if err == nil && hashEqual(credHash(userID, secret), u.PublishHash) {
+				h(w, r, u)
+				return
 			}
 		}
 		w.Header().Set("WWW-Authenticate", `Basic realm="podcasting_server"`)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
+}
+
+// feed resolves the {token} path segment to its User. An unknown token
+// is a plain 404: capability URLs reveal nothing, valid or not.
+func (s *server) feed(h authedHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		u, err := s.store.GetUserByFeedToken(r.Context(), r.PathValue("token"))
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		h(w, r, u)
 	}
 }
 
@@ -319,20 +330,17 @@ func (s *server) base(r *http.Request) string {
 	return proto + "://" + r.Host
 }
 
-// self guards the /users/{user}/... read side: a credential only ever
-// opens its own feed. 404, not 403 — other users are not discoverable.
-func (s *server) self(w http.ResponseWriter, r *http.Request, u store.User) bool {
-	if r.PathValue("user") != u.ID {
-		http.Error(w, "not found", http.StatusNotFound)
-		return false
-	}
-	return true
+// feedURL is the user's subscribe URL — the capability itself.
+func (s *server) feedURL(r *http.Request, u store.User) string {
+	return s.base(r) + "/f/" + u.FeedToken + "/feed.xml"
+}
+
+// deepLink is the one-tap AntennaPod subscribe URL.
+func deepLink(feedURL string) string {
+	return "https://antennapod.org/deeplink/subscribe?url=" + url.QueryEscape(feedURL)
 }
 
 func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User) {
-	if !s.self(w, r, u) {
-		return
-	}
 	entries, err := s.feedEntries(r, u, r.URL.Query().Get("from"), r.URL.Query().Get("filter"))
 	if err != nil {
 		s.fail(w, err)
@@ -351,11 +359,11 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 	w.Write(body)
 }
 
-// handleAudio serves the canonical, owner-addressed enclosure URL. The
-// caller may be the Owner or anyone holding a Share of the episode; to
-// everyone else it does not exist.
+// handleAudio serves an enclosure inside the feed's capability
+// namespace. The feed's owner may fetch their own episodes and any
+// shared into their feed; everything else does not exist.
 func (s *server) handleAudio(w http.ResponseWriter, r *http.Request, u store.User) {
-	ownerID := r.PathValue("user")
+	ownerID := r.PathValue("owner")
 	slug, ok := strings.CutSuffix(r.PathValue("file"), ".mp3")
 	if !ok || !store.ValidID(slug) {
 		http.NotFound(w, r)
@@ -381,12 +389,7 @@ func (s *server) handleAudio(w http.ResponseWriter, r *http.Request, u store.Use
 	http.ServeContent(w, r, slug+".mp3", audio.ModTime, audio.Content)
 }
 
-func (s *server) handleCover(w http.ResponseWriter, r *http.Request) {
-	u, err := s.store.GetUserByCoverSecret(r.Context(), r.PathValue("secret"))
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
+func (s *server) handleCover(w http.ResponseWriter, r *http.Request, u store.User) {
 	cover, contentType, err := s.store.OpenCover(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, err)
@@ -394,10 +397,23 @@ func (s *server) handleCover(w http.ResponseWriter, r *http.Request) {
 	}
 	defer cover.Close()
 	w.Header().Set("Content-Type", contentType)
-	// Public and cacheable: a replaced cover may take up to an hour to
-	// reach clients (ADR 0003).
+	// Cacheable: a replaced cover may take up to an hour to reach
+	// clients (ADR 0003).
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	io.Copy(w, cover)
+}
+
+// handleQR renders the feed URL as a scannable QR code, so phone
+// onboarding is a camera point instead of typing a token (ADR 0008).
+func (s *server) handleQR(w http.ResponseWriter, r *http.Request, u store.User) {
+	png, err := qrcode.Encode(s.feedURL(r, u), qrcode.Medium, 512)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Write(png)
 }
 
 // --- pages ---
@@ -406,22 +422,37 @@ func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
 	s.render(w, http.StatusOK, s.tmplHome, nil)
 }
 
-// handleUserPage is the authenticated subscribe page: the feed's identity
-// and its URL. There is no public page for a Personal Feed (ADR 0005).
-func (s *server) handleUserPage(w http.ResponseWriter, r *http.Request, u store.User) {
-	if !s.self(w, r, u) {
-		return
+// subscribeBox is the shared template data for every place the feed URL
+// is offered: copy text, QR image, and the AntennaPod deep link.
+type subscribeBox struct {
+	FeedURL  string
+	QRURL    string
+	DeepLink string
+}
+
+func (s *server) subscribeBox(r *http.Request, u store.User) subscribeBox {
+	feedURL := s.feedURL(r, u)
+	return subscribeBox{
+		FeedURL:  feedURL,
+		QRURL:    "/f/" + u.FeedToken + "/qr.png",
+		DeepLink: deepLink(feedURL),
 	}
+}
+
+// handleFeedLanding is the subscribe page inside the capability
+// namespace: the feed's identity plus every way to subscribe. Whoever
+// holds the token can reach it — that is the point (ADR 0008).
+func (s *server) handleFeedLanding(w http.ResponseWriter, r *http.Request, u store.User) {
 	data := struct {
 		User     store.User
-		FeedURL  string
 		CoverURL string
+		subscribeBox
 	}{
-		User:    u,
-		FeedURL: s.base(r) + "/users/" + u.ID + "/feed.xml",
+		User:         u,
+		subscribeBox: s.subscribeBox(r, u),
 	}
 	if u.CoverType != "" {
-		data.CoverURL = "/covers/" + u.CoverSecret
+		data.CoverURL = "/f/" + u.FeedToken + "/cover"
 	}
 	s.render(w, http.StatusOK, s.tmplUser, data)
 }
@@ -451,12 +482,34 @@ func cacheControl(value string, next http.Handler) http.Handler {
 
 // --- Management API (/me) ---
 
+// ensureFeedToken migrates users provisioned before ADR 0008: their
+// first Dashboard or /me visit mints the Feed Token they never had.
+func (s *server) ensureFeedToken(r *http.Request, u store.User) (store.User, error) {
+	if u.FeedToken != "" {
+		return u, nil
+	}
+	token, err := randomHex(16)
+	if err != nil {
+		return u, err
+	}
+	u.FeedToken = token
+	return u, s.store.UpsertUser(r.Context(), u)
+}
+
 // handleGetMe answers browsers with the Dashboard page and everything
 // else with JSON. The browser's Basic-auth prompt (username + publish
 // token) is the login.
 func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.User) {
+	u, err := s.ensureFeedToken(r, u)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
-		s.writeJSON(w, http.StatusOK, u)
+		s.writeJSON(w, http.StatusOK, struct {
+			store.User
+			FeedURL string `json:"feed_url"`
+		}{User: u, FeedURL: s.feedURL(r, u)})
 		return
 	}
 	episodes, err := s.store.ListEpisodes(r.Context(), u.ID)
@@ -477,16 +530,16 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 	}
 	s.render(w, http.StatusOK, s.tmplDashboard, struct {
 		User     store.User
-		FeedURL  string
-		UserPage string
+		FeedPage string
 		Episodes []store.Episode
 		Invites  []inviteView
+		subscribeBox
 	}{
-		User:     u,
-		FeedURL:  s.base(r) + "/users/" + u.ID + "/feed.xml",
-		UserPage: "/users/" + u.ID,
-		Episodes: episodes,
-		Invites:  pending,
+		User:         u,
+		FeedPage:     "/f/" + u.FeedToken,
+		Episodes:     episodes,
+		Invites:      pending,
+		subscribeBox: s.subscribeBox(r, u),
 	})
 }
 
@@ -540,6 +593,23 @@ func (s *server) handleUpdateMe(w http.ResponseWriter, r *http.Request, u store.
 	}
 	u, _ = s.store.GetUser(r.Context(), u.ID)
 	s.writeJSON(w, http.StatusOK, u)
+}
+
+// handleResetFeedToken is the self-service leak response: mint a new
+// Feed Token, killing the old URL instantly. Costs a resubscribe; risks
+// nothing but read access (ADR 0008).
+func (s *server) handleResetFeedToken(w http.ResponseWriter, r *http.Request, u store.User) {
+	token, err := randomHex(16)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	u.FeedToken = token
+	if err := s.store.UpsertUser(r.Context(), u); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]string{"feed_url": s.feedURL(r, u)})
 }
 
 func (s *server) handleSetCover(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -810,8 +880,7 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Title:       req.Title,
 		Description: req.Description,
 		Language:    req.Language,
-		CoverSecret: sec.cover,
-		ReadHash:    credHash(id, sec.read),
+		FeedToken:   sec.feed,
 		PublishHash: credHash(id, sec.publish),
 	}
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
@@ -819,17 +888,16 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, map[string]string{
-		"id":               id,
-		"read_credentials": id + ":" + sec.read,
-		"publish_token":    sec.publish,
-		"feed_url":         s.base(r) + "/users/" + id + "/feed.xml",
-		"cover_url":        s.base(r) + "/covers/" + sec.cover,
+		"id":            id,
+		"publish_token": sec.publish,
+		"feed_url":      s.feedURL(r, u),
 	})
 }
 
 // handleRotateCredentials is the recovery path: no email exists, so a
 // user who lost their once-shown secrets asks the operator (ADR 0007).
-// Episodes, shares, feed URL, and cover secret are untouched.
+// Both secrets rotate; episodes and shares are untouched, the podcast
+// client resubscribes with the new feed URL.
 func (s *server) handleRotateCredentials(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("user")
 	u, err := s.store.GetUser(r.Context(), id)
@@ -842,17 +910,16 @@ func (s *server) handleRotateCredentials(w http.ResponseWriter, r *http.Request)
 		s.fail(w, err)
 		return
 	}
-	u.ReadHash = credHash(id, sec.read)
+	u.FeedToken = sec.feed
 	u.PublishHash = credHash(id, sec.publish)
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
 		s.fail(w, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{
-		"id":               id,
-		"read_credentials": id + ":" + sec.read,
-		"publish_token":    sec.publish,
-		"feed_url":         s.base(r) + "/users/" + id + "/feed.xml",
+		"id":            id,
+		"publish_token": sec.publish,
+		"feed_url":      s.feedURL(r, u),
 	})
 }
 
@@ -1049,8 +1116,7 @@ func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	u := store.User{
 		ID:          username,
 		Title:       username,
-		CoverSecret: sec.cover,
-		ReadHash:    credHash(username, sec.read),
+		FeedToken:   sec.feed,
 		PublishHash: credHash(username, sec.publish),
 	}
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
@@ -1076,39 +1142,33 @@ func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, http.StatusOK, s.tmplWelcome, struct {
-		Username        string
-		ReadCredentials string
-		PublishToken    string
-		FeedURL         string
-		SharedTitle     string
+		Username     string
+		PublishToken string
+		SharedTitle  string
+		subscribeBox
 	}{
-		Username:        username,
-		ReadCredentials: username + ":" + sec.read,
-		PublishToken:    sec.publish,
-		FeedURL:         s.base(r) + "/users/" + username + "/feed.xml",
-		SharedTitle:     sharedTitle,
+		Username:     username,
+		PublishToken: sec.publish,
+		SharedTitle:  sharedTitle,
+		subscribeBox: s.subscribeBox(r, u),
 	})
 }
 
 // --- helpers ---
 
-// secrets is one issue of a user's three generated secrets.
+// secrets is one issue of a user's two generated secrets (ADR 0008).
 type secrets struct {
-	read    string // read credential password
+	feed    string // Feed Token: the capability URL segment
 	publish string // publish token
-	cover   string // public cover-URL segment
 }
 
 func issueSecrets() (secrets, error) {
 	var sec secrets
 	var err error
-	if sec.read, err = randomHex(16); err != nil {
+	if sec.feed, err = randomHex(16); err != nil {
 		return secrets{}, err
 	}
 	if sec.publish, err = randomHex(24); err != nil {
-		return secrets{}, err
-	}
-	if sec.cover, err = randomHex(16); err != nil {
 		return secrets{}, err
 	}
 	return sec, nil

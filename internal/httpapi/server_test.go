@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -67,15 +68,17 @@ func do(t *testing.T, method, url, creds string, body io.Reader, contentType str
 
 // account is what the admin provisioning endpoint hands back once.
 type account struct {
-	ID              string `json:"id"`
-	ReadCredentials string `json:"read_credentials"`
-	PublishToken    string `json:"publish_token"`
-	FeedURL         string `json:"feed_url"`
-	CoverURL        string `json:"cover_url"`
+	ID           string `json:"id"`
+	PublishToken string `json:"publish_token"`
+	FeedURL      string `json:"feed_url"`
 }
 
 // publishCreds is the basic-auth form of the account's publish token.
 func (a account) publishCreds() string { return a.ID + ":" + a.PublishToken }
+
+// feedBase is the account's capability namespace: FeedURL minus the
+// trailing /feed.xml.
+func (a account) feedBase() string { return strings.TrimSuffix(a.FeedURL, "/feed.xml") }
 
 func createUser(t *testing.T, ts *httptest.Server, id string) account {
 	t.Helper()
@@ -115,9 +118,9 @@ func share(t *testing.T, ts *httptest.Server, from account, owner, slug, to stri
 		strings.NewReader(`{"to":"`+to+`"}`), "application/json")
 }
 
-func fetchFeed(t *testing.T, ts *httptest.Server, a account, params string) string {
+func fetchFeed(t *testing.T, a account, params string) string {
 	t.Helper()
-	resp := do(t, "GET", ts.URL+"/users/"+a.ID+"/feed.xml"+params, a.ReadCredentials, nil, "")
+	resp := do(t, "GET", a.FeedURL+params, "", nil, "")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -139,8 +142,8 @@ func TestProvisioning(t *testing.T) {
 	}
 
 	alice := createUser(t, ts, "alice")
-	if alice.ID != "alice" || !strings.HasPrefix(alice.ReadCredentials, "alice:") ||
-		alice.PublishToken == "" || !strings.Contains(alice.FeedURL, "/users/alice/feed.xml") {
+	if alice.ID != "alice" || alice.PublishToken == "" ||
+		!strings.Contains(alice.FeedURL, "/f/") || !strings.HasSuffix(alice.FeedURL, "/feed.xml") {
 		t.Fatalf("unexpected account: %+v", alice)
 	}
 
@@ -151,39 +154,32 @@ func TestProvisioning(t *testing.T) {
 		t.Errorf("recreate user: got %d, want 409", resp.StatusCode)
 	}
 
-	// GET /me works with the publish token, not the read credential, and
-	// never leaks credential hashes.
+	// GET /me works with the publish token, reports the feed URL, and
+	// never leaks credential hashes or the publish token.
 	resp = do(t, "GET", ts.URL+"/me", alice.publishCreds(), nil, "")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 200 || !strings.Contains(string(body), `"id": "alice"`) && !strings.Contains(string(body), `"id":"alice"`) {
+	if resp.StatusCode != 200 || !strings.Contains(string(body), alice.FeedURL) {
 		t.Fatalf("GET /me: %d %s", resp.StatusCode, body)
 	}
 	if strings.Contains(string(body), "hash") || strings.Contains(string(body), alice.PublishToken) {
 		t.Errorf("GET /me leaks secrets: %s", body)
-	}
-	resp = do(t, "GET", ts.URL+"/me", alice.ReadCredentials, nil, "")
-	resp.Body.Close()
-	if resp.StatusCode != 403 {
-		t.Errorf("GET /me with read credential: got %d, want 403", resp.StatusCode)
 	}
 }
 
 func TestAuthBoundaries(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
 
 	cases := []struct {
 		name, method, path, creds string
 		want                      int
 	}{
-		{"no creds on feed", "GET", "/users/alice/feed.xml", "", 401},
-		{"bad creds on feed", "GET", "/users/alice/feed.xml", "alice:wrong", 401},
-		{"read cred reads feed", "GET", "/users/alice/feed.xml", alice.ReadCredentials, 200},
-		{"publish token reads feed", "GET", "/users/alice/feed.xml", alice.publishCreds(), 200},
-		{"bob cannot read alice's feed", "GET", "/users/alice/feed.xml", bob.ReadCredentials, 404},
-		{"read cred cannot publish", "PUT", "/me", alice.ReadCredentials, 403},
+		{"feed via token, no auth", "GET", strings.TrimPrefix(alice.FeedURL, ts.URL), "", 200},
+		{"wrong token is a 404", "GET", "/f/0000000000000000000000000000dead/feed.xml", "", 404},
+		{"me without creds", "GET", "/me", "", 401},
+		{"me with wrong secret", "GET", "/me", "alice:wrong", 401},
+		{"me with feed token as password", "GET", "/me", "alice:" + strings.Split(strings.TrimPrefix(alice.FeedURL, ts.URL+"/f/"), "/")[0], 401},
 		{"no creds on healthz ok", "GET", "/healthz", "", 200},
 	}
 	for _, c := range cases {
@@ -204,17 +200,20 @@ func TestPublicSurface(t *testing.T) {
 		`{"title":"Secret Episode Title","description":"Secret summary."}`, "MP3")
 	resp.Body.Close()
 
-	coverPath := strings.TrimPrefix(alice.CoverURL, ts.URL)
+	feedBase := strings.TrimPrefix(alice.feedBase(), ts.URL)
 
-	// Public Surface: landing page, cover by secret, static assets. No
-	// per-user pages without credentials (ADR 0005).
+	// Public Surface: landing page and static assets; everything else
+	// needs the capability token or the publish token (ADR 0005/0008).
 	for path, want := range map[string]int{
-		"/":                 200,
-		coverPath:           200,
-		"/covers/wrong":     404,
-		"/static/style.css": 200,
-		"/users/alice":      401,
-		"/no/such/path":     404,
+		"/":                     200,
+		feedBase + "/cover":     200,
+		feedBase + "/qr.png":    200,
+		"/f/0000dead/cover":     404,
+		"/static/style.css":     200,
+		"/users/alice":          404, // the Basic-auth read side is gone
+		"/users/alice/feed.xml": 404,
+		"/covers/anything":      404,
+		"/no/such/path":         404,
 	} {
 		resp := do(t, "GET", ts.URL+path, "", nil, "")
 		resp.Body.Close()
@@ -231,32 +230,28 @@ func TestPublicSurface(t *testing.T) {
 		t.Errorf("landing page lists users:\n%s", body)
 	}
 
-	// The authenticated user page shows identity and feed URL, never
-	// episode data.
-	resp = do(t, "GET", ts.URL+"/users/alice", alice.ReadCredentials, nil, "")
+	// The QR endpoint really renders a PNG.
+	resp = do(t, "GET", ts.URL+feedBase+"/qr.png", "", nil, "")
+	png, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.Header.Get("Content-Type") != "image/png" || !bytes.HasPrefix(png, []byte("\x89PNG")) {
+		t.Errorf("qr.png: %q, %d bytes", resp.Header.Get("Content-Type"), len(png))
+	}
+
+	// The feed landing page shows identity and every subscribe
+	// affordance, never episode data.
+	resp = do(t, "GET", ts.URL+feedBase, "", nil, "")
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	page := string(body)
-	for _, want := range []string{"Briefings for alice", "/users/alice/feed.xml", coverPath} {
+	for _, want := range []string{"Briefings for alice", alice.FeedURL, feedBase + "/qr.png", "antennapod.org/deeplink"} {
 		if !strings.Contains(page, want) {
-			t.Errorf("user page missing %q:\n%s", want, page)
+			t.Errorf("feed landing missing %q:\n%s", want, page)
 		}
 	}
 	for _, leak := range []string{"Secret Episode Title", "Secret summary", "2026-07-06-morning"} {
 		if strings.Contains(page, leak) {
-			t.Errorf("user page leaks episode data %q:\n%s", leak, page)
-		}
-	}
-
-	// Content stays authenticated.
-	for _, path := range []string{
-		"/users/alice/feed.xml",
-		"/users/alice/episodes/2026-07-06-morning.mp3",
-	} {
-		resp := do(t, "GET", ts.URL+path, "", nil, "")
-		resp.Body.Close()
-		if resp.StatusCode != 401 {
-			t.Errorf("GET %s without creds: got %d, want 401", path, resp.StatusCode)
+			t.Errorf("feed landing leaks episode data %q:\n%s", leak, page)
 		}
 	}
 }
@@ -289,11 +284,13 @@ func TestPublishFeedAndDownload(t *testing.T) {
 		t.Fatalf("republish: got %d, want 200", resp.StatusCode)
 	}
 
-	// Feed contains the item exactly once, with enclosure, guid, author.
-	xml := fetchFeed(t, ts, alice, "")
+	// Feed contains the item exactly once, with a token-namespace
+	// enclosure, guid, author. No auth needed: the URL is the key.
+	audioURL := alice.feedBase() + "/alice/2026-07-06-morning.mp3"
+	xml := fetchFeed(t, alice, "")
 	for _, want := range []string{
 		"<title>Morning Briefing</title>",
-		`/users/alice/episodes/2026-07-06-morning.mp3"`,
+		audioURL + `"`,
 		`length="8"`, // len("NEWBYTES")
 		`type="audio/mpeg"`,
 		`isPermaLink="false"`,
@@ -310,8 +307,8 @@ func TestPublishFeedAndDownload(t *testing.T) {
 		t.Errorf("feed should have exactly 1 item:\n%s", xml)
 	}
 
-	// Download the audio.
-	resp = do(t, "GET", ts.URL+"/users/alice/episodes/2026-07-06-morning.mp3", alice.ReadCredentials, nil, "")
+	// Download the audio, straight from the enclosure URL.
+	resp = do(t, "GET", audioURL, "", nil, "")
 	audio, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || string(audio) != "NEWBYTES" {
@@ -319,9 +316,7 @@ func TestPublishFeedAndDownload(t *testing.T) {
 	}
 
 	// Range requests must work (podcast clients resume downloads).
-	req, _ := http.NewRequest("GET", ts.URL+"/users/alice/episodes/2026-07-06-morning.mp3", nil)
-	user, pass, _ := strings.Cut(alice.ReadCredentials, ":")
-	req.SetBasicAuth(user, pass)
+	req, _ := http.NewRequest("GET", audioURL, nil)
 	req.Header.Set("Range", "bytes=3-")
 	rangeResp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -368,7 +363,7 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 
 	// Bob's feed mixes his own and Alice's episode; his own slug and
 	// Alice's identical slug coexist with distinct GUIDs.
-	xml := fetchFeed(t, ts, bob, "")
+	xml := fetchFeed(t, bob, "")
 	for _, want := range []string{
 		"<title>Alice Morning</title>", "<title>Bob Morning</title>",
 		"alice/2026-07-06-morning", "bob/2026-07-06-morning",
@@ -383,16 +378,16 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	}
 
 	// Feed Variants (ADR 0005).
-	if xml := fetchFeed(t, ts, bob, "?filter=mine"); strings.Contains(xml, "Alice Morning") || !strings.Contains(xml, "Bob Morning") {
+	if xml := fetchFeed(t, bob, "?filter=mine"); strings.Contains(xml, "Alice Morning") || !strings.Contains(xml, "Bob Morning") {
 		t.Errorf("filter=mine wrong:\n%s", xml)
 	}
-	if xml := fetchFeed(t, ts, bob, "?filter=shared"); !strings.Contains(xml, "Alice Morning") || strings.Contains(xml, "Bob Morning") {
+	if xml := fetchFeed(t, bob, "?filter=shared"); !strings.Contains(xml, "Alice Morning") || strings.Contains(xml, "Bob Morning") {
 		t.Errorf("filter=shared wrong:\n%s", xml)
 	}
-	if xml := fetchFeed(t, ts, bob, "?from=alice"); !strings.Contains(xml, "Alice Morning") || strings.Contains(xml, "Bob Morning") {
+	if xml := fetchFeed(t, bob, "?from=alice"); !strings.Contains(xml, "Alice Morning") || strings.Contains(xml, "Bob Morning") {
 		t.Errorf("from=alice wrong:\n%s", xml)
 	}
-	if xml := fetchFeed(t, ts, bob, "?from=me"); strings.Contains(xml, "Alice Morning") || !strings.Contains(xml, "Bob Morning") {
+	if xml := fetchFeed(t, bob, "?from=me"); strings.Contains(xml, "Alice Morning") || !strings.Contains(xml, "Bob Morning") {
 		t.Errorf("from=me wrong:\n%s", xml)
 	}
 
@@ -410,15 +405,15 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 		t.Fatalf("carol's provenance wrong: %+v", entries)
 	}
 
-	// Carol can download Alice's audio through the share; Bob's own
-	// episode stays invisible to her.
-	resp = do(t, "GET", ts.URL+"/users/alice/episodes/2026-07-06-morning.mp3", carol.ReadCredentials, nil, "")
+	// Carol's feed namespace serves Alice's audio through the share;
+	// Bob's own episode stays invisible inside it.
+	resp = do(t, "GET", carol.feedBase()+"/alice/2026-07-06-morning.mp3", "", nil, "")
 	b, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || string(b) != "ALICE-AUDIO" {
 		t.Fatalf("carol download shared audio: %d %q", resp.StatusCode, b)
 	}
-	resp = do(t, "GET", ts.URL+"/users/bob/episodes/2026-07-06-morning.mp3", carol.ReadCredentials, nil, "")
+	resp = do(t, "GET", carol.feedBase()+"/bob/2026-07-06-morning.mp3", "", nil, "")
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("carol downloads unshared audio: got %d, want 404", resp.StatusCode)
@@ -430,7 +425,7 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("remove share: got %d, want 204", resp.StatusCode)
 	}
-	if xml := fetchFeed(t, ts, carol, ""); strings.Contains(xml, "Alice Morning") {
+	if xml := fetchFeed(t, carol, ""); strings.Contains(xml, "Alice Morning") {
 		t.Errorf("removed share still in carol's feed:\n%s", xml)
 	}
 
@@ -440,7 +435,7 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("owner delete: got %d, want 204", resp.StatusCode)
 	}
-	if xml := fetchFeed(t, ts, bob, ""); strings.Contains(xml, "Alice Morning") {
+	if xml := fetchFeed(t, bob, ""); strings.Contains(xml, "Alice Morning") {
 		t.Errorf("deleted episode still in bob's feed:\n%s", xml)
 	}
 }
@@ -478,14 +473,14 @@ func TestBlockAndMute(t *testing.T) {
 	// feed (mute targets the Owner, whoever forwarded it).
 	resp = do(t, "PUT", ts.URL+"/me/mutes/alice", carol.publishCreds(), nil, "")
 	resp.Body.Close()
-	if xml := fetchFeed(t, ts, carol, ""); strings.Contains(xml, "Alice Morning") {
+	if xml := fetchFeed(t, carol, ""); strings.Contains(xml, "Alice Morning") {
 		t.Errorf("muted owner still in feed:\n%s", xml)
 	}
 
 	// Unmute: it comes back — mute hides, it does not remove.
 	resp = do(t, "DELETE", ts.URL+"/me/mutes/alice", carol.publishCreds(), nil, "")
 	resp.Body.Close()
-	if xml := fetchFeed(t, ts, carol, ""); !strings.Contains(xml, "Alice Morning") {
+	if xml := fetchFeed(t, carol, ""); !strings.Contains(xml, "Alice Morning") {
 		t.Errorf("unmuted owner missing from feed:\n%s", xml)
 	}
 
@@ -588,19 +583,22 @@ func TestInviteRedemption(t *testing.T) {
 		t.Fatalf("redeem: %d\n%s", resp.StatusCode, welcome)
 	}
 	w := string(welcome)
-	for _, want := range []string{"Welcome, carol", "carol:", "/users/carol/feed.xml", "Morning Update"} {
+	for _, want := range []string{"Welcome, carol", ts.URL + "/f/", "/qr.png", "antennapod.org/deeplink", "Morning Update"} {
 		if !strings.Contains(w, want) {
 			t.Fatalf("welcome page missing %q:\n%s", want, w)
 		}
 	}
-	// Extract the credentials from the page to prove they work.
-	readCreds := w[strings.Index(w, "carol:") : strings.Index(w, "carol:")+len("carol:")+32]
-	carol := account{ID: "carol", ReadCredentials: readCreds}
-	xml := fetchFeed(t, ts, carol, "")
+	// Extract the feed URL from the page to prove the capability works.
+	m := regexp.MustCompile(regexp.QuoteMeta(ts.URL) + `/f/[0-9a-f]+/feed\.xml`).FindString(w)
+	if m == "" {
+		t.Fatalf("no feed URL on welcome page:\n%s", w)
+	}
+	carol := account{ID: "carol", FeedURL: m}
+	xml := fetchFeed(t, carol, "")
 	if !strings.Contains(xml, "Morning Update") || !strings.Contains(xml, "<itunes:author>alice</itunes:author>") {
 		t.Fatalf("carol's feed missing payload:\n%s", xml)
 	}
-	resp = do(t, "GET", ts.URL+"/users/alice/episodes/2026-07-08-morning.mp3", readCreds, nil, "")
+	resp = do(t, "GET", carol.feedBase()+"/alice/2026-07-08-morning.mp3", "", nil, "")
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatalf("carol downloads payload audio: got %d, want 200", resp.StatusCode)
@@ -733,7 +731,7 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	if htmlResp.StatusCode != 200 || !strings.Contains(htmlResp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("dashboard: %d %q", htmlResp.StatusCode, htmlResp.Header.Get("Content-Type"))
 	}
-	for _, want := range []string{"Morning Update", "/users/alice/feed.xml", "mk-invite", "share-to"} {
+	for _, want := range []string{"Morning Update", alice.FeedURL, "antennapod.org/deeplink", "reset-feed", "mk-invite", "share-to"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
@@ -760,11 +758,6 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	if resp.StatusCode != 401 {
 		t.Fatalf("unauthenticated search: got %d, want 401", resp.StatusCode)
 	}
-	resp = do(t, "GET", ts.URL+"/me/users?q=bo", alice.ReadCredentials, nil, "")
-	resp.Body.Close()
-	if resp.StatusCode != 403 {
-		t.Fatalf("read-credential search: got %d, want 403", resp.StatusCode)
-	}
 }
 
 func TestCredentialRotation(t *testing.T) {
@@ -781,11 +774,12 @@ func TestCredentialRotation(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&rotated)
 	resp.Body.Close()
 
-	// Old credentials are dead, new ones work, content survived.
-	resp = do(t, "GET", ts.URL+"/users/alice/feed.xml", alice.ReadCredentials, nil, "")
+	// The old feed URL and publish token are dead, the new ones work,
+	// and content survived.
+	resp = do(t, "GET", alice.FeedURL, "", nil, "")
 	resp.Body.Close()
-	if resp.StatusCode != 401 {
-		t.Fatalf("old read creds: got %d, want 401", resp.StatusCode)
+	if resp.StatusCode != 404 {
+		t.Fatalf("old feed URL: got %d, want 404", resp.StatusCode)
 	}
 	resp = do(t, "GET", ts.URL+"/me", alice.publishCreds(), nil, "")
 	resp.Body.Close()
@@ -793,7 +787,7 @@ func TestCredentialRotation(t *testing.T) {
 		t.Fatalf("old publish token: got %d, want 401", resp.StatusCode)
 	}
 	rotated.ID = "alice"
-	if xml := fetchFeed(t, ts, rotated, ""); !strings.Contains(xml, "Keeper") {
+	if xml := fetchFeed(t, rotated, ""); !strings.Contains(xml, "Keeper") {
 		t.Fatalf("episodes lost on rotation:\n%s", xml)
 	}
 	// Rotating an unknown user is a 404.
@@ -801,6 +795,41 @@ func TestCredentialRotation(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("rotate unknown user: got %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestSelfServiceFeedTokenReset(t *testing.T) {
+	ts := newTestServer(t)
+	alice := createUser(t, ts, "alice")
+	resp := publishEpisode(t, ts, alice, "2026-07-08-morning", `{"title":"Keeper"}`, "AUDIO")
+	resp.Body.Close()
+
+	resp = do(t, "POST", ts.URL+"/me/feed-token", alice.publishCreds(), nil, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reset feed token: %d", resp.StatusCode)
+	}
+	var out struct {
+		FeedURL string `json:"feed_url"`
+	}
+	json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if out.FeedURL == alice.FeedURL || out.FeedURL == "" {
+		t.Fatalf("feed URL did not rotate: %q -> %q", alice.FeedURL, out.FeedURL)
+	}
+
+	// Old capability dead, new one live, publish token untouched.
+	resp = do(t, "GET", alice.FeedURL, "", nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("old feed URL after reset: got %d, want 404", resp.StatusCode)
+	}
+	if xml := fetchFeed(t, account{ID: "alice", FeedURL: out.FeedURL}, ""); !strings.Contains(xml, "Keeper") {
+		t.Fatalf("new feed URL broken:\n%s", xml)
+	}
+	resp = do(t, "GET", ts.URL+"/me", alice.publishCreds(), nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("publish token must survive feed reset: %d", resp.StatusCode)
 	}
 }
 
@@ -888,13 +917,13 @@ func TestCoverRoundTrip(t *testing.T) {
 		t.Fatalf("set cover: %d", resp.StatusCode)
 	}
 
-	// The feed advertises the cover at its unguessable URL.
-	coverPath := strings.TrimPrefix(alice.CoverURL, ts.URL)
-	if xml := fetchFeed(t, ts, alice, ""); !strings.Contains(xml, coverPath) {
-		t.Errorf("feed missing itunes:image %s:\n%s", coverPath, xml)
+	// The feed advertises the cover inside its capability namespace.
+	coverURL := alice.feedBase() + "/cover"
+	if xml := fetchFeed(t, alice, ""); !strings.Contains(xml, coverURL) {
+		t.Errorf("feed missing itunes:image %s:\n%s", coverURL, xml)
 	}
 
-	resp = do(t, "GET", alice.CoverURL, "", nil, "")
+	resp = do(t, "GET", coverURL, "", nil, "")
 	img, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || string(img) != "JPEGBYTES" || resp.Header.Get("Content-Type") != "image/jpeg" {

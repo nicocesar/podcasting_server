@@ -26,8 +26,8 @@ var IDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 func ValidID(s string) bool { return IDPattern.MatchString(s) }
 
 // User is a person with an account: exactly one Personal Feed, a publish
-// token (their Generator), and a read credential (their podcast client).
-// See docs/adr/0005.
+// token (their Generator), and a Feed Token (their podcast client). See
+// docs/adr/0005 and 0008.
 type User struct {
 	ID string `json:"id" datastore:"-"`
 
@@ -37,14 +37,14 @@ type User struct {
 	Language    string `json:"language,omitempty" datastore:"language,noindex"`
 	CoverType   string `json:"cover_type,omitempty" datastore:"cover_type,noindex"` // MIME type; empty means no Cover Art
 
-	// CoverSecret is the unguessable path segment under which the Cover
-	// Art is served publicly (GET /covers/{secret}); podcast clients
-	// fetch artwork outside their authenticated session (ADR 0003/0005).
-	CoverSecret string `json:"-" datastore:"cover_secret"`
+	// FeedToken is the capability that IS the read side: the feed,
+	// audio, and cover are served under /f/{FeedToken}/ with no other
+	// authentication (ADR 0008). Stored as-is — it must be displayed
+	// back to its owner — and replaced wholesale on rotation.
+	FeedToken string `json:"-" datastore:"feed_token"`
 
-	// ReadHash and PublishHash are hex SHA-256 of "user:secret" for the
-	// read credential and the publish token. Plaintext is never stored.
-	ReadHash    string `json:"-" datastore:"read_hash,noindex"`
+	// PublishHash is hex SHA-256 of "user:token" for the publish token.
+	// Plaintext is never stored.
 	PublishHash string `json:"-" datastore:"publish_hash,noindex"`
 
 	// Blocks: users whose Shares are rejected at share time.
@@ -125,8 +125,8 @@ type Audio struct {
 type Store interface {
 	UpsertUser(ctx context.Context, u User) error
 	GetUser(ctx context.Context, id string) (User, error)
-	// GetUserByCoverSecret resolves the public, unguessable cover URL.
-	GetUserByCoverSecret(ctx context.Context, secret string) (User, error)
+	// GetUserByFeedToken resolves the capability URL to its owner.
+	GetUserByFeedToken(ctx context.Context, token string) (User, error)
 	// ListUsers returns all users ordered by ID.
 	ListUsers(ctx context.Context) ([]User, error)
 	// DeleteUser removes the user, their episodes, audio, cover, the

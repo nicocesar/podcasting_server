@@ -25,8 +25,7 @@ func addUser(t *testing.T, s *Store, id string) {
 	err := s.UpsertUser(context.Background(), store.User{
 		ID:          id,
 		Title:       id + "'s feed",
-		CoverSecret: "secret-" + id,
-		ReadHash:    "rh-" + id,
+		FeedToken:   "token-" + id,
 		PublishHash: "ph-" + id,
 	})
 	if err != nil {
@@ -49,16 +48,16 @@ func TestUserLifecycle(t *testing.T) {
 	if u.ID != "alice" || u.Title != "alice's feed" {
 		t.Fatalf("unexpected user: %+v", u)
 	}
-	// Credential hashes and the cover secret survive the round trip even
-	// though they are hidden from API JSON.
-	if u.ReadHash != "rh-alice" || u.PublishHash != "ph-alice" || u.CoverSecret != "secret-alice" {
+	// The secrets survive the round trip even though they are hidden
+	// from API JSON.
+	if u.PublishHash != "ph-alice" || u.FeedToken != "token-alice" {
 		t.Fatalf("secrets lost on round trip: %+v", u)
 	}
-	if got, err := s.GetUserByCoverSecret(ctx, "secret-alice"); err != nil || got.ID != "alice" {
-		t.Fatalf("GetUserByCoverSecret: %v, %+v", err, got)
+	if got, err := s.GetUserByFeedToken(ctx, "token-alice"); err != nil || got.ID != "alice" {
+		t.Fatalf("GetUserByFeedToken: %v, %+v", err, got)
 	}
-	if _, err := s.GetUserByCoverSecret(ctx, "wrong"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("wrong secret: got %v, want ErrNotFound", err)
+	if _, err := s.GetUserByFeedToken(ctx, "wrong"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong token: got %v, want ErrNotFound", err)
 	}
 	users, err := s.ListUsers(ctx)
 	if err != nil || len(users) != 1 {
