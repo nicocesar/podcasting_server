@@ -22,6 +22,9 @@ steps:
         echo "SHORT_SHA=${SHORT_SHA}"
         echo "_IMAGE=${_IMAGE}"
         echo "_CACHE_IMAGE=${_CACHE_IMAGE}"
+        # Stamp the build so GET /version reports which deploy is live
+        # (the file is go:embed-ded into the binary; the repo copy says "dev").
+        echo "${SHORT_SHA}" > cmd/server/version.txt
 
   # Create & bootstrap a buildx builder (BuildKit)
   - name: gcr.io/cloud-builders/docker

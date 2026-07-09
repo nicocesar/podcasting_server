@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/httpapi"
@@ -22,6 +23,22 @@ import (
 //
 //go:embed templates static
 var assetsFS embed.FS
+
+// versionByte identifies the running build: "dev" locally; Cloud Build
+// overwrites the file with the commit SHA before the image is built, so
+// GET /version tells which deploy is live.
+//
+//go:embed version.txt
+var versionByte []byte
+
+// versionHandler serves the embedded build version as plain text.
+func versionHandler() http.HandlerFunc {
+	version := strings.TrimSpace(string(versionByte))
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprintln(w, version)
+	}
+}
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -108,7 +125,13 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	// /version fronts the app handler: a deploy-tracking probe on the
+	// Public Surface, like /healthz.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /version", versionHandler())
+	mux.Handle("/", handler)
+
 	addr := ":" + env("PORT", "8080")
 	log.Info("listening", "addr", addr)
-	return http.ListenAndServe(addr, handler)
+	return http.ListenAndServe(addr, mux)
 }
