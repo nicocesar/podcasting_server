@@ -107,13 +107,57 @@ A recipient control: Episodes owned by a Muted User never appear in my
 Personal Feed, regardless of who Shares them. Targets the Owner.
 _Avoid_: hide, filter out
 
+### Generation
+
+**Generation**:
+A User-requested production of one Episode from a Topic: research anchored
+in the Freshness Window, a Script at the Target Length in the chosen
+Language, voicing, and publication into the requester's own Personal Feed.
+Progress is observable stage by stage; it ends published or failed, and a
+failed Generation can be retried from the last completed stage without
+redoing finished work.
+_Avoid_: job, task, run
+
+**Topic**:
+The free-text subject a User submits to start a Generation — the only
+creative input; everything else is chosen from fixed options.
+_Avoid_: prompt, query
+
+**Freshness Window**:
+The trailing time span (one day to one year) a Generation is anchored in:
+the developments the Episode covers are sourced from within it, older
+material may provide background, and the Episode says so when the window
+holds little on the Topic. A soft bound — a thin window never fails a
+Generation.
+_Avoid_: recency, date filter, lookback
+
+**Target Length**:
+The requested spoken duration of a generated Episode, chosen from fixed
+options (2 to 60 minutes). A target the Script aims at, not a guarantee;
+the published Episode's duration is still measured by the server.
+_Avoid_: duration (that's the measured one)
+
+**Language**:
+The User-chosen language of a generated Episode, picked per Generation
+from a curated list: the Script is written in it and the Episode is voiced
+in it.
+_Avoid_: locale, voice (the voice follows from the Language)
+
+**Script**:
+The complete text of a generated Episode as it is to be spoken, together
+with its title, summary, and sources. The durable midpoint of a
+Generation: once written, a later failure never requires researching or
+writing again.
+_Avoid_: transcript, draft
+
 ### Interfaces
 
 **Generator**:
-The external actor (a separate, future service) that produces Episodes and
-publishes them through the Publishing Contract, authenticating with one
-User's publish token. Out of scope here except for the contract it must
-honor.
+Any actor that produces Episodes for a User and delivers them through the
+Publishing Contract. Two kinds exist: an external service authenticating
+with the User's publish token (out of scope except for the contract it
+must honor), and the built-in Generation the server runs on the User's
+request.
 _Avoid_: producer, worker, cron job
 
 **Publishing Contract**:
