@@ -34,6 +34,27 @@
     {{end}}
   </section>
 
+  {{if .GenerateEnabled}}
+  <section class="panel">
+    <h2>Generate an episode</h2>
+    <p class="muted">Give a topic; an agent researches, writes, and voices
+    it into your feed.</p>
+    <div class="actions">
+      <a class="button" href="/me/generate">Generate an episode</a>
+    </div>
+    {{if .Generations}}
+    <h3 class="muted">In progress</h3>
+    {{range .Generations}}
+    <div class="invite-row">
+      <code class="feed-url">{{.Topic}}</code>
+      <span class="muted">{{.StageLabel}}</span>
+      <a class="button" href="/me/generations/{{.ID}}">View</a>
+    </div>
+    {{end}}
+    {{end}}
+  </section>
+  {{end}}
+
   <section class="panel">
     <h2>Your episodes</h2>
     {{if not .Episodes}}<p class="muted">Nothing published yet.</p>{{end}}

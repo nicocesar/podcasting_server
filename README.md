@@ -23,6 +23,13 @@ the Publishing Contract below.
   publishes an episode owns it.
 - An episode exists once, under its owner; shares are **references**
   (ADR 0006). The owner's republish or delete propagates to every feed.
+- **Built-in Generation** (ADR 0009, optional): `/me/generate` turns a
+  topic + length + freshness + language into an episode. A Claude Managed
+  Agents session researches and writes the script — text only, no
+  credential ever leaves the server — then the server voices it
+  (edge-tts, Google Cloud TTS fallback) and publishes it. Enabled by
+  setting `ANTHROPIC_API_KEY` (SETUP.md §11); progress is checkpointed
+  and resumes across restarts.
 - HTML pages are `html/template` files under `cmd/server/templates`
   (layout + pages + `fragments/`), shipped in the binary via `go:embed` —
   editing them means rebuild + redeploy.

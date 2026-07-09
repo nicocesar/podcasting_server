@@ -425,6 +425,102 @@ func (s *Store) removeInvites(drop func(store.Invite) bool) error {
 	return s.writeInvites(kept)
 }
 
+// --- generations ---
+
+// Generations live in a "generations/" subdirectory of the user, one JSON
+// file each; ListEpisodes already skips directories, so they never look
+// like episode sidecars.
+func (s *Store) generationPath(userID, id string) string {
+	return filepath.Join(s.userDir(userID), "generations", id+".json")
+}
+
+func (s *Store) PutGeneration(ctx context.Context, g store.Generation) error {
+	if _, err := s.GetUser(ctx, g.UserID); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.generationPath(g.UserID, g.ID)), 0o755); err != nil {
+		return err
+	}
+	g.UpdatedAt = time.Now().UTC()
+	return writeJSON(s.generationPath(g.UserID, g.ID), newGenerationRecord(g))
+}
+
+// generationRecord persists the fields Generation hides from API JSON
+// (the session ID and Script carry json:"-" so they never leak through
+// handlers).
+type generationRecord struct {
+	store.Generation
+	Active    bool   `json:"active"`
+	SessionID string `json:"session_id,omitempty"`
+	Script    string `json:"script,omitempty"`
+}
+
+func newGenerationRecord(g store.Generation) generationRecord {
+	return generationRecord{Generation: g, Active: g.Active, SessionID: g.SessionID, Script: g.Script}
+}
+
+func (r generationRecord) generation(userID, id string) store.Generation {
+	g := r.Generation
+	g.UserID, g.ID = userID, id // file name is canonical
+	g.Active, g.SessionID, g.Script = r.Active, r.SessionID, r.Script
+	return g
+}
+
+func (s *Store) GetGeneration(_ context.Context, userID, id string) (store.Generation, error) {
+	var r generationRecord
+	if err := readJSON(s.generationPath(userID, id), &r); err != nil {
+		return store.Generation{}, err
+	}
+	return r.generation(userID, id), nil
+}
+
+func (s *Store) ListGenerations(ctx context.Context, userID string) ([]store.Generation, error) {
+	if _, err := s.GetUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.userDir(userID), "generations"))
+	if os.IsNotExist(err) {
+		return []store.Generation{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	gens := []store.Generation{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		g, err := s.GetGeneration(ctx, userID, strings.TrimSuffix(name, ".json"))
+		if err != nil {
+			continue
+		}
+		gens = append(gens, g)
+	}
+	sort.Slice(gens, func(i, j int) bool { return gens[i].CreatedAt.After(gens[j].CreatedAt) })
+	return gens, nil
+}
+
+func (s *Store) ListActiveGenerations(ctx context.Context) ([]store.Generation, error) {
+	users, err := s.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	active := []store.Generation{}
+	for _, u := range users {
+		gens, err := s.ListGenerations(ctx, u.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, g := range gens {
+			if g.Active {
+				active = append(active, g)
+			}
+		}
+	}
+	return active, nil
+}
+
 // --- audio & cover ---
 
 func (s *Store) OpenAudio(_ context.Context, ownerID, slug string) (store.Audio, error) {

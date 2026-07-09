@@ -109,6 +109,47 @@ func (i Invite) Redeemable(t time.Time) bool {
 	return i.RedeemedBy == "" && t.Before(i.ExpiresAt)
 }
 
+// Generation stages. A Generation is Active until it reaches done or
+// failed; failed ones may be retried from their last completed stage.
+const (
+	GenResearching = "researching" // agent session: research + Script
+	GenVoicing     = "voicing"     // TTS over the Script
+	GenPublishing  = "publishing"  // storing the Episode
+	GenDone        = "done"
+	GenFailed      = "failed"
+)
+
+// Generation is one User-requested production of an Episode from a Topic
+// (ADR 0009): research and writing delegated to a managed agent, voicing
+// and publishing done by the server. The record doubles as the checkpoint
+// the pipeline resumes from after a restart — Script is the durable
+// midpoint, so a failure after it never repeats the research.
+type Generation struct {
+	UserID string `json:"user" datastore:"user_id"`
+	ID     string `json:"id" datastore:"-"` // unguessable; key is "{UserID}/{ID}"
+
+	// The request, as submitted on /me/generate.
+	Topic         string `json:"topic" datastore:"topic,noindex"`
+	LengthMinutes int    `json:"length_minutes" datastore:"length_minutes,noindex"`
+	FreshnessDays int    `json:"freshness_days" datastore:"freshness_days,noindex"`
+	Language      string `json:"language" datastore:"language,noindex"`
+
+	Stage string `json:"stage" datastore:"stage,noindex"`
+	// Active indexes the resume scan: true until done or failed.
+	Active bool   `json:"-" datastore:"active"`
+	Error  string `json:"error,omitempty" datastore:"error,noindex"`
+
+	// Checkpoints.
+	SessionID    string `json:"-" datastore:"session_id,noindex"` // managed-agent session
+	Script       string `json:"-" datastore:"script,noindex"`     // agent output JSON; empty until researched
+	VoicedChunks int    `json:"voiced_chunks" datastore:"voiced_chunks,noindex"`
+	TotalChunks  int    `json:"total_chunks" datastore:"total_chunks,noindex"`
+	EpisodeSlug  string `json:"episode_slug,omitempty" datastore:"episode_slug,noindex"`
+
+	CreatedAt time.Time `json:"created_at" datastore:"created_at,noindex"`
+	UpdatedAt time.Time `json:"updated_at" datastore:"updated_at,noindex"`
+}
+
 // Audio is how a backend hands episode audio to the HTTP layer. Exactly
 // one of RedirectURL or Content is set: production redirects the client to
 // a short-lived signed URL, local development serves the file directly.
@@ -163,6 +204,15 @@ type Store interface {
 	// single use: ErrNotFound if the token does not exist or is already
 	// redeemed. Expiry is the caller's check (Redeemable).
 	RedeemInvite(ctx context.Context, token, userID string) error
+
+	// PutGeneration stores or replaces the Generation checkpoint.
+	PutGeneration(ctx context.Context, g Generation) error
+	GetGeneration(ctx context.Context, userID, id string) (Generation, error)
+	// ListGenerations returns the user's generations newest-first.
+	ListGenerations(ctx context.Context, userID string) ([]Generation, error)
+	// ListActiveGenerations returns every unfinished generation across
+	// all users — the resume scan after a restart (ADR 0009).
+	ListActiveGenerations(ctx context.Context) ([]Generation, error)
 
 	OpenAudio(ctx context.Context, ownerID, slug string) (Audio, error)
 

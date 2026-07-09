@@ -167,3 +167,39 @@ phone itself. The URL is the key: no username, no password dialog
 (ADR 0008). Lost the URL? It is always on the Dashboard at `${URL}/me`
 (Basic auth: username + publish token), which also has the reset button
 should the URL ever leak.
+
+## 11. (Optional) Built-in episode generation
+
+`/me/generate` lets users produce an episode from a topic (ADR 0009): a
+Claude Managed Agents session researches and writes the script, the
+server voices it (edge-tts first, Google Cloud TTS as fallback) and
+publishes it into the requester's feed. The feature turns on when
+`ANTHROPIC_API_KEY` is set; without it the endpoint answers 503 and the
+Dashboard hides it.
+
+```sh
+# The Anthropic API key (platform.claude.com → API keys)
+printf '%s' "sk-ant-..." | \
+  gcloud secrets create podcast-anthropic-key --data-file=-
+
+gcloud secrets add-iam-policy-binding podcast-anthropic-key \
+  --member=serviceAccount:${SA} --role=roles/secretmanager.secretAccessor
+
+# The TTS fallback: enable the API; ADC via the service account needs no key
+gcloud services enable texttospeech.googleapis.com
+
+# Wire both into the service
+gcloud run services update podcasting-server --region=us-central1 \
+  --update-secrets=ANTHROPIC_API_KEY=podcast-anthropic-key:latest
+```
+
+On boot the server provisions (or version-bumps) its pre-baked agent
+"podcasting-generator" and environment on the Anthropic platform — no
+manual step. `GENERATION_MODEL` overrides the default `claude-sonnet-5`.
+
+If generations start failing at the voicing stage, check whether the
+unofficial edge-tts protocol rotated:
+
+```sh
+EDGE_TTS_SMOKE=1 go test ./internal/tts -run EdgeSmoke -v
+```

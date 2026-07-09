@@ -1,0 +1,35 @@
+{{define "title"}}Generate an episode{{end}}
+{{define "content"}}
+<article class="card">
+  <h1>Generate an episode</h1>
+  <p class="muted">Give a topic; an agent researches it on the web, writes
+  the script, and the episode lands in your feed. <a href="/me">Back to
+  your dashboard</a>.</p>
+
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+  <form class="join" method="post" action="/me/generate">
+    <label for="topic">Topic</label>
+    <input id="topic" name="topic" required maxlength="500"
+           placeholder="e.g. developments in fusion energy"
+           value="{{.Topic}}" autocomplete="off">
+
+    <label for="length">Episode length</label>
+    <select id="length" name="length">
+      {{range .Lengths}}<option value="{{.}}">{{.}} minutes</option>{{end}}
+    </select>
+
+    <label for="freshness">Freshness</label>
+    <select id="freshness" name="freshness">
+      {{range .Freshness}}<option value="{{.Days}}">{{.Label}}</option>{{end}}
+    </select>
+
+    <label for="language">Language</label>
+    <select id="language" name="language">
+      {{range .Voices}}<option value="{{.Language}}">{{.Label}}</option>{{end}}
+    </select>
+
+    <button type="submit">Generate</button>
+  </form>
+</article>
+{{end}}

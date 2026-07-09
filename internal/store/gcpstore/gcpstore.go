@@ -29,11 +29,12 @@ import (
 )
 
 const (
-	kindUser     = "User"
-	kindEpisode  = "Episode"
-	kindShare    = "Share"
-	kindInvite   = "Invite"
-	signedURLTTL = 15 * time.Minute
+	kindUser       = "User"
+	kindEpisode    = "Episode"
+	kindShare      = "Share"
+	kindInvite     = "Invite"
+	kindGeneration = "Generation"
+	signedURLTTL   = 15 * time.Minute
 )
 
 type Store struct {
@@ -69,6 +70,10 @@ func shareKey(userID, ownerID, slug string) *datastore.Key {
 }
 
 func inviteKey(token string) *datastore.Key { return datastore.NameKey(kindInvite, token, nil) }
+
+func generationKey(userID, id string) *datastore.Key {
+	return datastore.NameKey(kindGeneration, userID+"/"+id, nil)
+}
 
 func audioObject(ownerID, slug string) string { return "users/" + ownerID + "/" + slug + ".mp3" }
 func coverObject(ownerID string) string       { return "users/" + ownerID + "/cover" }
@@ -151,6 +156,7 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 		datastore.NewQuery(kindShare).FilterField("user_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindShare).FilterField("owner_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindInvite).FilterField("inviter_id", "=", id).KeysOnly(),
+		datastore.NewQuery(kindGeneration).FilterField("user_id", "=", id).KeysOnly(),
 	} {
 		keys, err := s.ds.GetAll(ctx, q, nil)
 		if err != nil {
@@ -191,6 +197,69 @@ func (s *Store) deleteKeys(ctx context.Context, keys []*datastore.Key) error {
 		keys = keys[len(batch):]
 	}
 	return nil
+}
+
+// --- generations ---
+
+func (s *Store) PutGeneration(ctx context.Context, g store.Generation) error {
+	if _, err := s.GetUser(ctx, g.UserID); err != nil {
+		return err
+	}
+	g.UpdatedAt = time.Now().UTC()
+	_, err := s.ds.Put(ctx, generationKey(g.UserID, g.ID), &g)
+	return err
+}
+
+func (s *Store) GetGeneration(ctx context.Context, userID, id string) (store.Generation, error) {
+	var g store.Generation
+	if err := s.ds.Get(ctx, generationKey(userID, id), &g); err != nil {
+		if errors.Is(err, datastore.ErrNoSuchEntity) {
+			return store.Generation{}, store.ErrNotFound
+		}
+		return store.Generation{}, err
+	}
+	g.UserID, g.ID = userID, id
+	return g, nil
+}
+
+func fillGenerationIDs(gens []store.Generation, keys []*datastore.Key) {
+	for i, k := range keys {
+		if user, id, ok := strings.Cut(k.Name, "/"); ok {
+			gens[i].UserID, gens[i].ID = user, id
+		}
+	}
+}
+
+func (s *Store) ListGenerations(ctx context.Context, userID string) ([]store.Generation, error) {
+	if _, err := s.GetUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	var gens []store.Generation
+	q := datastore.NewQuery(kindGeneration).FilterField("user_id", "=", userID)
+	keys, err := s.ds.GetAll(ctx, q, &gens)
+	if err != nil {
+		return nil, err
+	}
+	fillGenerationIDs(gens, keys)
+	sort.Slice(gens, func(i, j int) bool { return gens[i].CreatedAt.After(gens[j].CreatedAt) })
+	if gens == nil {
+		gens = []store.Generation{}
+	}
+	return gens, nil
+}
+
+func (s *Store) ListActiveGenerations(ctx context.Context) ([]store.Generation, error) {
+	var gens []store.Generation
+	q := datastore.NewQuery(kindGeneration).FilterField("active", "=", true)
+	keys, err := s.ds.GetAll(ctx, q, &gens)
+	if err != nil {
+		return nil, err
+	}
+	fillGenerationIDs(gens, keys)
+	if gens == nil {
+		gens = []store.Generation{}
+	}
+	return gens, nil
 }
 
 // --- episodes ---

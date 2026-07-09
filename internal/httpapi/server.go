@@ -28,6 +28,7 @@ import (
 
 	"github.com/nicocesar/podcasting_server/internal/audio"
 	"github.com/nicocesar/podcasting_server/internal/feed"
+	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
@@ -52,6 +53,9 @@ type Config struct {
 	// Public Surface pages (cmd/server embeds and passes them).
 	Assets fs.FS
 	Logger *slog.Logger
+	// Generator runs built-in Generations (ADR 0009). Nil disables the
+	// /me/generate surface (503) and hides it from the Dashboard.
+	Generator *generation.Runner
 }
 
 type server struct {
@@ -59,13 +63,16 @@ type server struct {
 	baseURL   string
 	adminHash [32]byte
 	log       *slog.Logger
+	generator *generation.Runner
 
-	tmplHome      *template.Template
-	tmplUser      *template.Template
-	tmplInvite    *template.Template
-	tmplWelcome   *template.Template
-	tmplDashboard *template.Template
-	tmplNotFound  *template.Template
+	tmplHome       *template.Template
+	tmplUser       *template.Template
+	tmplInvite     *template.Template
+	tmplWelcome    *template.Template
+	tmplDashboard  *template.Template
+	tmplNotFound   *template.Template
+	tmplGenerate   *template.Template
+	tmplGeneration *template.Template
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -77,6 +84,7 @@ func New(cfg Config) (http.Handler, error) {
 		baseURL:   strings.TrimSuffix(cfg.BaseURL, "/"),
 		adminHash: sha256.Sum256([]byte(cfg.AdminToken)),
 		log:       cfg.Logger,
+		generator: cfg.Generator,
 	}
 	if s.log == nil {
 		s.log = slog.Default()
@@ -93,6 +101,8 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplWelcome, []string{"templates/layout.html", "templates/welcome.html", "templates/fragments/*.html"}},
 		{&s.tmplDashboard, []string{"templates/layout.html", "templates/dashboard.html"}},
 		{&s.tmplNotFound, []string{"templates/layout.html", "templates/notfound.html"}},
+		{&s.tmplGenerate, []string{"templates/layout.html", "templates/generate.html"}},
+		{&s.tmplGeneration, []string{"templates/layout.html", "templates/generation.html"}},
 	} {
 		t, err := template.ParseFS(cfg.Assets, p.files...)
 		if err != nil {
@@ -160,6 +170,13 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("POST /me/invites", s.auth(s.handleCreateInvite))
 	mux.HandleFunc("GET /me/invites", s.auth(s.handleListInvites))
 	mux.HandleFunc("DELETE /me/invites/{token}", s.auth(s.handleRevokeInvite))
+
+	// Built-in Generation (ADR 0009): topic in, Episode in the caller's
+	// own feed out, with an observable in-between.
+	mux.HandleFunc("GET /me/generate", s.auth(s.generating(s.handleGeneratePage)))
+	mux.HandleFunc("POST /me/generate", s.auth(s.generating(s.handleGenerateStart)))
+	mux.HandleFunc("GET /me/generations/{id}", s.auth(s.generating(s.handleGeneration)))
+	mux.HandleFunc("POST /me/generations/{id}/retry", s.auth(s.generating(s.handleGenerationRetry)))
 
 	// Admin: fallback provisioning and credential recovery (ADR 0007).
 	mux.HandleFunc("GET /admin/users", s.admin(s.handleListUsers))
@@ -528,19 +545,51 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			pending = append(pending, v)
 		}
 	}
+	generations, err := s.dashboardGenerations(r, u)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	s.render(w, http.StatusOK, s.tmplDashboard, struct {
-		User     store.User
-		FeedPage string
-		Episodes []store.Episode
-		Invites  []inviteView
+		User            store.User
+		FeedPage        string
+		Episodes        []store.Episode
+		Invites         []inviteView
+		GenerateEnabled bool
+		Generations     []generationView
 		subscribeBox
 	}{
-		User:         u,
-		FeedPage:     "/f/" + u.FeedToken,
-		Episodes:     episodes,
-		Invites:      pending,
-		subscribeBox: s.subscribeBox(r, u),
+		User:            u,
+		FeedPage:        "/f/" + u.FeedToken,
+		Episodes:        episodes,
+		Invites:         pending,
+		GenerateEnabled: s.generator != nil,
+		Generations:     generations,
+		subscribeBox:    s.subscribeBox(r, u),
 	})
+}
+
+// dashboardGenerations lists the caller's Generations still worth a row:
+// in flight or failed (done ones are already visible as episodes).
+func (s *server) dashboardGenerations(r *http.Request, u store.User) ([]generationView, error) {
+	if s.generator == nil {
+		return nil, nil
+	}
+	gens, err := s.store.ListGenerations(r.Context(), u.ID)
+	if err != nil {
+		return nil, err
+	}
+	views := []generationView{}
+	for _, g := range gens {
+		if g.Stage == store.GenDone {
+			continue
+		}
+		views = append(views, s.generationView(g))
+		if len(views) == 5 {
+			break
+		}
+	}
+	return views, nil
 }
 
 // handleSearchUsers is the member directory behind the Dashboard's
