@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nicocesar/podcasting_server/internal/store"
 	"github.com/nicocesar/podcasting_server/internal/store/fsstore"
@@ -59,6 +60,10 @@ func (f *fakeAPI) SendMessage(_ context.Context, sessionID, text string) error {
 }
 
 func (f *fakeAPI) SessionStatus(context.Context, string) (string, error) { return "idle", nil }
+
+func (f *fakeAPI) SessionUsage(context.Context, string) (Usage, error) {
+	return Usage{InputTokens: 100, OutputTokens: 40, CacheReadTokens: 10, CacheWriteTokens: 5}, nil
+}
 
 func (f *fakeAPI) LastAgentMessage(_ context.Context, sessionID string) (string, error) {
 	f.mu.Lock()
@@ -195,6 +200,17 @@ func TestPipelineHappyPath(t *testing.T) {
 			t.Errorf("task missing %q:\n%s", want, task)
 		}
 	}
+	// The meters recorded what the run consumed.
+	if g.SessionsCount != 1 || g.InputTokens != 100 || g.OutputTokens != 40 ||
+		g.CacheReadTokens != 10 || g.CacheWriteTokens != 5 {
+		t.Errorf("session meters = %d sessions, %d/%d/%d/%d tokens",
+			g.SessionsCount, g.InputTokens, g.OutputTokens, g.CacheReadTokens, g.CacheWriteTokens)
+	}
+	wantChars := utf8.RuneCountInString("Hello. Fusion news. Goodbye.")
+	if g.TTSEngine != "fake" || g.TTSAttempts != 1 || g.TTSCharacters != wantChars {
+		t.Errorf("tts meters = engine %q, %d attempts, %d chars (want fake, 1, %d)",
+			g.TTSEngine, g.TTSAttempts, g.TTSCharacters, wantChars)
+	}
 }
 
 func TestDeleteSessionsOptIn(t *testing.T) {
@@ -317,6 +333,19 @@ func TestTTSFailureThenRetrySkipsResearch(t *testing.T) {
 	if api.sessions != 1 {
 		t.Errorf("sessions created = %d, want 1 (research must not repeat)", api.sessions)
 	}
+	// The failed voicing attempt is metered, not hidden: two engine
+	// attempts total, but the session was only paid for (and counted)
+	// once, and characters count only the successful voicing.
+	if g.TTSAttempts != 2 {
+		t.Errorf("tts attempts = %d, want 2 (failure + retry)", g.TTSAttempts)
+	}
+	if g.SessionsCount != 1 || g.InputTokens != 100 {
+		t.Errorf("session meters after retry = %d sessions, %d input tokens (want 1, 100)",
+			g.SessionsCount, g.InputTokens)
+	}
+	if wantChars := utf8.RuneCountInString("Hello. Fusion news. Goodbye."); g.TTSCharacters != wantChars {
+		t.Errorf("tts characters = %d, want %d (counted once)", g.TTSCharacters, wantChars)
+	}
 }
 
 func TestEngineFallback(t *testing.T) {
@@ -333,5 +362,8 @@ func TestEngineFallback(t *testing.T) {
 	g = waitStage(t, st, store.GenDone)
 	if g.EpisodeSlug == "" {
 		t.Fatal("no episode published")
+	}
+	if g.TTSEngine != "google" || g.TTSAttempts != 2 {
+		t.Errorf("tts meters = engine %q, %d attempts (want google, 2)", g.TTSEngine, g.TTSAttempts)
 	}
 }

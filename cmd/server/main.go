@@ -117,13 +117,24 @@ func run(log *slog.Logger) error {
 		log.Info("generation: disabled (ANTHROPIC_API_KEY not set)")
 	}
 
+	// ANTHROPIC_ADMIN_KEY (sk-ant-admin01-..., a different key type from
+	// ANTHROPIC_API_KEY) unlocks /admin/costs and /admin/usage — real
+	// billed dollars from Anthropic's Usage & Cost Admin API.
+	adminKey := os.Getenv("ANTHROPIC_ADMIN_KEY")
+	if adminKey == "" {
+		log.Info("cost reporting: disabled (ANTHROPIC_ADMIN_KEY not set)")
+	} else {
+		log.Info("cost reporting: enabled (/admin/costs, /admin/usage)")
+	}
+
 	handler, err := httpapi.New(httpapi.Config{
-		Store:      st,
-		BaseURL:    os.Getenv("BASE_URL"),
-		AdminToken: adminToken,
-		Assets:     assetsFS,
-		Logger:     log,
-		Generator:  generator,
+		Store:             st,
+		BaseURL:           os.Getenv("BASE_URL"),
+		AdminToken:        adminToken,
+		Assets:            assetsFS,
+		Logger:            log,
+		Generator:         generator,
+		AnthropicAdminKey: adminKey,
 	})
 	if err != nil {
 		return err

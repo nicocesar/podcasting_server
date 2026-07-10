@@ -115,13 +115,17 @@ func splitSentences(s string) []string {
 // SynthesizeAll voices every chunk with one engine, falling through to
 // the next engine from chunk zero on any failure (voice consistency over
 // partial progress — chunks are cheap, the Script was the expensive
-// part). progress is called after each chunk with (done, total).
-func SynthesizeAll(ctx context.Context, engines []Engine, chunks []string, v Voice, progress func(done, total int)) ([]byte, error) {
+// part). progress is called after each chunk with (done, total). It also
+// reports which engine completed the episode ("" on failure) and how many
+// engines were tried — attempts > 1 means a fallback fired, which the
+// caller meters rather than letting it pass silently.
+func SynthesizeAll(ctx context.Context, engines []Engine, chunks []string, v Voice, progress func(done, total int)) (mp3 []byte, engine string, attempts int, err error) {
 	var lastErr error
 	for _, e := range engines {
+		attempts++
 		audio, err := synthesizeWith(ctx, e, chunks, v, progress)
 		if err == nil {
-			return audio, nil
+			return audio, e.Name(), attempts, nil
 		}
 		lastErr = fmt.Errorf("%s: %w", e.Name(), err)
 		if ctx.Err() != nil {
@@ -131,7 +135,7 @@ func SynthesizeAll(ctx context.Context, engines []Engine, chunks []string, v Voi
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no TTS engine configured")
 	}
-	return nil, lastErr
+	return nil, "", attempts, lastErr
 }
 
 func synthesizeWith(ctx context.Context, e Engine, chunks []string, v Voice, progress func(done, total int)) ([]byte, error) {

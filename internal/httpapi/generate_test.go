@@ -33,7 +33,10 @@ func (instantAPI) CreateSession(context.Context, string, string, string) (string
 }
 func (instantAPI) SendMessage(context.Context, string, string) error     { return nil }
 func (instantAPI) SessionStatus(context.Context, string) (string, error) { return "idle", nil }
-func (instantAPI) DeleteSession(context.Context, string) error           { return nil }
+func (instantAPI) SessionUsage(context.Context, string) (generation.Usage, error) {
+	return generation.Usage{InputTokens: 10, OutputTokens: 5}, nil
+}
+func (instantAPI) DeleteSession(context.Context, string) error { return nil }
 func (instantAPI) LastAgentMessage(context.Context, string) (string, error) {
 	return "```json\n" +
 		`{"title":"Generated","summary":"A summary.","script":"Spoken words.","sources":[]}` +

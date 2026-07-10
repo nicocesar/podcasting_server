@@ -27,6 +27,8 @@ type API interface {
 	SendMessage(ctx context.Context, sessionID, text string) error
 	// SessionStatus is one of idle, running, rescheduling, terminated.
 	SessionStatus(ctx context.Context, sessionID string) (string, error)
+	// SessionUsage is the session's aggregate token consumption so far.
+	SessionUsage(ctx context.Context, sessionID string) (Usage, error)
 	// LastAgentMessage returns the text of the most recent agent message
 	// in the session's event history ("" when the agent has not spoken).
 	LastAgentMessage(ctx context.Context, sessionID string) (string, error)
@@ -262,6 +264,25 @@ func (c *Client) SessionStatus(ctx context.Context, sessionID string) (string, e
 		return "", err
 	}
 	return s.Status, nil
+}
+
+// Usage is a session's aggregate token consumption, as reported on the
+// session object. Field names follow the platform's model_usage shape.
+type Usage struct {
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_input_tokens"`
+	CacheWriteTokens int64 `json:"cache_creation_input_tokens"`
+}
+
+func (c *Client) SessionUsage(ctx context.Context, sessionID string) (Usage, error) {
+	var s struct {
+		Usage Usage `json:"usage"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/sessions/"+sessionID, nil, &s); err != nil {
+		return Usage{}, err
+	}
+	return s.Usage, nil
 }
 
 type sessionEvent struct {

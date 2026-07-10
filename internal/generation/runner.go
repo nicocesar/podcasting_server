@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nicocesar/podcasting_server/internal/audio"
 	"github.com/nicocesar/podcasting_server/internal/store"
@@ -206,14 +207,38 @@ func (r *Runner) run(g store.Generation) {
 // what just expired.
 func (r *Runner) fail(g store.Generation, cause error) {
 	r.log.Error("generation: failed", "user", g.UserID, "id", g.ID, "stage", g.Stage, "err", cause)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// A failed research session still burned tokens; meter it before the
+	// record freezes. (Research success meters in research; a session
+	// that failed here is abandoned by Retry, so this counts it exactly
+	// once.)
+	if g.Stage == store.GenResearching && g.SessionID != "" {
+		r.recordSessionUsage(ctx, &g)
+	}
 	g.Stage = store.GenFailed
 	g.Active = false
 	g.Error = cause.Error()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		r.log.Error("generation: could not record failure", "user", g.UserID, "id", g.ID, "err", err)
 	}
+}
+
+// recordSessionUsage folds the session's aggregate token consumption into
+// the Generation's lifetime meters. Best effort: metering never fails a
+// pipeline that otherwise worked.
+func (r *Runner) recordSessionUsage(ctx context.Context, g *store.Generation) {
+	u, err := r.api.SessionUsage(ctx, g.SessionID)
+	if err != nil {
+		r.log.Warn("generation: could not fetch session usage",
+			"user", g.UserID, "id", g.ID, "session", g.SessionID, "err", err)
+		return
+	}
+	g.SessionsCount++
+	g.InputTokens += u.InputTokens
+	g.OutputTokens += u.OutputTokens
+	g.CacheReadTokens += u.CacheReadTokens
+	g.CacheWriteTokens += u.CacheWriteTokens
 }
 
 // research drives the managed-agent session to a parsed Script in the
@@ -282,6 +307,7 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 				if err != nil {
 					return g, err
 				}
+				r.recordSessionUsage(ctx, &g)
 				g.Script = string(raw)
 				g.Stage = store.GenVoicing
 				return g, r.store.PutGeneration(ctx, g)
@@ -318,14 +344,22 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		return g, err
 	}
-	mp3, err := tts.SynthesizeAll(ctx, r.engines, chunks, voice, func(done, total int) {
+	mp3, engine, attempts, err := tts.SynthesizeAll(ctx, r.engines, chunks, voice, func(done, total int) {
 		g.VoicedChunks, g.TotalChunks = done, total
 		if err := r.store.PutGeneration(ctx, g); err != nil {
 			r.log.Warn("generation: progress checkpoint failed", "user", g.UserID, "id", g.ID, "err", err)
 		}
 	})
+	// Attempts accumulate even on failure (run() persists g with the
+	// failure record); characters count only what the winning engine
+	// actually voiced.
+	g.TTSAttempts += attempts
 	if err != nil {
 		return g, fmt.Errorf("voicing: %w", err)
+	}
+	g.TTSEngine = engine
+	for _, chunk := range chunks {
+		g.TTSCharacters += utf8.RuneCountInString(chunk)
 	}
 
 	g.Stage = store.GenPublishing

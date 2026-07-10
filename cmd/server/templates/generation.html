@@ -23,6 +23,7 @@
       Published as <code>{{.EpisodeSlug}}</code> —
       <a href="/me">see it on your dashboard</a>.
     </p>
+    <p id="gen-stats" class="muted" {{if not .StatsLabel}}hidden{{end}}>{{.StatsLabel}}</p>
   </section>
   <p class="muted"><a href="/me">Back to your dashboard</a></p>
 </article>
@@ -47,6 +48,9 @@ function apply(v) {
   const done = document.getElementById("done-link");
   done.hidden = v.stage !== "done";
   if (v.stage === "done") done.querySelector("code").textContent = v.episode_slug;
+  const stats = document.getElementById("gen-stats");
+  stats.hidden = !v.stats_label;
+  stats.textContent = v.stats_label || "";
   return v.stage === "done" || v.stage === "failed";
 }
 
@@ -64,6 +68,7 @@ if (!apply({
   stage_label: document.getElementById("stage-label").firstElementChild.textContent,
   error: document.getElementById("gen-error").textContent.trim(),
   episode_slug: (document.querySelector("#done-link code") || {}).textContent,
+  stats_label: document.getElementById("gen-stats").textContent.trim(),
 })) setTimeout(poll, 2500);
 </script>
 {{end}}

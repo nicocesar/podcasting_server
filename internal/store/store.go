@@ -146,6 +146,19 @@ type Generation struct {
 	TotalChunks  int    `json:"total_chunks" datastore:"total_chunks,noindex"`
 	EpisodeSlug  string `json:"episode_slug,omitempty" datastore:"episode_slug,noindex"`
 
+	// Meters: what this Generation consumed, as lifetime totals across
+	// retries — false starts cost real money and are counted, not
+	// hidden. Raw counts only; dollars come from Anthropic's Cost API
+	// (GET /admin/costs), never from a price table here.
+	SessionsCount    int    `json:"sessions_count,omitempty" datastore:"sessions_count,noindex"`
+	InputTokens      int64  `json:"input_tokens,omitempty" datastore:"input_tokens,noindex"`
+	OutputTokens     int64  `json:"output_tokens,omitempty" datastore:"output_tokens,noindex"`
+	CacheReadTokens  int64  `json:"cache_read_tokens,omitempty" datastore:"cache_read_tokens,noindex"`
+	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty" datastore:"cache_write_tokens,noindex"`
+	TTSEngine        string `json:"tts_engine,omitempty" datastore:"tts_engine,noindex"`   // engine that voiced the published episode
+	TTSCharacters    int    `json:"tts_characters,omitempty" datastore:"tts_characters,noindex"` // runes synthesized by the winning engine
+	TTSAttempts      int    `json:"tts_attempts,omitempty" datastore:"tts_attempts,noindex"`     // engines tried; >1 per voicing means a fallback fired
+
 	CreatedAt time.Time `json:"created_at" datastore:"created_at,noindex"`
 	UpdatedAt time.Time `json:"updated_at" datastore:"updated_at,noindex"`
 }

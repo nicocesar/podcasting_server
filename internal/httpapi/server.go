@@ -56,6 +56,13 @@ type Config struct {
 	// Generator runs built-in Generations (ADR 0009). Nil disables the
 	// /me/generate surface (503) and hides it from the Dashboard.
 	Generator *generation.Runner
+	// AnthropicAdminKey (sk-ant-admin01-...) unlocks GET /admin/costs and
+	// GET /admin/usage, which proxy Anthropic's Usage & Cost Admin API —
+	// the real-dollar counterpart of the per-Generation meters. Empty →
+	// those endpoints answer 503.
+	AnthropicAdminKey string
+	// AnthropicAdminBaseURL overrides the Admin API host (tests only).
+	AnthropicAdminBaseURL string
 }
 
 type server struct {
@@ -64,6 +71,7 @@ type server struct {
 	adminHash [32]byte
 	log       *slog.Logger
 	generator *generation.Runner
+	adminAPI  *anthropicAdmin
 
 	tmplHome       *template.Template
 	tmplUser       *template.Template
@@ -85,6 +93,7 @@ func New(cfg Config) (http.Handler, error) {
 		adminHash: sha256.Sum256([]byte(cfg.AdminToken)),
 		log:       cfg.Logger,
 		generator: cfg.Generator,
+		adminAPI:  newAnthropicAdmin(cfg.AnthropicAdminKey, cfg.AnthropicAdminBaseURL),
 	}
 	if s.log == nil {
 		s.log = slog.Default()
@@ -183,6 +192,11 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("PUT /admin/users/{user}", s.admin(s.handleCreateUser))
 	mux.HandleFunc("DELETE /admin/users/{user}", s.admin(s.handleDeleteUser))
 	mux.HandleFunc("POST /admin/users/{user}/credentials", s.admin(s.handleRotateCredentials))
+
+	// Admin cost reporting: real billed dollars from Anthropic's Usage &
+	// Cost Admin API, to reconcile against per-Generation meters.
+	mux.HandleFunc("GET /admin/costs", s.admin(s.handleAdminCosts))
+	mux.HandleFunc("GET /admin/usage", s.admin(s.handleAdminUsage))
 
 	return s.logged(mux), nil
 }

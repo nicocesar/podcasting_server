@@ -7,6 +7,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -114,6 +115,7 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 type generationView struct {
 	store.Generation
 	StageLabel string `json:"stage_label"`
+	StatsLabel string `json:"stats_label,omitempty"` // human-readable meter summary
 	EpisodeURL string `json:"episode_url,omitempty"`
 }
 
@@ -139,7 +141,37 @@ func (s *server) generationView(g store.Generation) generationView {
 	if g.EpisodeSlug != "" {
 		v.EpisodeURL = "/me"
 	}
+	v.StatsLabel = statsLabel(g)
 	return v
+}
+
+// statsLabel renders the Generation's meters (raw counts; dollars live on
+// /admin/costs) into one line for the progress page. Empty until the
+// first meter lands.
+func statsLabel(g store.Generation) string {
+	var parts []string
+	if g.SessionsCount > 0 {
+		s := fmt.Sprintf("%d in / %d out tokens", g.InputTokens, g.OutputTokens)
+		if g.CacheReadTokens > 0 {
+			s += fmt.Sprintf(" (+%d cached)", g.CacheReadTokens)
+		}
+		s += fmt.Sprintf(" · %d session", g.SessionsCount)
+		if g.SessionsCount > 1 {
+			s += "s"
+		}
+		parts = append(parts, s)
+	}
+	if g.TTSAttempts > 0 {
+		s := fmt.Sprintf("%d chars", g.TTSCharacters)
+		if g.TTSEngine != "" {
+			s += " via " + g.TTSEngine
+		}
+		if g.TTSAttempts > 1 {
+			s += fmt.Sprintf(" (%d engine attempts)", g.TTSAttempts)
+		}
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (s *server) loadGeneration(w http.ResponseWriter, r *http.Request, u store.User) (store.Generation, bool) {
