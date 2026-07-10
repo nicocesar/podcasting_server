@@ -1,6 +1,9 @@
 timeout: 1600s
 options:
   logging: CLOUD_LOGGING_ONLY
+  # Manual `gcloud builds submit` (make deploy) has no SHORT_SHA; let it
+  # resolve to "" instead of rejecting the build.
+  substitution_option: ALLOW_LOOSE
 
 substitutions:
   # Build the image name from PROJECT_ID using the ${...} form
@@ -23,8 +26,11 @@ steps:
         echo "_IMAGE=${_IMAGE}"
         echo "_CACHE_IMAGE=${_CACHE_IMAGE}"
         # Stamp the build so GET /version reports which deploy is live
-        # (the file is go:embed-ded into the binary; the repo copy says "dev").
-        echo "${SHORT_SHA}" > cmd/server/version.txt
+        # (the file is go:embed-ded into the binary). Manual submits have
+        # no SHORT_SHA — keep the repo's hand-bumped version.txt then.
+        if [ -n "${SHORT_SHA}" ]; then
+          echo "${SHORT_SHA}" > cmd/server/version.txt
+        fi
 
   # Create & bootstrap a buildx builder (BuildKit)
   - name: gcr.io/cloud-builders/docker
@@ -57,5 +63,9 @@ steps:
       - --platform=managed
       - --allow-unauthenticated
       - --service-account=${_SERVICE_ACCOUNT}
-      - --set-env-vars=STORAGE=gcp,GCS_BUCKET=${_BUCKET}
-      - --set-secrets=ADMIN_TOKEN=podcast-admin-token:latest
+      # --update-* merges with the service's existing env/secrets instead
+      # of replacing the whole set: keys set by hand in the Cloud Run
+      # console (ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_KEY, ...) survive
+      # deploys. --set-* would silently wipe them.
+      - --update-env-vars=STORAGE=gcp,GCS_BUCKET=${_BUCKET}
+      - --update-secrets=ADMIN_TOKEN=podcast-admin-token:latest
