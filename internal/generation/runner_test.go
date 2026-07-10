@@ -17,19 +17,27 @@ import (
 )
 
 const scriptReply = "Done.\n```json\n" +
-	`{"title":"Fusion This Week","summary":"The state of fusion.","script":"Hello. Fusion news. Goodbye.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}` +
+	`{"title":"Fusion This Week","summary":"The state of fusion.","language":"en","script":"Hello. Fusion news. Goodbye.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}` +
+	"\n```"
+
+const spanishReply = "Listo.\n```json\n" +
+	`{"title":"La fusión esta semana","summary":"El estado de la fusión.","language":"es","script":"Hola. Noticias de fusión. Adiós.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}` +
 	"\n```"
 
 // fakeAPI is an in-memory Managed Agents platform: sessions go idle
-// immediately and answer with a canned script once messaged.
+// immediately and answer each sent message with the next canned reply
+// (the last reply repeats when messages outnumber replies).
 type fakeAPI struct {
 	mu       sync.Mutex
 	sessions int
-	sent     map[string]string
+	sent     map[string][]string
 	deleted  []string
+	replies  []string
 }
 
-func newFakeAPI() *fakeAPI { return &fakeAPI{sent: map[string]string{}} }
+func newFakeAPI() *fakeAPI {
+	return &fakeAPI{sent: map[string][]string{}, replies: []string{scriptReply}}
+}
 
 func (f *fakeAPI) EnsureAgent(context.Context, string, string, string) (string, error) {
 	return "agent-1", nil
@@ -46,7 +54,7 @@ func (f *fakeAPI) CreateSession(context.Context, string, string, string) (string
 func (f *fakeAPI) SendMessage(_ context.Context, sessionID, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sent[sessionID] = text
+	f.sent[sessionID] = append(f.sent[sessionID], text)
 	return nil
 }
 
@@ -55,10 +63,14 @@ func (f *fakeAPI) SessionStatus(context.Context, string) (string, error) { retur
 func (f *fakeAPI) LastAgentMessage(_ context.Context, sessionID string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.sent[sessionID] == "" {
+	n := len(f.sent[sessionID])
+	if n == 0 {
 		return "", nil
 	}
-	return scriptReply, nil
+	if n > len(f.replies) {
+		n = len(f.replies)
+	}
+	return f.replies[n-1], nil
 }
 
 func (f *fakeAPI) DeleteSession(_ context.Context, sessionID string) error {
@@ -171,16 +183,78 @@ func TestPipelineHappyPath(t *testing.T) {
 	if string(audio) != "MP3!" {
 		t.Errorf("audio = %q", audio)
 	}
-	// The session is deleted once the episode is safe (ADR 0009).
-	if len(api.deleted) != 1 || api.deleted[0] != "sess-1" {
-		t.Errorf("deleted sessions = %v", api.deleted)
+	// Sessions are kept by default so prompts can be improved from the
+	// Console traces.
+	if len(api.deleted) != 0 {
+		t.Errorf("deleted sessions = %v, want none", api.deleted)
 	}
 	// The task carried the request parameters.
-	task := api.sent["sess-1"]
+	task := api.sent["sess-1"][0]
 	for _, want := range []string{"Fusion Energy!", "750 spoken words", "last 7 days", "English"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("task missing %q:\n%s", want, task)
 		}
+	}
+}
+
+func TestDeleteSessionsOptIn(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	r := NewRunner(Config{
+		Store:          st,
+		API:            api,
+		Engines:        []tts.Engine{fakeEngine{name: "fake"}},
+		Model:          "claude-test",
+		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		PollInterval:   5 * time.Millisecond,
+		DeleteSessions: true,
+	})
+	g := newGeneration()
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	waitStage(t, st, store.GenDone)
+	if len(api.deleted) != 1 || api.deleted[0] != "sess-1" {
+		t.Errorf("deleted sessions = %v, want [sess-1]", api.deleted)
+	}
+}
+
+// TestWrongLanguageGetsTranslated: the agent researches in Spanish and
+// replies with a Spanish script; the runner asks for a translation in the
+// same session and voices the English reply that follows.
+func TestWrongLanguageGetsTranslated(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	api.replies = []string{spanishReply, scriptReply}
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+
+	g := newGeneration() // Language: "en"
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenDone)
+
+	msgs := api.sent["sess-1"]
+	if len(msgs) != 2 {
+		t.Fatalf("messages sent = %d, want 2 (task + translation)", len(msgs))
+	}
+	for _, want := range []string{"Translate", "English"} {
+		if !strings.Contains(msgs[1], want) {
+			t.Errorf("translation request missing %q:\n%s", want, msgs[1])
+		}
+	}
+	// The stored Script is the translated one.
+	if !strings.Contains(g.Script, "Fusion This Week") {
+		t.Errorf("stored script is not the translation: %s", g.Script)
+	}
+	ep, err := st.GetEpisode(context.Background(), "alice", g.EpisodeSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Title != "Fusion This Week" {
+		t.Errorf("episode title = %q, want the translated title", ep.Title)
 	}
 }
 

@@ -52,10 +52,21 @@ func ValidFreshness(days int) bool {
 // Script is the agent's output: the durable midpoint of a Generation.
 // Once stored, a later failure never repeats the research.
 type Script struct {
-	Title   string   `json:"title"`
-	Summary string   `json:"summary"`
-	Script  string   `json:"script"` // spoken text, plain prose
-	Sources []Source `json:"sources"`
+	Title    string   `json:"title"`
+	Summary  string   `json:"summary"`
+	Language string   `json:"language,omitempty"` // agent-reported BCP-47 tag of the script text
+	Script   string   `json:"script"`             // spoken text, plain prose
+	Sources  []Source `json:"sources"`
+}
+
+// PrimaryTag normalizes a BCP-47 tag to its primary subtag ("es-ES" →
+// "es"), the granularity the Language options use. Empty in, empty out.
+func PrimaryTag(lang string) string {
+	lang = strings.ToLower(strings.TrimSpace(lang))
+	if i := strings.IndexAny(lang, "-_"); i >= 0 {
+		lang = lang[:i]
+	}
+	return lang
 }
 
 type Source struct {
@@ -116,7 +127,7 @@ Research rules:
 - Prefer primary and reputable sources; note each source's publication date.
 
 Writing rules:
-- Write in the requested language, and only that language.
+- Write in the requested language, and only that language — even when most or all of your sources are in a different one. Research in whatever language the sources use; the episode itself is always in the requested language.
 - The script is read aloud by a single narrator: plain flowing prose. No markdown, no headings, no bullet points, no URLs, no stage directions, nothing a voice cannot speak.
 - Mention dates and recency naturally ("this Tuesday", "earlier this month") so listeners can place events in time.
 - Open by saying what the episode covers; close with a brief sign-off.
@@ -124,9 +135,10 @@ Writing rules:
 
 Output contract — this is parsed by a machine:
 When the episode is ready, reply with one final message whose entire content is a single fenced code block, opened with three backticks and the word json, containing exactly one JSON object with these fields and nothing else:
-{"title": "...", "summary": "...", "script": "...", "sources": [{"title": "...", "url": "...", "published": "YYYY-MM-DD"}]}
+{"title": "...", "summary": "...", "language": "...", "script": "...", "sources": [{"title": "...", "url": "...", "published": "YYYY-MM-DD"}]}
 - "title": the episode title, in the requested language, no date prefix.
 - "summary": 2-4 sentences describing the episode, in the requested language.
+- "language": the BCP-47 primary tag of the language the script is actually written in, e.g. "en" or "es". Report it honestly — it is checked against the request.
 - "script": the full spoken text.
 - "sources": every source that informed the episode, with its publication date when known.
 Do not put any text outside the fenced block in that final message.`
@@ -138,6 +150,16 @@ func userMessage(topic string, lengthMinutes, freshnessDays int, language string
 	return fmt.Sprintf(
 		"Today is %s.\nTopic: %s\nTarget length: about %d spoken words (a %d-minute episode).\nFreshness window: the last %d days.\nLanguage: %s\n\nResearch the topic and produce the episode as specified in your instructions.",
 		now.UTC().Format("Monday, 2 January 2006"), topic, words, lengthMinutes, freshnessDays, languageName(language),
+	)
+}
+
+// translateMessage is the follow-up task sent when the agent's script
+// came back in the wrong language: translate in place, same contract.
+func translateMessage(language string) string {
+	name := languageName(language)
+	return fmt.Sprintf(
+		"The episode must be entirely in %s, but your script is in a different language. Translate the episode now: title, summary, and script all in %s. Keep the sources exactly as they are. Reply with the full JSON contract again in a single fenced json block, including the corrected \"language\" field.",
+		name, name,
 	)
 }
 

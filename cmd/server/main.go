@@ -106,6 +106,10 @@ func run(log *slog.Logger) error {
 			Engines: engines,
 			Model:   env("GENERATION_MODEL", "claude-sonnet-5"),
 			Logger:  log,
+			// Sessions are kept after publishing (inspectable in the
+			// Anthropic Console for prompt work); flip this env var to
+			// "true" to go back to deleting them.
+			DeleteSessions: env("GENERATION_DELETE_SESSIONS", "false") == "true",
 		})
 		go generator.Bootstrap(ctx)
 		log.Info("generation: enabled", "model", env("GENERATION_MODEL", "claude-sonnet-5"))

@@ -39,6 +39,10 @@ type Config struct {
 	// PollInterval overrides how often the agent session is polled
 	// (default 5s; tests shorten it).
 	PollInterval time.Duration
+	// DeleteSessions removes each agent session once its Episode is
+	// published. Off by default: kept sessions stay inspectable in the
+	// Anthropic Console, which is how the prompts get improved.
+	DeleteSessions bool
 }
 
 // Runner drives Generations through their stages. It is the checkpointed
@@ -53,7 +57,8 @@ type Runner struct {
 	model   string
 	log     *slog.Logger
 
-	poll time.Duration
+	poll           time.Duration
+	deleteSessions bool
 
 	mu      sync.Mutex
 	running map[string]bool // "{user}/{id}" → a goroutine owns it
@@ -71,13 +76,14 @@ func NewRunner(cfg Config) *Runner {
 		poll = pollInterval
 	}
 	return &Runner{
-		store:   cfg.Store,
-		api:     cfg.API,
-		engines: cfg.Engines,
-		model:   cfg.Model,
-		log:     log,
-		poll:    poll,
-		running: make(map[string]bool),
+		store:          cfg.Store,
+		api:            cfg.API,
+		engines:        cfg.Engines,
+		model:          cfg.Model,
+		log:            log,
+		poll:           poll,
+		deleteSessions: cfg.DeleteSessions,
+		running:        make(map[string]bool),
 	}
 }
 
@@ -210,9 +216,12 @@ func (r *Runner) fail(g store.Generation, cause error) {
 	}
 }
 
-// research drives the managed-agent session to a parsed Script. Resume-
-// safe at every crash point: no session yet → create one; session idle
-// with no reply → (re)send the task; agent already replied → parse it.
+// research drives the managed-agent session to a parsed Script in the
+// requested language. Resume-safe at every crash point: no session yet →
+// create one; session idle with no reply → (re)send the task; agent
+// already replied → parse it. A script that comes back in the wrong
+// language (research sources often set the agent's tongue) gets one
+// translation round in the same session before the timeout decides.
 func (r *Runner) research(ctx context.Context, g store.Generation) (store.Generation, error) {
 	if err := r.provision(ctx); err != nil {
 		return g, err
@@ -229,9 +238,13 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 		if err := r.store.PutGeneration(ctx, g); err != nil {
 			return g, err
 		}
+		r.log.Info("generation: session created",
+			"user", g.UserID, "id", g.ID, "session", id,
+			"trace", "https://platform.claude.com/workspaces/default/sessions/"+id)
 	}
 
 	sent := false
+	translationRequested := false
 	for {
 		status, err := r.api.SessionStatus(ctx, g.SessionID)
 		if err != nil {
@@ -249,6 +262,21 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 				script, err := ParseScript(msg)
 				if err != nil {
 					return g, err
+				}
+				// An unreported language (older agent version) is taken
+				// on faith; a reported mismatch gets a translation pass.
+				if lang := PrimaryTag(script.Language); lang != "" && lang != g.Language {
+					if !translationRequested {
+						r.log.Info("generation: script in wrong language, translating",
+							"user", g.UserID, "id", g.ID, "got", lang, "want", g.Language)
+						if err := r.api.SendMessage(ctx, g.SessionID, translateMessage(g.Language)); err != nil {
+							return g, fmt.Errorf("request translation: %w", err)
+						}
+						translationRequested = true
+					}
+					// Requested already: the latest message is still the
+					// untranslated one — keep polling for the new reply.
+					break
 				}
 				raw, err := json.Marshal(script)
 				if err != nil {
@@ -325,9 +353,10 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		return g, fmt.Errorf("publish: %w", err)
 	}
 
-	// The Script is checkpointed server-side, so the session — and with
-	// it what Anthropic retains — can go. Best effort.
-	if g.SessionID != "" {
+	// The Script is checkpointed server-side, so the session can go once
+	// the Episode is safe — but only when configured to: kept sessions
+	// remain inspectable in the Anthropic Console for prompt work.
+	if r.deleteSessions && g.SessionID != "" {
 		if err := r.api.DeleteSession(ctx, g.SessionID); err != nil {
 			r.log.Warn("generation: could not delete session", "session", g.SessionID, "err", err)
 		}
