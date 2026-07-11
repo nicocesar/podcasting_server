@@ -37,11 +37,14 @@ func (instantAPI) SessionUsage(context.Context, string) (generation.Usage, error
 	return generation.Usage{InputTokens: 10, OutputTokens: 5}, nil
 }
 func (instantAPI) DeleteSession(context.Context, string) error { return nil }
-func (instantAPI) LastAgentMessage(context.Context, string) (string, error) {
-	return "```json\n" +
-		`{"title":"Generated","summary":"A summary.","script":"Spoken words.","sources":[]}` +
-		"\n```", nil
+func (instantAPI) LastAgentMessage(context.Context, string) (string, error) { return "", nil }
+func (instantAPI) LastToolUse(_ context.Context, sessionID, _ string) (*generation.ToolUse, error) {
+	return &generation.ToolUse{
+		ID:    sessionID + "-use-0",
+		Input: []byte(`{"title":"Generated","summary":"A summary.","script":"Spoken words.","sources":[]}`),
+	}, nil
 }
+func (instantAPI) SendToolResult(context.Context, string, string, string, bool) error { return nil }
 
 type instantEngine struct{}
 

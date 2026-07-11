@@ -75,8 +75,64 @@ type Source struct {
 	Published string `json:"published,omitempty"`
 }
 
+// submitToolName is the custom tool the agent calls to hand over the
+// finished episode. Tool inputs arrive from the platform as parsed JSON,
+// so the old fenced-block failure mode — an unescaped newline inside a
+// hand-typed JSON string — cannot occur.
+const submitToolName = "submit_episode"
+
+// submitTool is the tool's platform definition, mirroring Script. It is
+// pushed by EnsureAgent next to the toolset; a change becomes a new
+// agent version, like the system prompt (ADR 0009).
+var submitTool = map[string]any{
+	"type":        "custom",
+	"name":        submitToolName,
+	"description": "Submit the finished podcast episode. Call this exactly once when the episode is complete. Never paste the episode into a chat message.",
+	"input_schema": map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"title":    map[string]any{"type": "string", "description": "Episode title, in the requested language, no date prefix."},
+			"summary":  map[string]any{"type": "string", "description": "2-4 sentences describing the episode, in the requested language."},
+			"language": map[string]any{"type": "string", "description": `BCP-47 primary tag of the language the script is actually written in, e.g. "en" or "es". Report it honestly — it is checked against the request.`},
+			"script":   map[string]any{"type": "string", "description": "The full spoken text: plain flowing prose, ready to voice."},
+			"sources": map[string]any{
+				"type":        "array",
+				"description": "Every source that informed the episode.",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"title":     map[string]any{"type": "string"},
+						"url":       map[string]any{"type": "string"},
+						"published": map[string]any{"type": "string", "description": "Publication date, YYYY-MM-DD, when known."},
+					},
+					"required": []string{"title", "url"},
+				},
+			},
+		},
+		"required": []string{"title", "summary", "language", "script", "sources"},
+	},
+}
+
+// ParseSubmission decodes a submit_episode tool input. The platform only
+// delivers well-formed JSON here; this validates the contract on top.
+func ParseSubmission(input []byte) (Script, error) {
+	var sc Script
+	if err := json.Unmarshal(input, &sc); err != nil {
+		return Script{}, fmt.Errorf("submission does not match the contract: %w", err)
+	}
+	if sc.Title == "" || sc.Script == "" {
+		return Script{}, fmt.Errorf("submission is missing title or script")
+	}
+	return sc, nil
+}
+
 // ParseScript extracts the Script from the agent's final message: the
 // last ```json fence, or the whole message if it is bare JSON.
+//
+// Legacy contract: sessions pin their agent version at creation, so a
+// Generation in flight across the deploy that introduced submit_episode
+// still answers with a fenced block. Kept so those land; delete once no
+// pre-tool session can resume.
 func ParseScript(msg string) (Script, error) {
 	raw := strings.TrimSpace(msg)
 	if i := strings.LastIndex(raw, "```json"); i >= 0 {
@@ -133,15 +189,9 @@ Writing rules:
 - Open by saying what the episode covers; close with a brief sign-off.
 - Hit the target word count within about ten percent. Do not pad with filler; if the well runs dry, go deeper on fewer stories.
 
-Output contract — this is parsed by a machine:
-When the episode is ready, reply with one final message whose entire content is a single fenced code block, opened with three backticks and the word json, containing exactly one JSON object with these fields and nothing else:
-{"title": "...", "summary": "...", "language": "...", "script": "...", "sources": [{"title": "...", "url": "...", "published": "YYYY-MM-DD"}]}
-- "title": the episode title, in the requested language, no date prefix.
-- "summary": 2-4 sentences describing the episode, in the requested language.
-- "language": the BCP-47 primary tag of the language the script is actually written in, e.g. "en" or "es". Report it honestly — it is checked against the request.
-- "script": the full spoken text.
-- "sources": every source that informed the episode, with its publication date when known.
-Do not put any text outside the fenced block in that final message.`
+Output contract:
+When the episode is ready, deliver it by calling the submit_episode tool exactly once, filling every field as its schema describes. Never paste the episode text, or any JSON version of it, into a chat message — only the tool call counts as delivery.
+If the tool result rejects the submission, it explains what is wrong: fix exactly that and call submit_episode again with the full corrected episode.`
 
 // userMessage is the per-session task: the request parameters the form
 // collected, resolved into concrete instructions.
@@ -153,8 +203,19 @@ func userMessage(topic string, lengthMinutes, freshnessDays int, language string
 	)
 }
 
-// translateMessage is the follow-up task sent when the agent's script
-// came back in the wrong language: translate in place, same contract.
+// wrongLanguageResult is the rejection sent as the submit_episode tool
+// result when the script came back in the wrong language: translate in
+// place and resubmit.
+func wrongLanguageResult(language string) string {
+	name := languageName(language)
+	return fmt.Sprintf(
+		"Rejected: the episode must be entirely in %s, but the script is in a different language. Translate the episode now — title, summary, and script all in %s — keep the sources exactly as they are, and call submit_episode again with the corrected \"language\" field.",
+		name, name,
+	)
+}
+
+// translateMessage is the legacy-contract counterpart of
+// wrongLanguageResult, sent as a user message to pre-tool sessions.
 func translateMessage(language string) string {
 	name := languageName(language)
 	return fmt.Sprintf(

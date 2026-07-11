@@ -34,6 +34,21 @@ func TestParseScript(t *testing.T) {
 	}
 }
 
+func TestParseSubmission(t *testing.T) {
+	sc, err := ParseSubmission([]byte(`{"title":"T","summary":"S","language":"en","script":"Hello there.","sources":[{"title":"A","url":"https://a.example"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.Title != "T" || sc.Language != "en" || len(sc.Sources) != 1 {
+		t.Fatalf("parsed %+v", sc)
+	}
+	for _, bad := range []string{`{"title":"only"}`, `{"script":"only"}`, `[1,2]`} {
+		if _, err := ParseSubmission([]byte(bad)); err == nil {
+			t.Fatalf("ParseSubmission(%s) succeeded, want error", bad)
+		}
+	}
+}
+
 func TestScriptDescription(t *testing.T) {
 	sc := Script{
 		Summary: "What happened.",

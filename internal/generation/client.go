@@ -32,7 +32,20 @@ type API interface {
 	// LastAgentMessage returns the text of the most recent agent message
 	// in the session's event history ("" when the agent has not spoken).
 	LastAgentMessage(ctx context.Context, sessionID string) (string, error)
+	// LastToolUse returns the most recent call of the named custom tool
+	// in the session's event history (nil when there is none).
+	LastToolUse(ctx context.Context, sessionID, name string) (*ToolUse, error)
+	// SendToolResult answers a custom tool call, unblocking the session.
+	SendToolResult(ctx context.Context, sessionID, toolUseID, text string, isError bool) error
 	DeleteSession(ctx context.Context, sessionID string) error
+}
+
+// ToolUse is one custom tool call from the event stream. Answered means
+// a tool result for it was already sent (a session accepts exactly one).
+type ToolUse struct {
+	ID       string
+	Input    json.RawMessage
+	Answered bool
 }
 
 // Client is a minimal Managed Agents REST client — only what the
@@ -53,18 +66,22 @@ func NewClient(apiKey string) *Client {
 }
 
 // agentTools: web research plus file read/write (oversized tool outputs
-// land in sandbox files the agent must read back). No bash — the agent
-// only writes text (ADR 0009).
-var agentTools = []map[string]any{{
-	"type":           "agent_toolset_20260401",
-	"default_config": map[string]any{"enabled": false},
-	"configs": []map[string]any{
-		{"name": "web_search", "enabled": true},
-		{"name": "web_fetch", "enabled": true},
-		{"name": "read", "enabled": true},
-		{"name": "write", "enabled": true},
+// land in sandbox files the agent must read back), and the custom
+// submit_episode tool the episode is delivered through. No bash — the
+// agent only writes text (ADR 0009).
+var agentTools = []map[string]any{
+	{
+		"type":           "agent_toolset_20260401",
+		"default_config": map[string]any{"enabled": false},
+		"configs": []map[string]any{
+			{"name": "web_search", "enabled": true},
+			{"name": "web_fetch", "enabled": true},
+			{"name": "read", "enabled": true},
+			{"name": "write", "enabled": true},
+		},
 	},
-}}
+	submitTool,
+}
 
 type apiError struct {
 	status int
@@ -292,6 +309,11 @@ type sessionEvent struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
+	// agent.custom_tool_use events
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
+	// user.custom_tool_result events
+	CustomToolUseID string `json:"custom_tool_use_id"`
 }
 
 func (c *Client) LastAgentMessage(ctx context.Context, sessionID string) (string, error) {
@@ -325,6 +347,51 @@ func (c *Client) LastAgentMessage(ctx context.Context, sessionID string) (string
 		}
 		page = pg.NextPage
 	}
+}
+
+func (c *Client) LastToolUse(ctx context.Context, sessionID, name string) (*ToolUse, error) {
+	var last *ToolUse
+	answered := map[string]bool{}
+	page := ""
+	for {
+		q := "?limit=100"
+		if page != "" {
+			q += "&page=" + url.QueryEscape(page)
+		}
+		var pg listPage[sessionEvent]
+		if err := c.do(ctx, http.MethodGet, "/v1/sessions/"+sessionID+"/events"+q, nil, &pg); err != nil {
+			return nil, err
+		}
+		for _, ev := range pg.Data {
+			switch ev.Type {
+			case "agent.custom_tool_use":
+				if ev.Name == name {
+					last = &ToolUse{ID: ev.ID, Input: ev.Input}
+				}
+			case "user.custom_tool_result":
+				answered[ev.CustomToolUseID] = true
+			}
+		}
+		if pg.NextPage == "" || pg.NextPage == "null" {
+			break
+		}
+		page = pg.NextPage
+	}
+	if last != nil {
+		last.Answered = answered[last.ID]
+	}
+	return last, nil
+}
+
+func (c *Client) SendToolResult(ctx context.Context, sessionID, toolUseID, text string, isError bool) error {
+	return c.do(ctx, http.MethodPost, "/v1/sessions/"+sessionID+"/events", map[string]any{
+		"events": []map[string]any{{
+			"type":               "user.custom_tool_result",
+			"custom_tool_use_id": toolUseID,
+			"content":            []map[string]any{{"type": "text", "text": text}},
+			"is_error":           isError,
+		}},
+	}, nil)
 }
 
 func (c *Client) DeleteSession(ctx context.Context, sessionID string) error {

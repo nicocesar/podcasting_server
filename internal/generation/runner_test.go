@@ -17,27 +17,42 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/tts"
 )
 
-const scriptReply = "Done.\n```json\n" +
-	`{"title":"Fusion This Week","summary":"The state of fusion.","language":"en","script":"Hello. Fusion news. Goodbye.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}` +
-	"\n```"
+const scriptInput = `{"title":"Fusion This Week","summary":"The state of fusion.","language":"en","script":"Hello. Fusion news. Goodbye.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}`
 
-const spanishReply = "Listo.\n```json\n" +
-	`{"title":"La fusión esta semana","summary":"El estado de la fusión.","language":"es","script":"Hola. Noticias de fusión. Adiós.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}` +
-	"\n```"
+const spanishInput = `{"title":"La fusión esta semana","summary":"El estado de la fusión.","language":"es","script":"Hola. Noticias de fusión. Adiós.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}`
+
+// legacyScriptReply is the pre-tool contract: the episode as a fenced
+// json block in a chat message.
+const legacyScriptReply = "Done.\n```json\n" + scriptInput + "\n```"
+
+type toolResult struct {
+	id      string
+	text    string
+	isError bool
+}
 
 // fakeAPI is an in-memory Managed Agents platform: sessions go idle
-// immediately and answer each sent message with the next canned reply
-// (the last reply repeats when messages outnumber replies).
+// immediately; once the task is sent the agent has called submit_episode
+// with the first canned submission, and each rejected result advances to
+// the next one (the last submission repeats). With legacyReplies set the
+// agent predates the tool and answers each sent message with the next
+// canned chat reply instead.
 type fakeAPI struct {
-	mu       sync.Mutex
-	sessions int
-	sent     map[string][]string
-	deleted  []string
-	replies  []string
+	mu            sync.Mutex
+	sessions      int
+	sent          map[string][]string
+	results       map[string][]toolResult
+	deleted       []string
+	submissions   []string
+	legacyReplies []string
 }
 
 func newFakeAPI() *fakeAPI {
-	return &fakeAPI{sent: map[string][]string{}, replies: []string{scriptReply}}
+	return &fakeAPI{
+		sent:        map[string][]string{},
+		results:     map[string][]toolResult{},
+		submissions: []string{scriptInput},
+	}
 }
 
 func (f *fakeAPI) EnsureAgent(context.Context, string, string, string) (string, error) {
@@ -69,13 +84,46 @@ func (f *fakeAPI) LastAgentMessage(_ context.Context, sessionID string) (string,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n := len(f.sent[sessionID])
-	if n == 0 {
+	if n == 0 || len(f.legacyReplies) == 0 {
 		return "", nil
 	}
-	if n > len(f.replies) {
-		n = len(f.replies)
+	if n > len(f.legacyReplies) {
+		n = len(f.legacyReplies)
 	}
-	return f.replies[n-1], nil
+	return f.legacyReplies[n-1], nil
+}
+
+func (f *fakeAPI) LastToolUse(_ context.Context, sessionID, name string) (*ToolUse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if name != submitToolName || len(f.submissions) == 0 || len(f.sent[sessionID]) == 0 {
+		return nil, nil
+	}
+	// Each rejection makes the agent resubmit: the current call is the
+	// one after the last rejected result.
+	idx := 0
+	for _, res := range f.results[sessionID] {
+		if res.isError {
+			idx++
+		}
+	}
+	if idx >= len(f.submissions) {
+		idx = len(f.submissions) - 1
+	}
+	use := &ToolUse{ID: fmt.Sprintf("%s-use-%d", sessionID, idx), Input: []byte(f.submissions[idx])}
+	for _, res := range f.results[sessionID] {
+		if res.id == use.ID {
+			use.Answered = true
+		}
+	}
+	return use, nil
+}
+
+func (f *fakeAPI) SendToolResult(_ context.Context, sessionID, toolUseID, text string, isError bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.results[sessionID] = append(f.results[sessionID], toolResult{id: toolUseID, text: text, isError: isError})
+	return nil
 }
 
 func (f *fakeAPI) DeleteSession(_ context.Context, sessionID string) error {
@@ -200,6 +248,10 @@ func TestPipelineHappyPath(t *testing.T) {
 			t.Errorf("task missing %q:\n%s", want, task)
 		}
 	}
+	// The submission was acknowledged, unblocking the session.
+	if res := api.results["sess-1"]; len(res) != 1 || res[0].isError {
+		t.Errorf("tool results = %+v, want a single accepting ack", res)
+	}
 	// The meters recorded what the run consumed.
 	if g.SessionsCount != 1 || g.InputTokens != 100 || g.OutputTokens != 40 ||
 		g.CacheReadTokens != 10 || g.CacheWriteTokens != 5 {
@@ -237,12 +289,12 @@ func TestDeleteSessionsOptIn(t *testing.T) {
 }
 
 // TestWrongLanguageGetsTranslated: the agent researches in Spanish and
-// replies with a Spanish script; the runner asks for a translation in the
-// same session and voices the English reply that follows.
+// submits a Spanish script; the runner rejects the submission with a
+// translation instruction and voices the English resubmission.
 func TestWrongLanguageGetsTranslated(t *testing.T) {
 	st := testStore(t)
 	api := newFakeAPI()
-	api.replies = []string{spanishReply, scriptReply}
+	api.submissions = []string{spanishInput, scriptInput}
 	r := testRunner(st, api, fakeEngine{name: "fake"})
 
 	g := newGeneration() // Language: "en"
@@ -252,13 +304,16 @@ func TestWrongLanguageGetsTranslated(t *testing.T) {
 	r.Kick(g)
 	g = waitStage(t, st, store.GenDone)
 
-	msgs := api.sent["sess-1"]
-	if len(msgs) != 2 {
-		t.Fatalf("messages sent = %d, want 2 (task + translation)", len(msgs))
+	if msgs := api.sent["sess-1"]; len(msgs) != 1 {
+		t.Fatalf("messages sent = %d, want 1 (the task; translation goes via the tool result)", len(msgs))
+	}
+	res := api.results["sess-1"]
+	if len(res) != 2 || !res[0].isError || res[1].isError {
+		t.Fatalf("tool results = %+v, want a rejection then an ack", res)
 	}
 	for _, want := range []string{"Translate", "English"} {
-		if !strings.Contains(msgs[1], want) {
-			t.Errorf("translation request missing %q:\n%s", want, msgs[1])
+		if !strings.Contains(res[0].text, want) {
+			t.Errorf("rejection missing %q:\n%s", want, res[0].text)
 		}
 	}
 	// The stored Script is the translated one.
@@ -271,6 +326,27 @@ func TestWrongLanguageGetsTranslated(t *testing.T) {
 	}
 	if ep.Title != "Fusion This Week" {
 		t.Errorf("episode title = %q, want the translated title", ep.Title)
+	}
+}
+
+// TestLegacySessionStillLands: a session created before the
+// submit_episode tool (in flight across the deploy) answers with the old
+// fenced-block contract and must still produce its Episode.
+func TestLegacySessionStillLands(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	api.submissions = nil // the pinned agent version has no tool
+	api.legacyReplies = []string{legacyScriptReply}
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+
+	g := newGeneration()
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenDone)
+	if !strings.Contains(g.Script, "Fusion This Week") {
+		t.Errorf("stored script = %s", g.Script)
 	}
 }
 

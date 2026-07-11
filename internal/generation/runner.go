@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -241,12 +242,16 @@ func (r *Runner) recordSessionUsage(ctx context.Context, g *store.Generation) {
 	g.CacheWriteTokens += u.CacheWriteTokens
 }
 
-// research drives the managed-agent session to a parsed Script in the
-// requested language. Resume-safe at every crash point: no session yet →
-// create one; session idle with no reply → (re)send the task; agent
-// already replied → parse it. A script that comes back in the wrong
-// language (research sources often set the agent's tongue) gets one
-// translation round in the same session before the timeout decides.
+// research drives the managed-agent session to a Script in the requested
+// language, delivered through the submit_episode tool: the agent calls
+// it, the session blocks awaiting our tool result, and the result either
+// accepts (ack, checkpoint) or rejects with what to fix (the agent then
+// resubmits). Resume-safe at every crash point: no session yet → create
+// one; session idle with no submission → (re)send the task; submission
+// pending → judge it; accepted-but-uncheckpointed → judge it again, the
+// answered ack is simply not re-sent. A script that comes back in the
+// wrong language (research sources often set the agent's tongue) gets
+// one rejection round before the pipeline gives up.
 func (r *Runner) research(ctx context.Context, g store.Generation) (store.Generation, error) {
 	if err := r.provision(ctx); err != nil {
 		return g, err
@@ -279,15 +284,26 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 		case "terminated":
 			return g, fmt.Errorf("agent session terminated")
 		case "idle":
+			use, err := r.api.LastToolUse(ctx, g.SessionID, submitToolName)
+			if err != nil {
+				return g, fmt.Errorf("fetch agent output: %w", err)
+			}
+			if use != nil {
+				g, done, err := r.judgeSubmission(ctx, g, use, &translationRequested)
+				if done || err != nil {
+					return g, err
+				}
+				break // rejected: keep polling for the resubmission
+			}
+			// No tool call. A fenced message is a session from before
+			// the submit_episode tool (in flight across the deploy),
+			// still following the legacy contract; anything else is
+			// narration, not a delivery.
 			msg, err := r.api.LastAgentMessage(ctx, g.SessionID)
 			if err != nil {
 				return g, fmt.Errorf("fetch agent output: %w", err)
 			}
-			if msg != "" {
-				script, err := ParseScript(msg)
-				if err != nil {
-					return g, err
-				}
+			if script, perr := ParseScript(msg); msg != "" && perr == nil {
 				// An unreported language (older agent version) is taken
 				// on faith; a reported mismatch gets a translation pass.
 				if lang := PrimaryTag(script.Language); lang != "" && lang != g.Language {
@@ -303,14 +319,9 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 					// untranslated one — keep polling for the new reply.
 					break
 				}
-				raw, err := json.Marshal(script)
-				if err != nil {
-					return g, err
-				}
-				r.recordSessionUsage(ctx, &g)
-				g.Script = string(raw)
-				g.Stage = store.GenVoicing
-				return g, r.store.PutGeneration(ctx, g)
+				return r.acceptScript(ctx, g, script)
+			} else if strings.Contains(msg, "```json") {
+				return g, perr // a legacy delivery that is broken JSON
 			}
 			if !sent {
 				task := userMessage(g.Topic, g.LengthMinutes, g.FreshnessDays, g.Language, time.Now())
@@ -326,6 +337,65 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 		case <-time.After(r.poll):
 		}
 	}
+}
+
+// judgeSubmission answers one submit_episode call: accept (ack + Script
+// checkpoint, done=true) or reject with what to fix (done=false, the
+// caller keeps polling for the resubmission). An already-answered call
+// is re-judged without re-answering — that is the crash-recovery path
+// (accepted but not yet checkpointed) and the already-rejected path
+// (waiting for the resubmission) in one.
+func (r *Runner) judgeSubmission(ctx context.Context, g store.Generation, use *ToolUse, translationRequested *bool) (store.Generation, bool, error) {
+	script, perr := ParseSubmission(use.Input)
+	if perr != nil {
+		if !use.Answered {
+			reject := "Rejected: " + perr.Error() + ". Fix that and call submit_episode again with the full episode."
+			if err := r.api.SendToolResult(ctx, g.SessionID, use.ID, reject, true); err != nil {
+				return g, false, fmt.Errorf("reject submission: %w", err)
+			}
+		}
+		return g, false, nil
+	}
+	// An unreported language is taken on faith; a reported mismatch gets
+	// one rejection round (research sources often set the agent's tongue).
+	if lang := PrimaryTag(script.Language); lang != "" && lang != g.Language {
+		if use.Answered {
+			// This is the submission we already rejected (possibly before
+			// a restart): the resubmission is still coming.
+			*translationRequested = true
+			return g, false, nil
+		}
+		if *translationRequested {
+			return g, false, fmt.Errorf("script is still in %q after a translation round (want %q)", lang, g.Language)
+		}
+		r.log.Info("generation: script in wrong language, translating",
+			"user", g.UserID, "id", g.ID, "got", lang, "want", g.Language)
+		if err := r.api.SendToolResult(ctx, g.SessionID, use.ID, wrongLanguageResult(g.Language), true); err != nil {
+			return g, false, fmt.Errorf("request translation: %w", err)
+		}
+		*translationRequested = true
+		return g, false, nil
+	}
+	if !use.Answered {
+		if err := r.api.SendToolResult(ctx, g.SessionID, use.ID, "Episode received and accepted. You are done.", false); err != nil {
+			return g, false, fmt.Errorf("acknowledge submission: %w", err)
+		}
+	}
+	g, err := r.acceptScript(ctx, g, script)
+	return g, true, err
+}
+
+// acceptScript checkpoints the Script: the durable midpoint after which
+// research is never repeated (ADR 0009).
+func (r *Runner) acceptScript(ctx context.Context, g store.Generation, script Script) (store.Generation, error) {
+	raw, err := json.Marshal(script)
+	if err != nil {
+		return g, err
+	}
+	r.recordSessionUsage(ctx, &g)
+	g.Script = string(raw)
+	g.Stage = store.GenVoicing
+	return g, r.store.PutGeneration(ctx, g)
 }
 
 func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store.Generation, error) {
