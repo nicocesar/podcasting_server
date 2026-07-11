@@ -283,23 +283,39 @@ func (c *Client) SessionStatus(ctx context.Context, sessionID string) (string, e
 	return s.Status, nil
 }
 
-// Usage is a session's aggregate token consumption, as reported on the
-// session object. Field names follow the platform's model_usage shape.
+// Usage is a session's aggregate token consumption, flattened for the
+// Generation meters. Careful: the session object is NOT the flat
+// model_usage shape that span events use — cache writes arrive as a
+// nested cache_creation object keyed by TTL, and a flat
+// cache_creation_input_tokens field silently parses as 0.
 type Usage struct {
-	InputTokens      int64 `json:"input_tokens"`
-	OutputTokens     int64 `json:"output_tokens"`
-	CacheReadTokens  int64 `json:"cache_read_input_tokens"`
-	CacheWriteTokens int64 `json:"cache_creation_input_tokens"`
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
 }
 
 func (c *Client) SessionUsage(ctx context.Context, sessionID string) (Usage, error) {
 	var s struct {
-		Usage Usage `json:"usage"`
+		Usage struct {
+			InputTokens     int64 `json:"input_tokens"`
+			OutputTokens    int64 `json:"output_tokens"`
+			CacheReadTokens int64 `json:"cache_read_input_tokens"`
+			CacheCreation   struct {
+				Ephemeral5m int64 `json:"ephemeral_5m_input_tokens"`
+				Ephemeral1h int64 `json:"ephemeral_1h_input_tokens"`
+			} `json:"cache_creation"`
+		} `json:"usage"`
 	}
 	if err := c.do(ctx, http.MethodGet, "/v1/sessions/"+sessionID, nil, &s); err != nil {
 		return Usage{}, err
 	}
-	return s.Usage, nil
+	return Usage{
+		InputTokens:      s.Usage.InputTokens,
+		OutputTokens:     s.Usage.OutputTokens,
+		CacheReadTokens:  s.Usage.CacheReadTokens,
+		CacheWriteTokens: s.Usage.CacheCreation.Ephemeral5m + s.Usage.CacheCreation.Ephemeral1h,
+	}, nil
 }
 
 type sessionEvent struct {
