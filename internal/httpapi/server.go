@@ -196,6 +196,7 @@ func New(cfg Config) (http.Handler, error) {
 	// Admin cost reporting: real billed dollars from Anthropic's Usage &
 	// Cost Admin API, to reconcile against per-Generation meters.
 	mux.HandleFunc("GET /admin/costs", s.admin(s.handleAdminCosts))
+	mux.HandleFunc("GET /admin/costs/episodes", s.admin(s.handleAdminEpisodeCosts))
 	mux.HandleFunc("GET /admin/usage", s.admin(s.handleAdminUsage))
 
 	return s.logged(mux), nil
