@@ -82,7 +82,8 @@ async function api(path, opts = {}) {
   if (opts.body) opts.headers = {"Content-Type": "application/json"};
   const r = await fetch(path, opts);
   if (!r.ok) throw new Error((await r.text()).trim() || r.status);
-  return r.status === 204 ? null : r.json();
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
 }
 
 function wireCopy(row) {
