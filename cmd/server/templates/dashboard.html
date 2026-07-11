@@ -45,7 +45,7 @@
     {{if .Generations}}
     <h3 class="muted">In progress</h3>
     {{range .Generations}}
-    <div class="invite-row">
+    <div class="invite-row gen-row">
       <code class="feed-url">{{.Topic}}</code>
       <span class="muted">{{.StageLabel}}</span>
       <a class="button" href="/me/generations/{{.ID}}">View</a>
@@ -92,7 +92,7 @@ function wireCopy(row) {
     setTimeout(() => (e.target.textContent = "Copy"), 1500);
   };
 }
-document.querySelectorAll(".invite-row").forEach(wireCopy);
+document.querySelectorAll(".invite-row:not(.gen-row)").forEach(wireCopy);
 
 document.getElementById("reset-feed").onclick = async () => {
   if (!confirm("Mint a new feed URL? The current one stops working immediately and your podcast app must resubscribe (scan the new QR)."))
