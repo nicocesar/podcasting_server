@@ -1,12 +1,15 @@
 package httpapi
 
 // GET /admin/costs and /admin/usage proxy Anthropic's Usage & Cost Admin
-// API: real billed dollars (cost_report, daily × model) and token buckets
+// API: real billed money (cost_report, daily × model) and token buckets
 // (usage_report). The per-Generation meters answer "what did this episode
 // consume"; these answer "what did Anthropic actually charge" — no price
-// table to maintain in between. Responses are passed through verbatim.
+// table to maintain in between. The usage report is passed through
+// verbatim; the cost report has its amounts converted from cents (the
+// upstream unit, despite each result saying "currency": "USD") to dollars.
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,22 +40,23 @@ func newAnthropicAdmin(key, baseURL string) *anthropicAdmin {
 	}
 }
 
-// handleAdminCosts serves the cost report: USD (in cents) per day,
-// grouped by description (which carries the model). ?days=N (1-31,
-// default 30); ?page= forwards the API's pagination cursor.
+// handleAdminCosts serves the cost report: USD per day, grouped by
+// description (which carries the model). Upstream amounts arrive in
+// cents and are converted to dollars. ?days=N (1-31, default 30);
+// ?page= forwards the API's pagination cursor.
 func (s *server) handleAdminCosts(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{"group_by[]": {"description"}}
-	s.adminAPI.proxy(w, r, "/v1/organizations/cost_report", 30, q)
+	s.adminAPI.proxy(w, r, "/v1/organizations/cost_report", 30, q, centsToDollars)
 }
 
 // handleAdminUsage serves daily token buckets grouped by model.
 // ?days=N (1-31, default 7); ?page= forwards the pagination cursor.
 func (s *server) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 	q := url.Values{"group_by[]": {"model"}}
-	s.adminAPI.proxy(w, r, "/v1/organizations/usage_report/messages", 7, q)
+	s.adminAPI.proxy(w, r, "/v1/organizations/usage_report/messages", 7, q, nil)
 }
 
-func (a *anthropicAdmin) proxy(w http.ResponseWriter, r *http.Request, path string, defaultDays int, q url.Values) {
+func (a *anthropicAdmin) proxy(w http.ResponseWriter, r *http.Request, path string, defaultDays int, q url.Values, transform func([]byte) ([]byte, error)) {
 	if a == nil {
 		http.Error(w, "cost reporting is not configured on this server (set ANTHROPIC_ADMIN_KEY)", http.StatusServiceUnavailable)
 		return
@@ -89,6 +93,54 @@ func (a *anthropicAdmin) proxy(w http.ResponseWriter, r *http.Request, path stri
 	}
 	defer resp.Body.Close()
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body) //nolint:errcheck // best effort once headers are sent
+	if transform == nil || resp.StatusCode != http.StatusOK {
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body) //nolint:errcheck // best effort once headers are sent
+		return
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("anthropic admin api: %v", err), http.StatusBadGateway)
+		return
+	}
+	out, err := transform(body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("anthropic admin api: %v", err), http.StatusBadGateway)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write(out) //nolint:errcheck // best effort once headers are sent
+}
+
+// centsToDollars rewrites every "amount" field in the cost report from
+// cents (the unit the upstream API bills in) to dollars, so the JSON
+// means what its "currency": "USD" field implies.
+func centsToDollars(body []byte) ([]byte, error) {
+	var doc any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+	convertAmounts(doc)
+	return json.Marshal(doc)
+}
+
+func convertAmounts(v any) {
+	switch node := v.(type) {
+	case map[string]any:
+		for k, child := range node {
+			if k == "amount" {
+				if s, ok := child.(string); ok {
+					if cents, err := strconv.ParseFloat(s, 64); err == nil {
+						node[k] = strconv.FormatFloat(cents/100, 'f', -1, 64)
+					}
+				}
+				continue
+			}
+			convertAmounts(child)
+		}
+	case []any:
+		for _, child := range node {
+			convertAmounts(child)
+		}
+	}
 }

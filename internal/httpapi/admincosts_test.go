@@ -52,7 +52,8 @@ func TestAdminCostsProxiesTheCostReport(t *testing.T) {
 		if got := q["group_by[]"]; len(got) != 1 || got[0] != "description" {
 			t.Errorf("group_by = %v", got)
 		}
-		fmt.Fprint(w, `{"data":[{"amount":"1234","description":"claude-sonnet-5"}],"has_more":false}`)
+		// The upstream API reports amounts in cents.
+		fmt.Fprint(w, `{"data":[{"starting_at":"2026-07-10T00:00:00Z","results":[{"currency":"USD","amount":"116.3715","description":"Claude Sonnet 5 Usage - Input Tokens, Cache Write","model":"claude-sonnet-5"}]}],"has_more":false}`)
 	}))
 	defer upstream.Close()
 	ts := newCostReportingServer(t, upstream.URL)
@@ -65,6 +66,10 @@ func TestAdminCostsProxiesTheCostReport(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "claude-sonnet-5") {
 		t.Errorf("body = %s", body)
+	}
+	// Amounts are converted from the upstream's cents to dollars.
+	if !strings.Contains(string(body), `"amount":"1.163715"`) {
+		t.Errorf("amount not converted to dollars: %s", body)
 	}
 
 	// Guarded like every other /admin endpoint.
