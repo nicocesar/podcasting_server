@@ -19,7 +19,7 @@ func TestEdgeSmoke(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	v, _ := VoiceFor("en")
+	v, _ := VoiceFor("en", "")
 	b, err := NewEdge().Synthesize(ctx, "Hello from the podcasting server smoke test.", v)
 	if err != nil {
 		t.Fatal(err)

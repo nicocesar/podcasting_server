@@ -26,7 +26,13 @@
 
     <label for="language">Output language</label>
     <select id="language" name="language">
-      {{range .Voices}}<option value="{{.Language}}">{{.Label}}</option>{{end}}
+      {{range .Languages}}<option value="{{.Language}}">{{.Label}}</option>{{end}}
+    </select>
+
+    <label for="voice">Voice</label>
+    <select id="voice" name="voice">
+      <option value="female">Female</option>
+      <option value="male">Male</option>
     </select>
 
     <button type="submit">Generate</button>

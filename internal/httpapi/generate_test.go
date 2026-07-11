@@ -112,7 +112,7 @@ func TestGenerateFlow(t *testing.T) {
 
 	// Submitting starts a Generation and answers JSON (non-browser).
 	resp = postGenerate(t, ts, alice, url.Values{
-		"topic": {"fusion energy"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"},
+		"topic": {"fusion energy"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"},
 	})
 	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
@@ -186,11 +186,13 @@ func TestGenerateValidation(t *testing.T) {
 	ts := newGeneratingServer(t)
 	alice := createUser(t, ts, "alice")
 	bad := []url.Values{
-		{"topic": {""}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}},
-		{"topic": {"x"}, "length": {"7"}, "freshness": {"7"}, "language": {"en"}},
-		{"topic": {"x"}, "length": {"5"}, "freshness": {"2"}, "language": {"en"}},
-		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"fr"}},
-		{"topic": {strings.Repeat("a", 501)}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}},
+		{"topic": {""}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}},
+		{"topic": {"x"}, "length": {"7"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}},
+		{"topic": {"x"}, "length": {"5"}, "freshness": {"2"}, "language": {"en"}, "voice": {"female"}},
+		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"fr"}, "voice": {"female"}},
+		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"robot"}},
+		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}},
+		{"topic": {strings.Repeat("a", 501)}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}},
 	}
 	for i, form := range bad {
 		resp := postGenerate(t, ts, alice, form)
@@ -207,7 +209,7 @@ func TestGenerationIsOwnerScoped(t *testing.T) {
 	bob := createUser(t, ts, "bob")
 
 	resp := postGenerate(t, ts, alice, url.Values{
-		"topic": {"private"}, "length": {"2"}, "freshness": {"1"}, "language": {"en"},
+		"topic": {"private"}, "length": {"2"}, "freshness": {"1"}, "language": {"en"}, "voice": {"male"},
 	})
 	var g store.Generation
 	json.NewDecoder(resp.Body).Decode(&g)

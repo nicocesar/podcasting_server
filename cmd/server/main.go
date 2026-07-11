@@ -32,8 +32,7 @@ var assetsFS embed.FS
 var versionByte []byte
 
 // versionHandler serves the embedded build version as plain text.
-func versionHandler() http.HandlerFunc {
-	version := strings.TrimSpace(string(versionByte))
+func versionHandler(version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintln(w, version)
@@ -127,6 +126,7 @@ func run(log *slog.Logger) error {
 		log.Info("cost reporting: enabled (/admin/costs, /admin/usage)")
 	}
 
+	version := strings.TrimSpace(string(versionByte))
 	handler, err := httpapi.New(httpapi.Config{
 		Store:             st,
 		BaseURL:           os.Getenv("BASE_URL"),
@@ -135,6 +135,7 @@ func run(log *slog.Logger) error {
 		Logger:            log,
 		Generator:         generator,
 		AnthropicAdminKey: adminKey,
+		Version:           version,
 	})
 	if err != nil {
 		return err
@@ -143,7 +144,7 @@ func run(log *slog.Logger) error {
 	// /version fronts the app handler: a deploy-tracking probe on the
 	// Public Surface, like /healthz.
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /version", versionHandler())
+	mux.HandleFunc("GET /version", versionHandler(version))
 	mux.Handle("/", handler)
 
 	addr := ":" + env("PORT", "8080")

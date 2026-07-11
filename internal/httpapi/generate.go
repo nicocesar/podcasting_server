@@ -34,7 +34,7 @@ func (s *server) generating(h authedHandler) authedHandler {
 type generatePage struct {
 	Lengths   []int
 	Freshness []generation.FreshnessOption
-	Voices    []tts.Voice
+	Languages []tts.Voice // one entry per language
 	Error     string
 	Topic     string
 }
@@ -43,7 +43,7 @@ func (s *server) handleGeneratePage(w http.ResponseWriter, r *http.Request, _ st
 	s.render(w, http.StatusOK, s.tmplGenerate, generatePage{
 		Lengths:   generation.Lengths,
 		Freshness: generation.FreshnessOptions,
-		Voices:    tts.Voices,
+		Languages: tts.Languages(),
 	})
 }
 
@@ -54,7 +54,7 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		s.render(w, http.StatusBadRequest, s.tmplGenerate, generatePage{
 			Lengths:   generation.Lengths,
 			Freshness: generation.FreshnessOptions,
-			Voices:    tts.Voices,
+			Languages: tts.Languages(),
 			Error:     msg,
 			Topic:     r.FormValue("topic"),
 		})
@@ -76,8 +76,13 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	language := r.FormValue("language")
-	if _, ok := tts.VoiceFor(language); !ok {
+	if _, ok := tts.VoiceFor(language, ""); !ok {
 		retry("Pick a language from the list.")
+		return
+	}
+	voice := r.FormValue("voice")
+	if _, ok := tts.VoiceFor(language, voice); voice == "" || !ok {
+		retry("Pick a voice from the list.")
 		return
 	}
 
@@ -93,6 +98,7 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		LengthMinutes: length,
 		FreshnessDays: freshness,
 		Language:      language,
+		Voice:         voice,
 		Stage:         store.GenResearching,
 		Active:        true,
 		CreatedAt:     time.Now().UTC(),

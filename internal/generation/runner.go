@@ -403,7 +403,7 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	if err := json.Unmarshal([]byte(g.Script), &script); err != nil {
 		return g, fmt.Errorf("stored script is corrupt: %w", err)
 	}
-	voice, ok := tts.VoiceFor(g.Language)
+	voice, ok := tts.VoiceFor(g.Language, g.Voice)
 	if !ok {
 		return g, fmt.Errorf("no voice for language %q", g.Language)
 	}

@@ -17,29 +17,61 @@ type Engine interface {
 	Synthesize(ctx context.Context, text string, v Voice) ([]byte, error)
 }
 
-// Voice is one curated voice per Language, resolved to each engine's own
-// voice ID. The Language dropdown on /me/generate maps here.
+// Voice is one curated voice per Language and Gender, resolved to each
+// engine's own voice ID. The Language and Voice dropdowns on /me/generate
+// map here.
 type Voice struct {
 	Language   string // BCP-47 primary tag, e.g. "en"
-	Label      string // what the dropdown shows
+	Label      string // what the Language dropdown shows
+	Gender     string // "female" or "male"
 	Edge       string // edge-tts voice short name
 	Google     string // Google Cloud TTS voice name
 	GoogleLang string // Google language code, e.g. "en-US"
 }
 
-// Voices is the curated Language list, in dropdown order. The first entry
-// is the default.
+// Voices is the curated list, in dropdown order. The first entry per
+// Language is its default. Spanish speaks Argentinian on edge-tts; Google
+// has no es-AR locale, so its fallback is Latin American (es-US).
 var Voices = []Voice{
-	{Language: "en", Label: "English", Edge: "en-US-AriaNeural", Google: "en-US-Neural2-F", GoogleLang: "en-US"},
-	{Language: "es", Label: "Español", Edge: "es-ES-ElviraNeural", Google: "es-ES-Neural2-A", GoogleLang: "es-ES"},
+	{Language: "en", Label: "English", Gender: "female", Edge: "en-US-AriaNeural", Google: "en-US-Neural2-F", GoogleLang: "en-US"},
+	{Language: "en", Label: "English", Gender: "male", Edge: "en-US-GuyNeural", Google: "en-US-Neural2-D", GoogleLang: "en-US"},
+	{Language: "es", Label: "Español", Gender: "female", Edge: "es-AR-ElenaNeural", Google: "es-US-Neural2-A", GoogleLang: "es-US"},
+	{Language: "es", Label: "Español", Gender: "male", Edge: "es-AR-TomasNeural", Google: "es-US-Neural2-B", GoogleLang: "es-US"},
 }
 
-// VoiceFor resolves a Language to its curated Voice.
-func VoiceFor(language string) (Voice, bool) {
+// Languages returns one Voice per Language, in dropdown order, for the
+// Language dropdown.
+func Languages() []Voice {
+	seen := map[string]bool{}
+	out := []Voice{}
 	for _, v := range Voices {
-		if v.Language == language {
-			return v, true
+		if !seen[v.Language] {
+			seen[v.Language] = true
+			out = append(out, v)
 		}
+	}
+	return out
+}
+
+// VoiceFor resolves a Language and Gender to a curated Voice. An empty
+// gender (Generations that predate the voice picker) gets the Language's
+// default.
+func VoiceFor(language, gender string) (Voice, bool) {
+	var def *Voice
+	for i := range Voices {
+		v := &Voices[i]
+		if v.Language != language {
+			continue
+		}
+		if v.Gender == gender {
+			return *v, true
+		}
+		if def == nil {
+			def = v
+		}
+	}
+	if gender == "" && def != nil {
+		return *def, true
 	}
 	return Voice{}, false
 }

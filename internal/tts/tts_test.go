@@ -96,10 +96,18 @@ func TestSynthesizeAllAllEnginesFail(t *testing.T) {
 }
 
 func TestVoiceFor(t *testing.T) {
-	if _, ok := VoiceFor("en"); !ok {
-		t.Fatal("no English voice")
+	if v, ok := VoiceFor("en", "male"); !ok || v.Edge != "en-US-GuyNeural" {
+		t.Fatalf("en/male = %+v, %v", v, ok)
 	}
-	if _, ok := VoiceFor("xx"); ok {
+	// Empty gender (records that predate the voice picker) gets the
+	// language's default.
+	if v, ok := VoiceFor("es", ""); !ok || v.Gender != "female" {
+		t.Fatalf("es default = %+v, %v", v, ok)
+	}
+	if _, ok := VoiceFor("en", "robot"); ok {
+		t.Fatal("made up a gender")
+	}
+	if _, ok := VoiceFor("xx", "female"); ok {
 		t.Fatal("made up a voice")
 	}
 }

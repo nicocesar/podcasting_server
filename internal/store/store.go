@@ -133,6 +133,7 @@ type Generation struct {
 	LengthMinutes int    `json:"length_minutes" datastore:"length_minutes,noindex"`
 	FreshnessDays int    `json:"freshness_days" datastore:"freshness_days,noindex"`
 	Language      string `json:"language" datastore:"language,noindex"`
+	Voice         string `json:"voice,omitempty" datastore:"voice,noindex"` // "female" or "male"; empty predates the voice picker
 
 	Stage string `json:"stage" datastore:"stage,noindex"`
 	// Active indexes the resume scan: true until done or failed.

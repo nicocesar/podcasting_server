@@ -63,6 +63,9 @@ type Config struct {
 	AnthropicAdminKey string
 	// AnthropicAdminBaseURL overrides the Admin API host (tests only).
 	AnthropicAdminBaseURL string
+	// Version is the running build (cmd/server embeds version.txt); the
+	// Dashboard shows it so users can tell which release they are on.
+	Version string
 }
 
 type server struct {
@@ -72,6 +75,7 @@ type server struct {
 	log       *slog.Logger
 	generator *generation.Runner
 	adminAPI  *anthropicAdmin
+	version   string
 
 	tmplHome       *template.Template
 	tmplUser       *template.Template
@@ -94,6 +98,7 @@ func New(cfg Config) (http.Handler, error) {
 		log:       cfg.Logger,
 		generator: cfg.Generator,
 		adminAPI:  newAnthropicAdmin(cfg.AnthropicAdminKey, cfg.AnthropicAdminBaseURL),
+		version:   cfg.Version,
 	}
 	if s.log == nil {
 		s.log = slog.Default()
@@ -572,6 +577,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		Invites         []inviteView
 		GenerateEnabled bool
 		Generations     []generationView
+		Version         string
 		subscribeBox
 	}{
 		User:            u,
@@ -580,6 +586,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		Invites:         pending,
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
+		Version:         s.version,
 		subscribeBox:    s.subscribeBox(r, u),
 	})
 }
