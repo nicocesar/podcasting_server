@@ -61,10 +61,11 @@ func newGeneratingServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	handler, err := New(Config{
-		Store:      st,
-		AdminToken: adminToken,
-		Assets:     os.DirFS("../../cmd/server"),
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:         st,
+		AdminToken:    adminToken,
+		SessionSecret: "test-session-secret",
+		Assets:        os.DirFS("../../cmd/server"),
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Generator: generation.NewRunner(generation.Config{
 			Store:        st,
 			API:          instantAPI{},
@@ -167,9 +168,9 @@ func TestGenerateFlow(t *testing.T) {
 		t.Fatalf("episodes = %+v", eps)
 	}
 
-	// The progress page renders as HTML for browsers.
+	// The progress page renders as HTML for logged-in browsers.
 	req, _ := http.NewRequest("GET", ts.URL+"/me/generations/"+g.ID, nil)
-	req.SetBasicAuth(alice.ID, alice.PublishToken)
+	req.AddCookie(&http.Cookie{Name: "session", Value: alice.Session})
 	req.Header.Set("Accept", "text/html")
 	htmlResp, err := http.DefaultClient.Do(req)
 	if err != nil {

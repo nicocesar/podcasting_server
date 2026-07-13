@@ -10,19 +10,49 @@ produced elsewhere; this context stores, lists, serves, and shares them.
 ### People & identity
 
 **User**:
-A person with an account: exactly one Personal Feed, a publish token (used
-by their Generator), and a Feed Token (used by their podcast client).
+A person with an account: exactly one Personal Feed, a Login for the
+webapp, API Keys for their Generators, and a Feed Token (used by their
+podcast client).
 _Avoid_: account, member, reader, writer
 
 **Owner**:
 The User whose Personal Feed an Episode was first published to — i.e. the
-publish token that created it. Immutable for the Episode's lifetime.
+API Key that created it. Immutable for the Episode's lifetime.
 _Avoid_: creator, author, uploader
 
 **Sharer**:
 The User whose Share placed an Episode into a particular Personal Feed.
 May differ from the Owner, since any recipient may share onward.
 _Avoid_: forwarder, sender
+
+### Credentials
+
+**Login**:
+How a User enters the webapp: a password, a linked Google identity, or
+both — at least one exists from Redemption onward. Google sign-in never
+creates an account; an unrecognized Google identity is turned away. There
+is no self-service password reset: a Google-linked User signs in with
+Google and changes the password; otherwise the admin resets it.
+_Avoid_: sign-in method, credentials (ambiguous)
+
+**Session**:
+The signed-in state of a browser after a Login, lasting weeks unless the
+User logs out or logs out everywhere. The only path to Credential
+Management.
+_Avoid_: cookie, login token
+
+**API Key**:
+A named, individually revocable credential a User mints for one Generator.
+Grants the Publishing Contract and the Management API but never Credential
+Management. The plaintext is shown exactly once, at minting; a User may
+hold many, and revoking one leaves the others working.
+_Avoid_: publish token, personal access token, secret
+
+**Credential Management**:
+The security-sensitive operations reachable only from a Session, never
+with an API Key: set or change the password, link or unlink Google, mint
+or revoke API Keys, reset the Feed Token.
+_Avoid_: account settings (broader), security page
 
 ### Feed & content
 
@@ -82,9 +112,10 @@ _Avoid_: signup link, referral, access code
 
 **Redemption**:
 The act of turning an Invite into a User on the public invite page: the
-invitee picks their username and receives their feed URL and publish
-token, shown exactly once. The only way to join — there is no open
-signup.
+invitee picks their username, establishes their Login (sets a password or
+links Google, their choice), and receives their feed URL. The only way to
+join — there is no open signup, and Google sign-in alone never creates an
+account.
 _Avoid_: registration, signup, onboarding
 
 ### Sharing
@@ -155,7 +186,7 @@ _Avoid_: transcript, draft
 **Generator**:
 Any actor that produces Episodes for a User and delivers them through the
 Publishing Contract. Two kinds exist: an external service authenticating
-with the User's publish token (out of scope except for the contract it
+with one of the User's API Keys (out of scope except for the contract it
 must honor), and the built-in Generation the server runs on the User's
 request.
 _Avoid_: producer, worker, cron job
@@ -175,7 +206,8 @@ _Avoid_: admin panel, backoffice
 
 **Public Surface**:
 The endpoints reachable with no secret at all: the landing page, static
-assets, and the Redemption page for a valid Invite token. Everything else
-requires a capability (Feed Token, Invite) or the publish token. The
-landing page lists nothing, so neither Users nor feeds are enumerable.
+assets, the login page, and the Redemption page for a valid Invite token.
+Everything else requires a capability (Feed Token, Invite), a Session, or
+an API Key. The landing page lists nothing, so neither Users nor feeds
+are enumerable.
 _Avoid_: public site, anonymous access

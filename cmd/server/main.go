@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -63,6 +65,11 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("ADMIN_TOKEN must be set (guards user provisioning)")
 	}
 
+	// SESSION_SECRET signs the webapp session cookies (ADR 0010). In
+	// production it must be stable across restarts and instances; for
+	// local dev an ephemeral one is minted (sessions die on restart).
+	sessionSecret := os.Getenv("SESSION_SECRET")
+
 	var st store.Store
 	var err error
 	backend := env("STORAGE", "fs")
@@ -74,10 +81,21 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		log.Info("storage: filesystem (dev only)", "dir", dataDir)
+		if sessionSecret == "" {
+			b := make([]byte, 32)
+			if _, err := rand.Read(b); err != nil {
+				return err
+			}
+			sessionSecret = hex.EncodeToString(b)
+			log.Warn("SESSION_SECRET not set; using an ephemeral one (logins do not survive restarts)")
+		}
 	case "gcp":
 		bucket := os.Getenv("GCS_BUCKET")
 		if bucket == "" {
 			return fmt.Errorf("GCS_BUCKET must be set when STORAGE=gcp")
+		}
+		if sessionSecret == "" {
+			return fmt.Errorf("SESSION_SECRET must be set when STORAGE=gcp (signs login sessions)")
 		}
 		st, err = gcpstore.New(ctx, os.Getenv("GCP_PROJECT"), bucket)
 		if err != nil {
@@ -86,6 +104,16 @@ func run(log *slog.Logger) error {
 		log.Info("storage: datastore + gcs", "bucket", bucket)
 	default:
 		return fmt.Errorf("unknown STORAGE %q (want fs or gcp)", backend)
+	}
+
+	// GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET turn on "Sign in with
+	// Google"; without them the webapp is password-only.
+	googleID := os.Getenv("GOOGLE_CLIENT_ID")
+	googleSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	if googleID != "" && googleSecret != "" {
+		log.Info("google sign-in: enabled")
+	} else {
+		log.Info("google sign-in: disabled (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET not set)")
 	}
 
 	// Built-in Generation (ADR 0009) turns on when an Anthropic key is
@@ -128,14 +156,17 @@ func run(log *slog.Logger) error {
 
 	version := strings.TrimSpace(string(versionByte))
 	handler, err := httpapi.New(httpapi.Config{
-		Store:             st,
-		BaseURL:           os.Getenv("BASE_URL"),
-		AdminToken:        adminToken,
-		Assets:            assetsFS,
-		Logger:            log,
-		Generator:         generator,
-		AnthropicAdminKey: adminKey,
-		Version:           version,
+		Store:              st,
+		BaseURL:            os.Getenv("BASE_URL"),
+		AdminToken:         adminToken,
+		SessionSecret:      sessionSecret,
+		GoogleClientID:     googleID,
+		GoogleClientSecret: googleSecret,
+		Assets:             assetsFS,
+		Logger:             log,
+		Generator:          generator,
+		AnthropicAdminKey:  adminKey,
+		Version:            version,
 	})
 	if err != nil {
 		return err

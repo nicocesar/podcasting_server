@@ -1,0 +1,23 @@
+{{define "title"}}Log in{{end}}
+{{define "content"}}
+<article class="card">
+  <h1>Log in</h1>
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+  <form method="post" action="/login" class="join">
+    <input type="hidden" name="next" value="{{.Next}}">
+    <label for="username">Username</label>
+    <input id="username" name="username" value="{{.Username}}" required autofocus
+           autocomplete="username" spellcheck="false">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required
+           autocomplete="current-password">
+    <button type="submit">Log in</button>
+  </form>
+  {{if .GoogleEnabled}}
+  <p class="muted">or</p>
+  <p><a class="button" href="/auth/google{{with .Next}}?next={{.}}{{end}}">Sign in with Google</a></p>
+  {{end}}
+  <p class="muted">No account? Joining is by invite only — ask a member for
+  an invite link.</p>
+</article>
+{{end}}

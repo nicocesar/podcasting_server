@@ -5,12 +5,8 @@
   <p>Your Personal Feed is ready{{if .SharedTitle}} — <em>{{.SharedTitle}}</em>
   is already in it{{end}}.</p>
   {{template "subscribe" .}}
-  <p class="warn"><strong>Save this now — it is shown exactly once.</strong></p>
-  <dl class="creds">
-    <dt>Publish token (for publishing, sharing, and the dashboard at /me)</dt>
-    <dd><code>{{.PublishToken}}</code></dd>
-  </dl>
-  <p class="muted">Lost the feed URL? Open <code>/me</code> with your
-  username and publish token — it is always there.</p>
+  <p class="muted">You are logged in. The <a href="/me">dashboard</a> has
+  this feed URL whenever you need it, plus API keys for publishing agents
+  and your account settings.</p>
 </article>
 {{end}}

@@ -23,10 +23,13 @@ func newStore(t *testing.T) *Store {
 func addUser(t *testing.T, s *Store, id string) {
 	t.Helper()
 	err := s.UpsertUser(context.Background(), store.User{
-		ID:          id,
-		Title:       id + "'s feed",
-		FeedToken:   "token-" + id,
-		PublishHash: "ph-" + id,
+		ID:                id,
+		Title:             id + "'s feed",
+		FeedToken:         "token-" + id,
+		PasswordHash:      "pw-" + id,
+		GoogleSub:         "sub-" + id,
+		GoogleEmail:       id + "@example.com",
+		CredentialVersion: 3,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +53,9 @@ func TestUserLifecycle(t *testing.T) {
 	}
 	// The secrets survive the round trip even though they are hidden
 	// from API JSON.
-	if u.PublishHash != "ph-alice" || u.FeedToken != "token-alice" {
+	if u.PasswordHash != "pw-alice" || u.FeedToken != "token-alice" ||
+		u.GoogleSub != "sub-alice" || u.GoogleEmail != "alice@example.com" ||
+		u.CredentialVersion != 3 {
 		t.Fatalf("secrets lost on round trip: %+v", u)
 	}
 	if got, err := s.GetUserByFeedToken(ctx, "token-alice"); err != nil || got.ID != "alice" {
@@ -58,6 +63,12 @@ func TestUserLifecycle(t *testing.T) {
 	}
 	if _, err := s.GetUserByFeedToken(ctx, "wrong"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("wrong token: got %v, want ErrNotFound", err)
+	}
+	if got, err := s.GetUserByGoogleSub(ctx, "sub-alice"); err != nil || got.ID != "alice" {
+		t.Fatalf("GetUserByGoogleSub: %v, %+v", err, got)
+	}
+	if _, err := s.GetUserByGoogleSub(ctx, "sub-nobody"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong sub: got %v, want ErrNotFound", err)
 	}
 	users, err := s.ListUsers(ctx)
 	if err != nil || len(users) != 1 {

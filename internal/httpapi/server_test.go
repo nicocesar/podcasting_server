@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -28,8 +29,9 @@ func newTestServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	handler, err := New(Config{
-		Store:      st,
-		AdminToken: adminToken,
+		Store:         st,
+		AdminToken:    adminToken,
+		SessionSecret: "test-session-secret",
 		// The real embedded assets, via the filesystem.
 		Assets: os.DirFS("../../cmd/server"),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -42,8 +44,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 	return ts
 }
 
-// do sends a request. creds is "" (no auth), "bearer:<token>" (admin), or
-// "user:secret" (basic auth).
+// do sends a request. creds is "" (no auth), "bearer:<token>" (admin
+// token or API key), or "session:<cookie-value>" (webapp session).
 func do(t *testing.T, method, url, creds string, body io.Reader, contentType string) *http.Response {
 	t.Helper()
 	req, err := http.NewRequest(method, url, body)
@@ -52,9 +54,8 @@ func do(t *testing.T, method, url, creds string, body io.Reader, contentType str
 	}
 	if token, ok := strings.CutPrefix(creds, "bearer:"); ok {
 		req.Header.Set("Authorization", "Bearer "+token)
-	} else if creds != "" {
-		user, pass, _ := strings.Cut(creds, ":")
-		req.SetBasicAuth(user, pass)
+	} else if v, ok := strings.CutPrefix(creds, "session:"); ok {
+		req.AddCookie(&http.Cookie{Name: "session", Value: v})
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
@@ -66,19 +67,73 @@ func do(t *testing.T, method, url, creds string, body io.Reader, contentType str
 	return resp
 }
 
-// account is what the admin provisioning endpoint hands back once.
+// account is a provisioned test user: the admin-issued password, a live
+// session, and one minted API key.
 type account struct {
-	ID           string `json:"id"`
-	PublishToken string `json:"publish_token"`
-	FeedURL      string `json:"feed_url"`
+	ID       string `json:"id"`
+	Password string `json:"password"`
+	FeedURL  string `json:"feed_url"`
+	Key      string `json:"-"` // pods_... — the Generator credential
+	Session  string `json:"-"` // session cookie value — the browser credential
 }
 
-// publishCreds is the basic-auth form of the account's publish token.
-func (a account) publishCreds() string { return a.ID + ":" + a.PublishToken }
+// publishCreds is the Bearer form of the account's API key.
+func (a account) publishCreds() string { return "bearer:" + a.Key }
+
+// sessionCreds is the cookie form of the account's session.
+func (a account) sessionCreds() string { return "session:" + a.Session }
 
 // feedBase is the account's capability namespace: FeedURL minus the
 // trailing /feed.xml.
 func (a account) feedBase() string { return strings.TrimSuffix(a.FeedURL, "/feed.xml") }
+
+// noRedirect surfaces the 303s that login and logout answer with.
+var noRedirect = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+// login submits the login form and returns the session cookie value.
+func login(t *testing.T, ts *httptest.Server, username, password string) string {
+	t.Helper()
+	resp, err := noRedirect.PostForm(ts.URL+"/login", url.Values{
+		"username": {username},
+		"password": {password},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login %s: got %d, want 303", username, resp.StatusCode)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == "session" && c.Value != "" {
+			return c.Value
+		}
+	}
+	t.Fatalf("login %s: no session cookie", username)
+	return ""
+}
+
+// mintKey mints a named API key from a session and returns the pods_
+// plaintext — the once-shown Generator credential.
+func mintKey(t *testing.T, ts *httptest.Server, session, name string) string {
+	t.Helper()
+	resp := do(t, "POST", ts.URL+"/me/api-keys", "session:"+session,
+		strings.NewReader(`{"name":"`+name+`"}`), "application/json")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("mint key: %d %s", resp.StatusCode, b)
+	}
+	var out struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Key == "" {
+		t.Fatalf("mint key: no plaintext in response (err %v)", err)
+	}
+	return out.Key
+}
 
 func createUser(t *testing.T, ts *httptest.Server, id string) account {
 	t.Helper()
@@ -93,6 +148,8 @@ func createUser(t *testing.T, ts *httptest.Server, id string) account {
 	if err := json.NewDecoder(resp.Body).Decode(&a); err != nil {
 		t.Fatal(err)
 	}
+	a.Session = login(t, ts, id, a.Password)
+	a.Key = mintKey(t, ts, a.Session, "test-agent")
 	return a
 }
 
@@ -142,7 +199,7 @@ func TestProvisioning(t *testing.T) {
 	}
 
 	alice := createUser(t, ts, "alice")
-	if alice.ID != "alice" || alice.PublishToken == "" ||
+	if alice.ID != "alice" || alice.Password == "" ||
 		!strings.Contains(alice.FeedURL, "/f/") || !strings.HasSuffix(alice.FeedURL, "/feed.xml") {
 		t.Fatalf("unexpected account: %+v", alice)
 	}
@@ -154,16 +211,18 @@ func TestProvisioning(t *testing.T) {
 		t.Errorf("recreate user: got %d, want 409", resp.StatusCode)
 	}
 
-	// GET /me works with the publish token, reports the feed URL, and
-	// never leaks credential hashes or the publish token.
+	// GET /me works with the API key, reports the feed URL, and never
+	// leaks credential hashes, the password, or Google identifiers.
 	resp = do(t, "GET", ts.URL+"/me", alice.publishCreds(), nil, "")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != 200 || !strings.Contains(string(body), alice.FeedURL) {
 		t.Fatalf("GET /me: %d %s", resp.StatusCode, body)
 	}
-	if strings.Contains(string(body), "hash") || strings.Contains(string(body), alice.PublishToken) {
-		t.Errorf("GET /me leaks secrets: %s", body)
+	for _, leak := range []string{"hash", alice.Password, "google_sub", "credential_version"} {
+		if strings.Contains(string(body), leak) {
+			t.Errorf("GET /me leaks %q: %s", leak, body)
+		}
 	}
 }
 
@@ -171,6 +230,8 @@ func TestAuthBoundaries(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
 
+	feedToken := strings.Split(strings.TrimPrefix(alice.FeedURL, ts.URL+"/f/"), "/")[0]
+	keyID := strings.Split(alice.Key, "_")[1]
 	cases := []struct {
 		name, method, path, creds string
 		want                      int
@@ -178,8 +239,10 @@ func TestAuthBoundaries(t *testing.T) {
 		{"feed via token, no auth", "GET", strings.TrimPrefix(alice.FeedURL, ts.URL), "", 200},
 		{"wrong token is a 404", "GET", "/f/0000000000000000000000000000dead/feed.xml", "", 404},
 		{"me without creds", "GET", "/me", "", 401},
-		{"me with wrong secret", "GET", "/me", "alice:wrong", 401},
-		{"me with feed token as password", "GET", "/me", "alice:" + strings.Split(strings.TrimPrefix(alice.FeedURL, ts.URL+"/f/"), "/")[0], 401},
+		{"me with a malformed bearer", "GET", "/me", "bearer:not-an-api-key", 401},
+		{"me with wrong key secret", "GET", "/me", "bearer:pods_" + keyID + "_0000000000000000000000000000000000000000000000dd", 401},
+		{"me with feed token as bearer", "GET", "/me", "bearer:" + feedToken, 401},
+		{"me with a forged session", "GET", "/me", "session:alice:0:9999999999:deadbeef", 401},
 		{"no creds on healthz ok", "GET", "/healthz", "", 200},
 	}
 	for _, c := range cases {
@@ -517,10 +580,15 @@ func mintInvite(t *testing.T, ts *httptest.Server, a account, payload string) ma
 	return inv
 }
 
-// redeem posts a username to the invite URL and returns the response.
-func redeem(t *testing.T, url, username string) *http.Response {
+// redeem posts a username and password to the invite URL and returns
+// the response (the Google fork is exercised separately).
+func redeem(t *testing.T, inviteURL, username string) *http.Response {
 	t.Helper()
-	resp, err := http.PostForm(url, map[string][]string{"username": {username}})
+	resp, err := http.PostForm(inviteURL, url.Values{
+		"username": {username},
+		"password": {"a-long-enough-password"},
+		"method":   {"password"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,8 +642,20 @@ func TestInviteRedemption(t *testing.T) {
 		t.Fatalf("taken username: got %d, want 409", resp.StatusCode)
 	}
 
-	// Redemption creates the user, shows credentials once, and the
-	// payload is already in the new feed as a share from the inviter.
+	// A too-short password re-renders without burning the invite.
+	shortPw, err := http.PostForm(url, map[string][]string{
+		"username": {"carol"}, "password": {"short"}, "method": {"password"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortPw.Body.Close()
+	if shortPw.StatusCode != http.StatusBadRequest {
+		t.Fatalf("short password: got %d, want 400", shortPw.StatusCode)
+	}
+
+	// Redemption creates the user, logs the browser in, and the payload
+	// is already in the new feed as a share from the inviter.
 	resp = redeem(t, url, "carol")
 	welcome, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
@@ -632,10 +712,11 @@ func TestInviteRevocationAndExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := New(Config{
-		Store:      st,
-		AdminToken: adminToken,
-		Assets:     os.DirFS("../../cmd/server"),
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:         st,
+		AdminToken:    adminToken,
+		SessionSecret: "test-session-secret",
+		Assets:        os.DirFS("../../cmd/server"),
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -715,11 +796,11 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// A browser (Accept: text/html) gets the Dashboard with the feed
-	// URL, the episode, and the invite button.
+	// A logged-in browser (session + Accept: text/html) gets the
+	// Dashboard: feed URL, episode, invite button, API key and security
+	// sections. A browser with no session is sent to /login instead.
 	req, _ := http.NewRequest("GET", ts.URL+"/me", nil)
-	user, pass, _ := strings.Cut(alice.publishCreds(), ":")
-	req.SetBasicAuth(user, pass)
+	req.AddCookie(&http.Cookie{Name: "session", Value: alice.Session})
 	req.Header.Set("Accept", "text/html")
 	htmlResp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -731,10 +812,25 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	if htmlResp.StatusCode != 200 || !strings.Contains(htmlResp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("dashboard: %d %q", htmlResp.StatusCode, htmlResp.Header.Get("Content-Type"))
 	}
-	for _, want := range []string{"Morning Update", alice.FeedURL, "antennapod.org/deeplink", "reset-feed", "mk-invite", "share-to"} {
+	for _, want := range []string{"Morning Update", alice.FeedURL, "antennapod.org/deeplink", "reset-feed", "mk-invite", "share-to", "mk-key", "pw-form", "test-agent"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
+	}
+	if strings.Contains(page, alice.Key) {
+		t.Errorf("dashboard re-shows the API key plaintext")
+	}
+
+	anonReq, _ := http.NewRequest("GET", ts.URL+"/me", nil)
+	anonReq.Header.Set("Accept", "text/html")
+	anonResp, err := noRedirect.Do(anonReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anonResp.Body.Close()
+	if anonResp.StatusCode != http.StatusSeeOther || !strings.HasPrefix(anonResp.Header.Get("Location"), "/login") {
+		t.Fatalf("anonymous browser on /me: got %d %q, want 303 to /login",
+			anonResp.StatusCode, anonResp.Header.Get("Location"))
 	}
 
 	// Member search: substring match, self excluded, auth required.
@@ -760,41 +856,59 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	}
 }
 
-func TestCredentialRotation(t *testing.T) {
+func TestAdminPasswordReset(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
 	resp := publishEpisode(t, ts, alice, "2026-07-08-morning", `{"title":"Keeper"}`, "AUDIO")
 	resp.Body.Close()
 
-	resp = do(t, "POST", ts.URL+"/admin/users/alice/credentials", "bearer:"+adminToken, nil, "")
+	resp = do(t, "POST", ts.URL+"/admin/users/alice/password-reset", "bearer:"+adminToken, nil, "")
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("rotate: %d", resp.StatusCode)
+		t.Fatalf("password reset: %d", resp.StatusCode)
 	}
-	var rotated account
-	json.NewDecoder(resp.Body).Decode(&rotated)
+	var reset struct {
+		Password string `json:"password"`
+	}
+	json.NewDecoder(resp.Body).Decode(&reset)
 	resp.Body.Close()
+	if reset.Password == "" || reset.Password == alice.Password {
+		t.Fatalf("no fresh password in reset response: %+v", reset)
+	}
 
-	// The old feed URL and publish token are dead, the new ones work,
-	// and content survived.
-	resp = do(t, "GET", alice.FeedURL, "", nil, "")
+	// Every session died with the reset; the old password is dead too.
+	resp = do(t, "GET", ts.URL+"/me", alice.sessionCreds(), nil, "")
 	resp.Body.Close()
-	if resp.StatusCode != 404 {
-		t.Fatalf("old feed URL: got %d, want 404", resp.StatusCode)
+	if resp.StatusCode != 401 {
+		t.Fatalf("old session after reset: got %d, want 401", resp.StatusCode)
+	}
+	failed, err := noRedirect.PostForm(ts.URL+"/login", url.Values{
+		"username": {"alice"}, "password": {alice.Password},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed.Body.Close()
+	if failed.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old password after reset: got %d, want 401", failed.StatusCode)
+	}
+
+	// The new password logs in; the feed URL, episodes, and API keys are
+	// untouched — a reset recovers the Login, nothing else moves.
+	login(t, ts, "alice", reset.Password)
+	if xml := fetchFeed(t, alice, ""); !strings.Contains(xml, "Keeper") {
+		t.Fatalf("episodes lost on reset:\n%s", xml)
 	}
 	resp = do(t, "GET", ts.URL+"/me", alice.publishCreds(), nil, "")
 	resp.Body.Close()
-	if resp.StatusCode != 401 {
-		t.Fatalf("old publish token: got %d, want 401", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		t.Fatalf("API key must survive a password reset: %d", resp.StatusCode)
 	}
-	rotated.ID = "alice"
-	if xml := fetchFeed(t, rotated, ""); !strings.Contains(xml, "Keeper") {
-		t.Fatalf("episodes lost on rotation:\n%s", xml)
-	}
-	// Rotating an unknown user is a 404.
-	resp = do(t, "POST", ts.URL+"/admin/users/nobody/credentials", "bearer:"+adminToken, nil, "")
+
+	// Resetting an unknown user is a 404.
+	resp = do(t, "POST", ts.URL+"/admin/users/nobody/password-reset", "bearer:"+adminToken, nil, "")
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
-		t.Fatalf("rotate unknown user: got %d, want 404", resp.StatusCode)
+		t.Fatalf("reset unknown user: got %d, want 404", resp.StatusCode)
 	}
 }
 
@@ -804,7 +918,14 @@ func TestSelfServiceFeedTokenReset(t *testing.T) {
 	resp := publishEpisode(t, ts, alice, "2026-07-08-morning", `{"title":"Keeper"}`, "AUDIO")
 	resp.Body.Close()
 
+	// Resetting the Feed Token is Credential Management: the API key is
+	// refused, the session does it.
 	resp = do(t, "POST", ts.URL+"/me/feed-token", alice.publishCreds(), nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("feed-token reset with API key: got %d, want 403", resp.StatusCode)
+	}
+	resp = do(t, "POST", ts.URL+"/me/feed-token", alice.sessionCreds(), nil, "")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("reset feed token: %d", resp.StatusCode)
 	}
@@ -829,7 +950,7 @@ func TestSelfServiceFeedTokenReset(t *testing.T) {
 	resp = do(t, "GET", ts.URL+"/me", alice.publishCreds(), nil, "")
 	resp.Body.Close()
 	if resp.StatusCode != 200 {
-		t.Fatalf("publish token must survive feed reset: %d", resp.StatusCode)
+		t.Fatalf("API key must survive feed reset: %d", resp.StatusCode)
 	}
 }
 

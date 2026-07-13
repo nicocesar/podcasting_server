@@ -43,9 +43,20 @@ type User struct {
 	// back to its owner — and replaced wholesale on rotation.
 	FeedToken string `json:"-" datastore:"feed_token"`
 
-	// PublishHash is hex SHA-256 of "user:token" for the publish token.
-	// Plaintext is never stored.
-	PublishHash string `json:"-" datastore:"publish_hash,noindex"`
+	// Login credentials (see CONTEXT.md "Credentials"). PasswordHash is
+	// a bcrypt hash; empty means the account has no password Login.
+	// GoogleSub is the linked Google identity ("sub" claim), indexed for
+	// login lookup; empty means not linked. GoogleEmail is display only —
+	// identity matching is strictly by sub. At least one Login exists
+	// from Redemption onward.
+	PasswordHash string `json:"-" datastore:"password_hash,noindex"`
+	GoogleSub    string `json:"-" datastore:"google_sub"`
+	GoogleEmail  string `json:"-" datastore:"google_email,noindex"`
+
+	// CredentialVersion is stamped into every Session; bumping it (on
+	// password change or "log out everywhere") kills all outstanding
+	// sessions on their next request.
+	CredentialVersion int64 `json:"-" datastore:"credential_version,noindex"`
 
 	// Blocks: users whose Shares are rejected at share time.
 	// Mutes: owners whose Episodes are hidden from this feed at render
@@ -62,8 +73,21 @@ func (u User) Blocked(sharer string) bool { return slices.Contains(u.Blocks, sha
 // Muted reports whether owner is on the user's mute list.
 func (u User) Muted(owner string) bool { return slices.Contains(u.Mutes, owner) }
 
+// APIKey is a named, individually revocable credential a User mints for
+// one Generator. It grants the Publishing Contract and the Management
+// API, never Credential Management. The plaintext secret is shown once
+// at minting; only its hex SHA-256 is stored. Wire form:
+// "pods_{KeyID}_{secret}" as an Authorization: Bearer token.
+type APIKey struct {
+	UserID     string    `json:"-" datastore:"user_id"`
+	KeyID      string    `json:"key_id" datastore:"-"` // unique; locates the record
+	Name       string    `json:"name" datastore:"name,noindex"`
+	SecretHash string    `json:"-" datastore:"secret_hash,noindex"`
+	CreatedAt  time.Time `json:"created_at" datastore:"created_at,noindex"`
+}
+
 // Episode is one playable item. It exists once, under its Owner — the
-// User whose publish token created it — and is referenced by any number
+// User whose API Key created it — and is referenced by any number
 // of Personal Feeds. Identity is (OwnerID, Slug); publishing an existing
 // Slug replaces the Episode everywhere it is referenced (ADR 0002/0006).
 type Episode struct {
@@ -182,12 +206,23 @@ type Store interface {
 	GetUser(ctx context.Context, id string) (User, error)
 	// GetUserByFeedToken resolves the capability URL to its owner.
 	GetUserByFeedToken(ctx context.Context, token string) (User, error)
+	// GetUserByGoogleSub resolves a Google identity to its User —
+	// strictly by sub, never by email.
+	GetUserByGoogleSub(ctx context.Context, sub string) (User, error)
 	// ListUsers returns all users ordered by ID.
 	ListUsers(ctx context.Context) ([]User, error)
 	// DeleteUser removes the user, their episodes, audio, cover, the
 	// shares in their feed, every share of their episodes in other
-	// feeds, and the invites they minted.
+	// feeds, the invites they minted, and their API keys.
 	DeleteUser(ctx context.Context, id string) error
+
+	// PutAPIKey stores an API key record (the secret already hashed).
+	PutAPIKey(ctx context.Context, k APIKey) error
+	// GetAPIKey resolves a key by its KeyID, whoever owns it.
+	GetAPIKey(ctx context.Context, keyID string) (APIKey, error)
+	// ListAPIKeys returns the user's keys newest-first.
+	ListAPIKeys(ctx context.Context, userID string) ([]APIKey, error)
+	DeleteAPIKey(ctx context.Context, keyID string) error
 
 	// UpsertEpisode stores audio and metadata, replacing any existing
 	// episode with the same (OwnerID, Slug), and returns the episode

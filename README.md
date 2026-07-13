@@ -12,15 +12,17 @@ the Publishing Contract below.
 ## How it fits together
 
 - **Cloud Run** runs the server; IAM allows unauthenticated, the app
-  enforces HTTP Basic auth itself (the only scheme AntennaPod speaks).
+  enforces its own auth per surface.
 - **Datastore** holds user/episode/share metadata; **GCS** holds audio and
   cover art. Audio downloads are 302 redirects to 15-minute signed URLs,
   so the server never streams audio.
-- Each user has two secrets (ADR 0005/0008): a **Feed Token** — the
-  capability URL their podcast client subscribes to, no password dialog —
-  and a **publish token** (the Basic-auth password for their Generator
-  and the `/me` Management API). Ownership is the credential: whoever
-  publishes an episode owns it.
+- Three credentials, three audiences (ADR 0008/0010): the **Feed Token**
+  is the capability URL the podcast client subscribes to (no password
+  dialog); **API Keys** (`pods_…`, Bearer) are named, revocable
+  credentials for Generators publishing episodes; the **webapp** is
+  entered with a password or a linked Google account, held in a session
+  cookie. Ownership is the credential: whoever publishes an episode owns
+  it.
 - An episode exists once, under its owner; shares are **references**
   (ADR 0006). The owner's republish or delete propagates to every feed.
 - **Built-in Generation** (ADR 0009, optional): `/me/generate` turns a
@@ -45,14 +47,18 @@ Provision a user and publish:
 
 ```sh
 curl -H "Authorization: Bearer admin" -X PUT localhost:8080/admin/users/alice
-# → {"id":"alice","publish_token":"...","feed_url":"http://localhost:8080/f/<token>/feed.xml"}
+# → {"id":"alice","password":"...","feed_url":"http://localhost:8080/f/<token>/feed.xml"}
 ```
+
+Log in at `http://localhost:8080/login` with that temporary password,
+then mint an API key from the Dashboard for publishing.
 
 The filesystem backend (dev only) is read live — drop or edit files and
 refresh the feed:
 
 ```
 data/
+├── apikeys.json                  # all API keys (hashed), keyed by key ID
 ├── alice/                        # user ID
 │   ├── user.json                 # feed metadata + credential hashes
 │   ├── shares.json               # episodes shared into alice's feed
@@ -71,7 +77,9 @@ enumerable; feeds, episodes, and audio all require credentials.
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | bland landing page; lists nothing |
-| `GET`/`POST /invites/{token}` | invite redemption page — the only way to join (ADR 0007) |
+| `GET`/`POST /login`, `POST /logout` | webapp login: password form, plus "Sign in with Google" when configured |
+| `GET /auth/google`, `GET /auth/google/callback` | Google OIDC flow (login, account linking, invite redemption) |
+| `GET`/`POST /invites/{token}` | invite redemption page — the only way to join (ADR 0007); the invitee sets a password or joins with Google |
 | `GET /static/*` | page assets |
 
 Read side — the Feed Token namespace (ADR 0008; the URL is the key, no
@@ -89,13 +97,13 @@ Feed Variants (ADR 0005) — query params on `feed.xml` and `/me/feed`:
 `?filter=mine`, `?filter=shared`, `?from=<owner>`, `?from=me`. Each RSS
 item carries its owner in `<itunes:author>`.
 
-Management API (publish token; always scoped to the caller):
+Management API (`Authorization: Bearer pods_…` API key, or a logged-in
+browser session; always scoped to the caller):
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /me` | the **Dashboard** in a browser (invite links, share episodes, friend search); JSON for curl |
+| `GET /me` | the **Dashboard** in a browser (invite links, share episodes, API keys, security); JSON for curl |
 | `PUT /me` | feed settings (JSON: `title`, `description`, `language`) |
-| `POST /me/feed-token` | reset the Feed Token: new feed URL, old one dies instantly |
 | `GET /me/users?q=` | member search for the share box (self excluded, max 20 hits) |
 | `PUT /me/image` | upload cover art (body = JPEG or PNG bytes) |
 | `GET /me/feed` | the feed as JSON, with provenance (`owner`, `sharer`) |
@@ -110,45 +118,56 @@ Management API (publish token; always scoped to the caller):
 | `GET /me/invites` | list your invites with status (`pending`/`redeemed`/`expired`) |
 | `DELETE /me/invites/{token}` | revoke a pending invite |
 
+Credential Management — session-only (ADR 0010): an API key presenting
+itself here gets a 403, so a leaked key can never widen itself.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /me/api-keys` | mint a named API key (JSON: `{"name":"laptop-agent"}`); plaintext returned **once** |
+| `GET /me/api-keys` | list your keys (names and IDs, never secrets) |
+| `DELETE /me/api-keys/{keyid}` | revoke one key; the others keep working |
+| `POST /me/password` | set or change the password (JSON: `{"current","new"}`); logs out other sessions |
+| `POST /me/google/unlink` | detach the linked Google account (refused if it is the only login) |
+| `POST /me/feed-token` | reset the Feed Token: new feed URL, old one dies instantly |
+| `POST /me/logout-everywhere` | kill every session on every device |
+
 Growth is by invitation (ADR 0007): any user can mint an invite; the
-invitee opens the link, picks a username, and gets credentials shown once.
-There is no open signup and no email anywhere in the system.
+invitee opens the link, picks a username, and sets a password — or joins
+with Google, no password at all. Google sign-in never creates an account
+on its own. There is no open signup and no email anywhere in the system.
 
 The **Dashboard** at `https://HOST/me` is the browser home for all of the
-above: open it, enter `username:publish-token` at the Basic-auth prompt,
-and you get one-click invite links, per-episode "share with…" boxes with
-member autocomplete, and pending-invite management. Members can find each
-other by name there; nothing is searchable without credentials.
+above: log in at `/login` (password or Google) and you get one-click
+invite links, per-episode "share with…" boxes with member autocomplete,
+API key management, and account security. Members can find each other by
+name there; nothing is searchable without credentials.
 
 Admin — fallback provisioning and recovery (`Authorization: Bearer $ADMIN_TOKEN`):
 
 | Endpoint | Purpose |
 |---|---|
-| `PUT /admin/users/{user}` | create a user; returns the feed URL and publish token **once** |
-| `POST /admin/users/{user}/credentials` | rotate a user's lost secrets — new feed URL + publish token, content untouched |
+| `PUT /admin/users/{user}` | create a user; returns the feed URL and a temporary password **once** |
+| `POST /admin/users/{user}/password-reset` | issue a new temporary password — sessions die, keys and feed URL survive |
 | `GET /admin/users` | list users |
 | `DELETE /admin/users/{user}` | delete a user, their episodes, and every reference to them |
 
-When a user loses their once-shown credentials, rotate them — episodes,
-shares, and the feed URL survive; only the secrets change (ADR 0007):
+There is no self-service password reset (no email exists in this
+system). A Google-linked user just signs in with Google and changes the
+password on the Dashboard; anyone else asks the operator:
 
 ```sh
 curl -H "Authorization: Bearer ${ADMIN_TOKEN}" -X POST \
-  https://HOST/admin/users/alice/credentials
-# → {"id":"alice","publish_token":"NEW...","feed_url":"https://HOST/f/NEWTOKEN/feed.xml"}
+  https://HOST/admin/users/alice/password-reset
+# → {"id":"alice","password":"NEW..."}
 ```
-
-The old feed URL and publish token stop working immediately: the user
-resubscribes their podcast app (scan the QR at the new `/f/{token}` page)
-and updates `PODCAST_PUBLISH_CREDENTIALS` wherever their Generator runs.
 
 User IDs and slugs match `^[a-z0-9][a-z0-9._-]*$`.
 
 ## The Publishing Contract
 
 `PUT /me/episodes/{slug}` with `multipart/form-data`, authenticated with
-the publishing user's token — publishing into someone else's feed is
-inexpressible (ADR 0005):
+one of the publishing user's API keys — publishing into someone else's
+feed is inexpressible (ADR 0005):
 
 - `metadata` — JSON: `title` (required), `description` (the full generated
   summary text; shown as show notes), `published_at` (RFC 3339, default
@@ -157,7 +176,7 @@ inexpressible (ADR 0005):
 - `audio` — the MP3 bytes
 
 ```sh
-curl -u "alice:PUBLISH_TOKEN" -X PUT \
+curl -H "Authorization: Bearer pods_KEYID_SECRET" -X PUT \
   -F 'metadata={"title":"Morning Briefing — July 6","description":"..."};type=application/json' \
   -F 'audio=@briefing.mp3;type=audio/mpeg' \
   https://HOST/me/episodes/2026-07-06-morning
@@ -182,6 +201,8 @@ make deploy   # Cloud Build: buildx + registry cache → Cloud Run
 | Var | Default | Meaning |
 |---|---|---|
 | `ADMIN_TOKEN` | — (required) | bearer token for `/admin` user provisioning |
+| `SESSION_SECRET` | ephemeral on `fs`, required on `gcp` | signs login session cookies; rotate to log everyone out |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — (optional) | enable "Sign in with Google"; unset → password-only |
 | `STORAGE` | `fs` | `fs` (dev) or `gcp` |
 | `DATA_DIR` | `./data` | fs backend root |
 | `GCS_BUCKET` | — | required when `STORAGE=gcp` |

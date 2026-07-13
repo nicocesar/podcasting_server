@@ -34,6 +34,7 @@ const (
 	kindShare      = "Share"
 	kindInvite     = "Invite"
 	kindGeneration = "Generation"
+	kindAPIKey     = "APIKey"
 	signedURLTTL   = 15 * time.Minute
 )
 
@@ -70,6 +71,8 @@ func shareKey(userID, ownerID, slug string) *datastore.Key {
 }
 
 func inviteKey(token string) *datastore.Key { return datastore.NameKey(kindInvite, token, nil) }
+
+func apiKeyKey(keyID string) *datastore.Key { return datastore.NameKey(kindAPIKey, keyID, nil) }
 
 func generationKey(userID, id string) *datastore.Key {
 	return datastore.NameKey(kindGeneration, userID+"/"+id, nil)
@@ -128,6 +131,23 @@ func (s *Store) GetUserByFeedToken(ctx context.Context, token string) (store.Use
 	return users[0], nil
 }
 
+func (s *Store) GetUserByGoogleSub(ctx context.Context, sub string) (store.User, error) {
+	if sub == "" {
+		return store.User{}, store.ErrNotFound
+	}
+	var users []store.User
+	q := datastore.NewQuery(kindUser).FilterField("google_sub", "=", sub).Limit(1)
+	keys, err := s.ds.GetAll(ctx, q, &users)
+	if err = ignoreFieldMismatch(err); err != nil {
+		return store.User{}, err
+	}
+	if len(users) == 0 {
+		return store.User{}, store.ErrNotFound
+	}
+	users[0].ID = keys[0].Name
+	return users[0], nil
+}
+
 func (s *Store) ListUsers(ctx context.Context) ([]store.User, error) {
 	var users []store.User
 	keys, err := s.ds.GetAll(ctx, datastore.NewQuery(kindUser), &users)
@@ -157,6 +177,7 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 		datastore.NewQuery(kindShare).FilterField("owner_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindInvite).FilterField("inviter_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindGeneration).FilterField("user_id", "=", id).KeysOnly(),
+		datastore.NewQuery(kindAPIKey).FilterField("user_id", "=", id).KeysOnly(),
 	} {
 		keys, err := s.ds.GetAll(ctx, q, nil)
 		if err != nil {
@@ -197,6 +218,55 @@ func (s *Store) deleteKeys(ctx context.Context, keys []*datastore.Key) error {
 		keys = keys[len(batch):]
 	}
 	return nil
+}
+
+// --- api keys ---
+
+func (s *Store) PutAPIKey(ctx context.Context, k store.APIKey) error {
+	if _, err := s.GetUser(ctx, k.UserID); err != nil {
+		return err
+	}
+	_, err := s.ds.Put(ctx, apiKeyKey(k.KeyID), &k)
+	return err
+}
+
+func (s *Store) GetAPIKey(ctx context.Context, keyID string) (store.APIKey, error) {
+	var k store.APIKey
+	if err := s.ds.Get(ctx, apiKeyKey(keyID), &k); err != nil {
+		if errors.Is(err, datastore.ErrNoSuchEntity) {
+			return store.APIKey{}, store.ErrNotFound
+		}
+		return store.APIKey{}, err
+	}
+	k.KeyID = keyID
+	return k, nil
+}
+
+func (s *Store) ListAPIKeys(ctx context.Context, userID string) ([]store.APIKey, error) {
+	if _, err := s.GetUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	var keys []store.APIKey
+	q := datastore.NewQuery(kindAPIKey).FilterField("user_id", "=", userID)
+	dsKeys, err := s.ds.GetAll(ctx, q, &keys)
+	if err != nil {
+		return nil, err
+	}
+	for i, k := range dsKeys {
+		keys[i].KeyID = k.Name
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i].CreatedAt.After(keys[j].CreatedAt) })
+	if keys == nil {
+		keys = []store.APIKey{}
+	}
+	return keys, nil
+}
+
+func (s *Store) DeleteAPIKey(ctx context.Context, keyID string) error {
+	if _, err := s.GetAPIKey(ctx, keyID); err != nil {
+		return err
+	}
+	return s.ds.Delete(ctx, apiKeyKey(keyID))
 }
 
 // --- generations ---

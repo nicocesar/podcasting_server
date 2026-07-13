@@ -33,6 +33,7 @@ const (
 	userFile    = "user.json"
 	sharesFile  = "shares.json"
 	invitesFile = "invites.json"
+	apiKeysFile = "apikeys.json"
 )
 
 type Store struct {
@@ -63,20 +64,33 @@ func (s *Store) UpsertUser(_ context.Context, u store.User) error {
 // carry json:"-" so they never leak through handlers).
 type userRecord struct {
 	store.User
-	FeedToken   string `json:"feed_token"`
-	PublishHash string `json:"publish_hash"`
+	FeedToken         string `json:"feed_token"`
+	PasswordHash      string `json:"password_hash,omitempty"`
+	GoogleSub         string `json:"google_sub,omitempty"`
+	GoogleEmail       string `json:"google_email,omitempty"`
+	CredentialVersion int64  `json:"credential_version,omitempty"`
 }
 
 func (r userRecord) user(id string) store.User {
 	u := r.User
 	u.ID = id // directory name is canonical
 	u.FeedToken = r.FeedToken
-	u.PublishHash = r.PublishHash
+	u.PasswordHash = r.PasswordHash
+	u.GoogleSub = r.GoogleSub
+	u.GoogleEmail = r.GoogleEmail
+	u.CredentialVersion = r.CredentialVersion
 	return u
 }
 
 func newUserRecord(u store.User) userRecord {
-	return userRecord{User: u, FeedToken: u.FeedToken, PublishHash: u.PublishHash}
+	return userRecord{
+		User:              u,
+		FeedToken:         u.FeedToken,
+		PasswordHash:      u.PasswordHash,
+		GoogleSub:         u.GoogleSub,
+		GoogleEmail:       u.GoogleEmail,
+		CredentialVersion: u.CredentialVersion,
+	}
 }
 
 func (s *Store) GetUser(_ context.Context, id string) (store.User, error) {
@@ -97,6 +111,22 @@ func (s *Store) GetUserByFeedToken(ctx context.Context, token string) (store.Use
 	}
 	for _, u := range users {
 		if u.FeedToken == token {
+			return u, nil
+		}
+	}
+	return store.User{}, store.ErrNotFound
+}
+
+func (s *Store) GetUserByGoogleSub(ctx context.Context, sub string) (store.User, error) {
+	if sub == "" {
+		return store.User{}, store.ErrNotFound
+	}
+	users, err := s.ListUsers(ctx)
+	if err != nil {
+		return store.User{}, err
+	}
+	for _, u := range users {
+		if u.GoogleSub == sub {
 			return u, nil
 		}
 	}
@@ -135,7 +165,115 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	if err := s.removeInvites(func(inv store.Invite) bool { return inv.InviterID == id }); err != nil && err != store.ErrNotFound {
 		return err
 	}
+	if err := s.removeAPIKeys(func(k store.APIKey) bool { return k.UserID == id }); err != nil && err != store.ErrNotFound {
+		return err
+	}
 	return os.RemoveAll(s.userDir(id))
+}
+
+// --- api keys ---
+
+// apiKeyRecord persists the fields APIKey hides from API JSON (owner and
+// secret hash carry json:"-" so they never leak through handlers).
+type apiKeyRecord struct {
+	store.APIKey
+	UserID     string `json:"user_id"`
+	SecretHash string `json:"secret_hash"`
+}
+
+// API keys live in one root-level file like invites: revocation and
+// lookup by KeyID need the whole set anyway.
+func (s *Store) readAPIKeys() ([]store.APIKey, error) {
+	var recs []apiKeyRecord
+	err := readJSON(filepath.Join(s.root, apiKeysFile), &recs)
+	if err != nil && err != store.ErrNotFound {
+		return nil, err
+	}
+	keys := make([]store.APIKey, len(recs))
+	for i, r := range recs {
+		keys[i] = r.APIKey
+		keys[i].UserID = r.UserID
+		keys[i].SecretHash = r.SecretHash
+	}
+	return keys, nil
+}
+
+func (s *Store) writeAPIKeys(keys []store.APIKey) error {
+	recs := make([]apiKeyRecord, len(keys))
+	for i, k := range keys {
+		recs[i] = apiKeyRecord{APIKey: k, UserID: k.UserID, SecretHash: k.SecretHash}
+	}
+	return writeJSON(filepath.Join(s.root, apiKeysFile), recs)
+}
+
+func (s *Store) PutAPIKey(ctx context.Context, k store.APIKey) error {
+	if _, err := s.GetUser(ctx, k.UserID); err != nil {
+		return err
+	}
+	keys, err := s.readAPIKeys()
+	if err != nil {
+		return err
+	}
+	for _, have := range keys {
+		if have.KeyID == k.KeyID {
+			return fmt.Errorf("fsstore: duplicate api key id")
+		}
+	}
+	return s.writeAPIKeys(append(keys, k))
+}
+
+func (s *Store) GetAPIKey(_ context.Context, keyID string) (store.APIKey, error) {
+	keys, err := s.readAPIKeys()
+	if err != nil {
+		return store.APIKey{}, err
+	}
+	for _, k := range keys {
+		if k.KeyID == keyID {
+			return k, nil
+		}
+	}
+	return store.APIKey{}, store.ErrNotFound
+}
+
+func (s *Store) ListAPIKeys(ctx context.Context, userID string) ([]store.APIKey, error) {
+	if _, err := s.GetUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	keys, err := s.readAPIKeys()
+	if err != nil {
+		return nil, err
+	}
+	mine := []store.APIKey{}
+	for _, k := range keys {
+		if k.UserID == userID {
+			mine = append(mine, k)
+		}
+	}
+	sort.Slice(mine, func(i, j int) bool { return mine[i].CreatedAt.After(mine[j].CreatedAt) })
+	return mine, nil
+}
+
+func (s *Store) DeleteAPIKey(_ context.Context, keyID string) error {
+	return s.removeAPIKeys(func(k store.APIKey) bool { return k.KeyID == keyID })
+}
+
+// removeAPIKeys drops every key matching drop; ErrNotFound when none
+// matched.
+func (s *Store) removeAPIKeys(drop func(store.APIKey) bool) error {
+	keys, err := s.readAPIKeys()
+	if err != nil {
+		return err
+	}
+	kept := keys[:0]
+	for _, k := range keys {
+		if !drop(k) {
+			kept = append(kept, k)
+		}
+	}
+	if len(kept) == len(keys) {
+		return store.ErrNotFound
+	}
+	return s.writeAPIKeys(kept)
 }
 
 // --- episodes ---

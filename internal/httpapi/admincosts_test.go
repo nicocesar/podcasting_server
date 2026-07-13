@@ -24,6 +24,7 @@ func newCostReportingServer(t *testing.T, upstream string) *httptest.Server {
 	handler, err := New(Config{
 		Store:                 st,
 		AdminToken:            adminToken,
+		SessionSecret:         "test-session-secret",
 		Assets:                os.DirFS("../../cmd/server"),
 		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
 		AnthropicAdminKey:     "sk-ant-admin-test",

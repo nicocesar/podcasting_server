@@ -10,7 +10,14 @@
     <input id="username" name="username" value="{{.Username}}"
            pattern="[a-z0-9][a-z0-9._-]*" maxlength="128" required autofocus
            autocomplete="off" spellcheck="false">
-    <button type="submit">Join</button>
+    <label for="password">Set a password</label>
+    <input id="password" name="password" type="password" minlength="8"
+           required autocomplete="new-password">
+    <button type="submit" name="method" value="password">Join</button>
+    {{if .GoogleEnabled}}
+    <button type="submit" name="method" value="google" formnovalidate
+            title="No password: your Google account becomes your login">Join with Google instead</button>
+    {{end}}
   </form>
   <p class="muted">Lowercase letters, digits, dots, dashes, underscores.
   This is how others will address you — choose once, it does not change.</p>

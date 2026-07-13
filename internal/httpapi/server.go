@@ -25,6 +25,7 @@ import (
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/nicocesar/podcasting_server/internal/audio"
 	"github.com/nicocesar/podcasting_server/internal/feed"
@@ -49,6 +50,16 @@ type Config struct {
 	// AdminToken guards the /admin endpoints (Authorization: Bearer).
 	// Users authenticate with their own credentials (ADR 0005).
 	AdminToken string
+	// SessionSecret signs session cookies and OAuth state (ADR 0010).
+	// Rotating it logs every browser out.
+	SessionSecret string
+	// GoogleClientID/GoogleClientSecret enable "Sign in with Google"
+	// (OIDC code flow). Leave both empty to run password-only: the
+	// Google buttons simply do not render.
+	GoogleClientID     string
+	GoogleClientSecret string
+	// GoogleTokenURL overrides Google's token endpoint (tests only).
+	GoogleTokenURL string
 	// Assets holds the "templates" and "static" directories for the
 	// Public Surface pages (cmd/server embeds and passes them).
 	Assets fs.FS
@@ -69,16 +80,19 @@ type Config struct {
 }
 
 type server struct {
-	store     store.Store
-	baseURL   string
-	adminHash [32]byte
-	log       *slog.Logger
-	generator *generation.Runner
-	adminAPI  *anthropicAdmin
-	version   string
+	store         store.Store
+	baseURL       string
+	adminHash     [32]byte
+	sessionSecret []byte
+	google        *googleOIDC // nil: password-only
+	log           *slog.Logger
+	generator     *generation.Runner
+	adminAPI      *anthropicAdmin
+	version       string
 
 	tmplHome       *template.Template
 	tmplUser       *template.Template
+	tmplLogin      *template.Template
 	tmplInvite     *template.Template
 	tmplWelcome    *template.Template
 	tmplDashboard  *template.Template
@@ -91,14 +105,25 @@ func New(cfg Config) (http.Handler, error) {
 	if cfg.AdminToken == "" {
 		return nil, errors.New("httpapi: AdminToken must be set")
 	}
+	if cfg.SessionSecret == "" {
+		return nil, errors.New("httpapi: SessionSecret must be set")
+	}
 	s := &server{
-		store:     cfg.Store,
-		baseURL:   strings.TrimSuffix(cfg.BaseURL, "/"),
-		adminHash: sha256.Sum256([]byte(cfg.AdminToken)),
-		log:       cfg.Logger,
-		generator: cfg.Generator,
-		adminAPI:  newAnthropicAdmin(cfg.AnthropicAdminKey, cfg.AnthropicAdminBaseURL),
-		version:   cfg.Version,
+		store:         cfg.Store,
+		baseURL:       strings.TrimSuffix(cfg.BaseURL, "/"),
+		adminHash:     sha256.Sum256([]byte(cfg.AdminToken)),
+		sessionSecret: []byte(cfg.SessionSecret),
+		log:           cfg.Logger,
+		generator:     cfg.Generator,
+		adminAPI:      newAnthropicAdmin(cfg.AnthropicAdminKey, cfg.AnthropicAdminBaseURL),
+		version:       cfg.Version,
+	}
+	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
+		s.google = &googleOIDC{
+			clientID:     cfg.GoogleClientID,
+			clientSecret: cfg.GoogleClientSecret,
+			tokenURL:     cfg.GoogleTokenURL,
+		}
 	}
 	if s.log == nil {
 		s.log = slog.Default()
@@ -111,6 +136,7 @@ func New(cfg Config) (http.Handler, error) {
 	}{
 		{&s.tmplHome, []string{"templates/layout.html", "templates/home.html"}},
 		{&s.tmplUser, []string{"templates/layout.html", "templates/user.html", "templates/fragments/*.html"}},
+		{&s.tmplLogin, []string{"templates/layout.html", "templates/login.html"}},
 		{&s.tmplInvite, []string{"templates/layout.html", "templates/invite.html"}},
 		{&s.tmplWelcome, []string{"templates/layout.html", "templates/welcome.html", "templates/fragments/*.html"}},
 		{&s.tmplDashboard, []string{"templates/layout.html", "templates/dashboard.html"}},
@@ -149,6 +175,16 @@ func New(cfg Config) (http.Handler, error) {
 		s.renderNotFound(w)
 	})
 
+	// Webapp login (ADR 0010). The login page is Public Surface; the
+	// session it creates is the browser's credential for /me.
+	mux.HandleFunc("GET /login", s.handleLoginPage)
+	mux.HandleFunc("POST /login", s.handleLogin)
+	mux.HandleFunc("POST /logout", s.handleLogout)
+	if s.google != nil {
+		mux.HandleFunc("GET /auth/google", s.handleGoogleStart)
+		mux.HandleFunc("GET /auth/google/callback", s.handleGoogleCallback)
+	}
+
 	// Read side (ADR 0008): the Feed Token capability namespace. The
 	// URL is the credential — podcast clients never see an auth dialog.
 	mux.HandleFunc("GET /f/{token}", s.feed(s.handleFeedLanding))
@@ -160,9 +196,9 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /f/{token}/qr.png", s.feed(s.handleQR))
 	mux.HandleFunc("GET /f/{token}/{owner}/{file}", s.feed(s.handleAudio))
 
-	// Publishing Contract + Management API (the user's publish token).
-	// Everything is scoped to the caller: publishing into someone else's
-	// feed is inexpressible (ADR 0005).
+	// Publishing Contract + Management API: a Bearer API Key or a
+	// session cookie (ADR 0010). Everything is scoped to the caller:
+	// publishing into someone else's feed is inexpressible (ADR 0005).
 	mux.HandleFunc("GET /me", s.auth(s.handleGetMe))
 	mux.HandleFunc("GET /me/{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/me", http.StatusMovedPermanently)
@@ -170,7 +206,6 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /me/users", s.auth(s.handleSearchUsers))
 	mux.HandleFunc("PUT /me", s.auth(s.handleUpdateMe))
 	mux.HandleFunc("PUT /me/image", s.auth(s.handleSetCover))
-	mux.HandleFunc("POST /me/feed-token", s.auth(s.handleResetFeedToken))
 	mux.HandleFunc("GET /me/feed", s.auth(s.handleListFeed))
 	mux.HandleFunc("GET /me/episodes", s.auth(s.handleListEpisodes))
 	mux.HandleFunc("PUT /me/episodes/{slug}", s.auth(s.handlePublish))
@@ -185,6 +220,17 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /me/invites", s.auth(s.handleListInvites))
 	mux.HandleFunc("DELETE /me/invites/{token}", s.auth(s.handleRevokeInvite))
 
+	// Credential Management: session-only by construction, so a leaked
+	// API Key can never widen itself, change the Login, or move the
+	// Feed Token (CONTEXT.md "Credential Management").
+	mux.HandleFunc("POST /me/feed-token", s.session(s.handleResetFeedToken))
+	mux.HandleFunc("GET /me/api-keys", s.session(s.handleListAPIKeys))
+	mux.HandleFunc("POST /me/api-keys", s.session(s.handleMintAPIKey))
+	mux.HandleFunc("DELETE /me/api-keys/{keyid}", s.session(s.handleRevokeAPIKey))
+	mux.HandleFunc("POST /me/password", s.session(s.handleSetPassword))
+	mux.HandleFunc("POST /me/google/unlink", s.session(s.handleGoogleUnlink))
+	mux.HandleFunc("POST /me/logout-everywhere", s.session(s.handleLogoutEverywhere))
+
 	// Built-in Generation (ADR 0009): topic in, Episode in the caller's
 	// own feed out, with an observable in-between.
 	mux.HandleFunc("GET /me/generate", s.auth(s.generating(s.handleGeneratePage)))
@@ -196,7 +242,7 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /admin/users", s.admin(s.handleListUsers))
 	mux.HandleFunc("PUT /admin/users/{user}", s.admin(s.handleCreateUser))
 	mux.HandleFunc("DELETE /admin/users/{user}", s.admin(s.handleDeleteUser))
-	mux.HandleFunc("POST /admin/users/{user}/credentials", s.admin(s.handleRotateCredentials))
+	mux.HandleFunc("POST /admin/users/{user}/password-reset", s.admin(s.handlePasswordReset))
 
 	// Admin cost reporting: real billed dollars from Anthropic's Usage &
 	// Cost Admin API, to reconcile against per-Generation meters.
@@ -209,36 +255,11 @@ func New(cfg Config) (http.Handler, error) {
 
 // --- middleware ---
 
-// credHash is the stored form of both credentials: hex SHA-256 of
-// "user:secret".
-func credHash(userID, secret string) string {
-	sum := sha256.Sum256([]byte(userID + ":" + secret))
-	return hex.EncodeToString(sum[:])
-}
-
 func hashEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 && a != ""
 }
 
 type authedHandler func(w http.ResponseWriter, r *http.Request, u store.User)
-
-// auth resolves Basic auth (username + publish token) for the Publishing
-// Contract, the Management API, and the Dashboard. The read side does
-// not authenticate at all — it lives under /f/{token} (ADR 0008).
-func (s *server) auth(h authedHandler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID, secret, ok := r.BasicAuth()
-		if ok && store.ValidID(userID) {
-			u, err := s.store.GetUser(r.Context(), userID)
-			if err == nil && hashEqual(credHash(userID, secret), u.PublishHash) {
-				h(w, r, u)
-				return
-			}
-		}
-		w.Header().Set("WWW-Authenticate", `Basic realm="podcasting_server"`)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-	}
-}
 
 // feed resolves the {token} path segment to its User. An unknown token
 // is a plain 404: capability URLs reveal nothing, valid or not.
@@ -570,6 +591,11 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
+	apiKeys, err := s.store.ListAPIKeys(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	s.render(w, http.StatusOK, s.tmplDashboard, struct {
 		User            store.User
 		FeedPage        string
@@ -577,6 +603,11 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		Invites         []inviteView
 		GenerateEnabled bool
 		Generations     []generationView
+		APIKeys         []store.APIKey
+		HasPassword     bool
+		GoogleLinked    bool
+		GoogleEmail     string
+		GoogleEnabled   bool
 		Version         string
 		subscribeBox
 	}{
@@ -586,6 +617,11 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		Invites:         pending,
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
+		APIKeys:         apiKeys,
+		HasPassword:     u.PasswordHash != "",
+		GoogleLinked:    u.GoogleSub != "",
+		GoogleEmail:     u.GoogleEmail,
+		GoogleEnabled:   s.google != nil,
 		Version:         s.version,
 		subscribeBox:    s.subscribeBox(r, u),
 	})
@@ -914,8 +950,8 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, users)
 }
 
-// handleCreateUser provisions a user and returns their credentials —
-// shown exactly once, only hashes are stored (ADR 0005).
+// handleCreateUser provisions a user with a temporary password, shown
+// exactly once in the response; only the hash is stored (ADR 0005).
 func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("user")
 	if !store.ValidID(id) {
@@ -941,57 +977,75 @@ func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		req.Title = id
 	}
 
-	sec, err := issueSecrets()
+	password, hash, err := tempPassword()
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	feedToken, err := randomHex(16)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	u := store.User{
-		ID:          id,
-		Title:       req.Title,
-		Description: req.Description,
-		Language:    req.Language,
-		FeedToken:   sec.feed,
-		PublishHash: credHash(id, sec.publish),
+		ID:           id,
+		Title:        req.Title,
+		Description:  req.Description,
+		Language:     req.Language,
+		FeedToken:    feedToken,
+		PasswordHash: hash,
 	}
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
 		s.fail(w, err)
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, map[string]string{
-		"id":            id,
-		"publish_token": sec.publish,
-		"feed_url":      s.feedURL(r, u),
+		"id":       id,
+		"password": password,
+		"feed_url": s.feedURL(r, u),
 	})
 }
 
-// handleRotateCredentials is the recovery path: no email exists, so a
-// user who lost their once-shown secrets asks the operator (ADR 0007).
-// Both secrets rotate; episodes and shares are untouched, the podcast
-// client resubscribes with the new feed URL.
-func (s *server) handleRotateCredentials(w http.ResponseWriter, r *http.Request) {
+// handlePasswordReset is the recovery path: there is no self-service
+// reset (no email exists in this system), so a locked-out user asks the
+// operator for a temporary password (ADR 0007/0010). Every session dies;
+// API keys and the Feed Token are untouched.
+func (s *server) handlePasswordReset(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("user")
 	u, err := s.store.GetUser(r.Context(), id)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	sec, err := issueSecrets()
+	password, hash, err := tempPassword()
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	u.FeedToken = sec.feed
-	u.PublishHash = credHash(id, sec.publish)
+	u.PasswordHash = hash
+	u.CredentialVersion++
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
 		s.fail(w, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]string{
-		"id":            id,
-		"publish_token": sec.publish,
-		"feed_url":      s.feedURL(r, u),
+		"id":       id,
+		"password": password,
 	})
+}
+
+// tempPassword mints the operator-issued temporary password and its
+// bcrypt hash; the user changes it from the dashboard.
+func tempPassword() (password, hash string, err error) {
+	password, err = randomHex(12)
+	if err != nil {
+		return "", "", err
+	}
+	h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", "", err
+	}
+	return password, string(h), nil
 }
 
 func (s *server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -1109,10 +1163,11 @@ func (s *server) handleRevokeInvite(w http.ResponseWriter, r *http.Request, u st
 
 // invitePage is the template data for the Redemption page.
 type invitePage struct {
-	Inviter      string
-	EpisodeTitle string
-	Username     string
-	Error        string
+	Inviter       string
+	EpisodeTitle  string
+	Username      string
+	Error         string
+	GoogleEnabled bool
 }
 
 // liveInvite loads a redeemable invite or renders the styled 404 — an
@@ -1127,7 +1182,7 @@ func (s *server) liveInvite(w http.ResponseWriter, r *http.Request) (store.Invit
 }
 
 func (s *server) invitePageData(r *http.Request, inv store.Invite) invitePage {
-	data := invitePage{Inviter: inv.InviterID}
+	data := invitePage{Inviter: inv.InviterID, GoogleEnabled: s.google != nil}
 	if inv.OwnerID != "" {
 		// A dead payload (owner deleted the episode) hides silently,
 		// consistent with share semantics (ADR 0006).
@@ -1146,9 +1201,10 @@ func (s *server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, s.tmplInvite, s.invitePageData(r, inv))
 }
 
-// handleRedeem turns an Invite into a User: the invitee picks their
-// username, credentials are issued and shown exactly once, and the
-// payload episode (if any) lands as a Share from the inviter (ADR 0007).
+// handleRedeem turns an Invite into a User. The invitee picks their
+// username and their Login: setting a password finishes right here;
+// "Join with Google" detours through the consent screen and finishes in
+// finishGoogleRedemption (ADR 0007/0010).
 func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	inv, ok := s.liveInvite(w, r)
 	if !ok {
@@ -1174,33 +1230,60 @@ func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if err := s.store.RedeemInvite(r.Context(), inv.Token, username); err != nil {
-		// Lost a race with another redemption or a revocation.
-		s.renderNotFound(w)
+
+	if r.FormValue("method") == "google" {
+		if s.google == nil {
+			retry(http.StatusBadRequest, "Google sign-in is not available on this server — set a password instead.", username)
+			return
+		}
+		s.startGoogle(w, r, oauthState{Mode: "redeem", Invite: inv.Token, User: username})
 		return
 	}
-	sec, err := issueSecrets()
+
+	password := r.FormValue("password")
+	if len(password) < minPasswordLen {
+		retry(http.StatusBadRequest, fmt.Sprintf("Password must be at least %d characters.", minPasswordLen), username)
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	u := store.User{
-		ID:          username,
-		Title:       username,
-		FeedToken:   sec.feed,
-		PublishHash: credHash(username, sec.publish),
+	s.completeRedemption(w, r, inv, store.User{
+		ID:           username,
+		Title:        username,
+		PasswordHash: string(hash),
+	})
+}
+
+// completeRedemption is the shared tail of both Redemption paths: u
+// arrives with its Login already set (password hash or Google identity),
+// the invite is claimed, the Feed Token minted, the payload delivered,
+// and the browser leaves logged in on the Welcome page.
+func (s *server) completeRedemption(w http.ResponseWriter, r *http.Request, inv store.Invite, u store.User) {
+	if err := s.store.RedeemInvite(r.Context(), inv.Token, u.ID); err != nil {
+		// Lost a race with another redemption or a revocation.
+		s.renderNotFound(w)
+		return
 	}
+	feedToken, err := randomHex(16)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	u.FeedToken = feedToken
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
 		s.fail(w, err)
 		return
 	}
 
 	sharedTitle := ""
-	if inv.OwnerID != "" && inv.OwnerID != username {
+	if inv.OwnerID != "" && inv.OwnerID != u.ID {
 		if ep, err := s.store.GetEpisode(r.Context(), inv.OwnerID, inv.Slug); err == nil {
 			sharedTitle = ep.Title
 			if err := s.store.AddShare(r.Context(), store.Share{
-				UserID:   username,
+				UserID:   u.ID,
 				OwnerID:  inv.OwnerID,
 				Slug:     inv.Slug,
 				SharerID: inv.InviterID,
@@ -1212,38 +1295,19 @@ func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.setSession(w, r, u)
 	s.render(w, http.StatusOK, s.tmplWelcome, struct {
-		Username     string
-		PublishToken string
-		SharedTitle  string
+		Username    string
+		SharedTitle string
 		subscribeBox
 	}{
-		Username:     username,
-		PublishToken: sec.publish,
+		Username:     u.ID,
 		SharedTitle:  sharedTitle,
 		subscribeBox: s.subscribeBox(r, u),
 	})
 }
 
 // --- helpers ---
-
-// secrets is one issue of a user's two generated secrets (ADR 0008).
-type secrets struct {
-	feed    string // Feed Token: the capability URL segment
-	publish string // publish token
-}
-
-func issueSecrets() (secrets, error) {
-	var sec secrets
-	var err error
-	if sec.feed, err = randomHex(16); err != nil {
-		return secrets{}, err
-	}
-	if sec.publish, err = randomHex(24); err != nil {
-		return secrets{}, err
-	}
-	return sec, nil
-}
 
 func randomHex(nBytes int) (string, error) {
 	b := make([]byte, nBytes)
