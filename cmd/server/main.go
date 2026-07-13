@@ -107,9 +107,11 @@ func run(log *slog.Logger) error {
 	}
 
 	// GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET turn on "Sign in with
-	// Google"; without them the webapp is password-only.
-	googleID := os.Getenv("GOOGLE_CLIENT_ID")
-	googleSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	// Google"; without them the webapp is password-only. Trimmed: a
+	// stray space in the env value reaches Google verbatim inside the
+	// auth URL and every sign-in fails as an invalid client.
+	googleID := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))
+	googleSecret := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET"))
 	if googleID != "" && googleSecret != "" {
 		log.Info("google sign-in: enabled")
 	} else {
