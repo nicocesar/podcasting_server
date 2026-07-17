@@ -14,7 +14,7 @@
       <img class="cover-preview" id="cover-preview" alt="Cover art preview" hidden>
       {{end}}
       <input type="file" id="cover-file" accept="image/jpeg,image/png" hidden>
-      <button class="quiet" id="cover-pick">Upload cover art</button>
+      <button class="quiet" id="cover-pick"><svg class="icon"><use href="#i-image"/></svg>Upload cover art</button>
     </div>
     <p class="msg muted" id="cover-msg" hidden></p>
     <form id="profile-form" class="join">
@@ -34,11 +34,11 @@
     <p class="eyebrow">Feed URL</p>
     <div class="invite-row" id="feed-row">
       <code class="feed-url">{{.FeedURL}}</code>
-      <button class="copy" data-copy>Copy</button>
+      <button class="copy" data-copy><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
     </div>
     <div class="actions">
       <button class="danger" id="reset-feed"
-              title="Mint a new feed URL; the old one stops working and every device must resubscribe">Reset feed URL</button>
+              title="Mint a new feed URL; the old one stops working and every device must resubscribe"><svg class="icon"><use href="#i-rotate"/></svg>Reset feed URL</button>
     </div>
     <p class="muted" style="font-size:.85rem">Resetting kills the current URL
     instantly — every podcast app must resubscribe with the new one.</p>
@@ -50,19 +50,19 @@
     for 7 days. Send it to one person; they pick a username and get their own
     feed.</p>
     <div class="actions">
-      <button id="mk-invite">Create invite link</button>
+      <button id="mk-invite"><svg class="icon"><use href="#i-user-plus"/></svg>Create invite link</button>
     </div>
     <div id="new-invite" class="invite-row" hidden>
       <code class="feed-url"></code>
-      <button class="copy" data-copy>Copy</button>
+      <button class="copy" data-copy><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
     </div>
     {{if .Invites}}
     <h3 class="muted">Pending invites</h3>
     {{range .Invites}}
     <div class="invite-row" data-token="{{.Token}}">
       <code class="feed-url">{{.URL}}</code>
-      <button class="copy" data-copy>Copy</button>
-      <button class="danger" data-revoke>Revoke</button>
+      <button class="copy" data-copy><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
+      <button class="danger" data-revoke><svg class="icon"><use href="#i-x"/></svg>Revoke</button>
     </div>
     {{end}}
     {{end}}
@@ -76,11 +76,11 @@
     <div class="actions">
       <input id="key-name" placeholder="name it, e.g. laptop-agent"
              autocomplete="off" spellcheck="false">
-      <button id="mk-key">Create API key</button>
+      <button id="mk-key"><svg class="icon"><use href="#i-key"/></svg>Create API key</button>
     </div>
     <div id="new-key" class="invite-row" hidden>
       <code class="feed-url"></code>
-      <button class="copy" data-copy>Copy</button>
+      <button class="copy" data-copy><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
     </div>
     <p id="new-key-warn" class="warn" hidden><strong>Save this key now — it
     is shown exactly once.</strong></p>
@@ -88,7 +88,7 @@
     <div class="invite-row key-row" data-keyid="{{.KeyID}}">
       <code class="feed-url">{{.Name}}</code>
       <span class="muted">pods_{{.KeyID}}_…</span>
-      <button class="danger" data-revoke-key>Revoke</button>
+      <button class="danger" data-revoke-key><svg class="icon"><use href="#i-x"/></svg>Revoke</button>
     </div>
     {{end}}
   </section>
@@ -110,17 +110,17 @@
     <div class="actions">
       {{if .GoogleLinked}}
       <span class="muted">Google linked{{with .GoogleEmail}}: {{.}}{{end}}</span>
-      <button id="google-unlink" class="danger">Unlink Google</button>
+      <button id="google-unlink" class="danger"><svg class="icon"><use href="#i-x"/></svg>Unlink Google</button>
       {{else}}
       <a class="button quiet" href="/auth/google?link=1">Link a Google account</a>
       {{end}}
     </div>
     {{end}}
     <div class="actions">
-      <form method="post" action="/logout"><button class="quiet">Log out</button></form>
+      <form method="post" action="/logout"><button class="quiet"><svg class="icon"><use href="#i-logout"/></svg>Log out</button></form>
       <form method="post" action="/me/logout-everywhere">
         <button class="danger"
-                title="Kills every logged-in browser, including this one">Log out everywhere</button>
+                title="Kills every logged-in browser, including this one"><svg class="icon"><use href="#i-power"/></svg>Log out everywhere</button>
       </form>
     </div>
   </section>
@@ -138,10 +138,12 @@ async function api(path, opts = {}) {
 }
 
 function wireCopy(row) {
-  row.querySelector("[data-copy]").onclick = async (e) => {
+  const btn = row.querySelector("[data-copy]");
+  btn.onclick = async () => {
     await navigator.clipboard.writeText(row.querySelector("code").textContent);
-    e.target.textContent = "Copied ✓";
-    setTimeout(() => (e.target.textContent = "Copy"), 1500);
+    const lbl = btn.querySelector("span");
+    lbl.textContent = "Copied ✓";
+    setTimeout(() => (lbl.textContent = "Copy"), 1500);
   };
 }
 document.querySelectorAll(".invite-row:not(.key-row)").forEach(wireCopy);

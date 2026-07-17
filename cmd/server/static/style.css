@@ -110,7 +110,7 @@ h2 { font-size: 1.2rem; }
 .eyebrow::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 
 .muted { color: var(--muted); }
-.error { color: var(--live); }
+.error { color: var(--live); overflow-wrap: anywhere; }
 .warn  { color: var(--live); }
 .mark  { font-size: 3rem; margin: 0; }
 .center { text-align: center; }
@@ -147,7 +147,10 @@ code {
 
 /* ── Buttons: blue = act, outline = quiet, red = destructive ──────── */
 button, a.button, .button {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
   padding: 0.55rem 0.95rem;
   font: 600 0.92rem/1.2 var(--font-body);
   color: var(--accent-ink);
@@ -158,6 +161,17 @@ button, a.button, .button {
   text-decoration: none;
   white-space: nowrap;
   min-height: 2.5rem;
+}
+
+.icon {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 button:hover, a.button:hover { background: var(--accent-down); color: var(--accent-ink); }
 
@@ -285,7 +299,9 @@ button.danger:hover { background: var(--live); color: var(--live-ink); }
 /* Subscribe disclosure */
 details.subscribe { margin: 0.5rem 0; }
 details.subscribe summary {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   padding: 0.55rem 0.95rem;
   font: 600 0.92rem/1.2 var(--font-body);
   color: var(--accent-ink);
@@ -406,11 +422,28 @@ details.subscribe > div {
   color: var(--muted);
   position: relative;
 }
-.stages li::before { content: "○"; position: absolute; left: 0; }
+.stages li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.72em;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+}
 .stages li.stage-past { color: var(--text); }
-.stages li.stage-past::before { content: "●"; color: var(--accent); }
+.stages li.stage-past::before { border-color: var(--accent); background: var(--accent); }
 .stages li.stage-now { color: var(--text); font-weight: 600; }
-.stages li.stage-now::before { content: "◐"; color: var(--live); }
+.stages li.stage-now::before {
+  border-color: var(--live);
+  background: var(--live);
+  animation: lamp 2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stages li.stage-now::before { animation: none; }
+}
 
 .creds dt { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
 .creds dd { margin: 0.25rem 0 0; }
