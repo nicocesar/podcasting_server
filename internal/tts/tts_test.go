@@ -7,6 +7,27 @@ import (
 	"testing"
 )
 
+func TestSplitStripsCiteTags(t *testing.T) {
+	chunks := Split(`The rover landed <cite index="3-1">on Tuesday morning</cite> near the crater.`)
+	if len(chunks) != 1 || chunks[0] != "The rover landed on Tuesday morning near the crater." {
+		t.Fatalf("chunks = %q", chunks)
+	}
+}
+
+func TestStripTagsKeepsProse(t *testing.T) {
+	cases := map[string]string{
+		`plain text stays`:                         "plain text stays",
+		`<b>bold</b> and <cite index="0">c</cite>`: "bold and c",
+		`self-closing<br/> too`:                    "self-closing too",
+		`math like 5 < 10 survives`:                "math like 5 < 10 survives",
+	}
+	for in, want := range cases {
+		if got := stripTags(in); got != want {
+			t.Errorf("stripTags(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestSplitShortTextIsOneChunk(t *testing.T) {
 	chunks := Split("Hello there.\n\nSecond paragraph.")
 	if len(chunks) != 1 || !strings.Contains(chunks[0], "Second paragraph.") {

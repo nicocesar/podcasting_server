@@ -8,6 +8,7 @@ package tts
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -81,10 +82,23 @@ func VoiceFor(language, gender string) (Voice, bool) {
 // drives the progress checkpoint, so both engines get the same pieces.
 const maxChunkBytes = 3000
 
+// tagRE matches any XML/HTML-like tag — the research agent cites its web
+// sources as <cite index="...">…</cite>, which belongs in the stored
+// Script but must never be spoken. Requiring a letter after < (or </)
+// leaves literal comparisons like "5 < 10" alone.
+var tagRE = regexp.MustCompile(`</?[a-zA-Z][^<>]*>`)
+
+// stripTags removes markup wrappers, keeping the prose inside them.
+func stripTags(text string) string {
+	return tagRE.ReplaceAllString(text, "")
+}
+
 // Split cuts the script into synthesis chunks, preferring paragraph
 // boundaries, then sentence boundaries, then a hard cut. No chunk exceeds
-// maxChunkBytes.
+// maxChunkBytes. Markup is stripped first: chunks hold only speakable
+// text, so byte limits and character metering see what is actually voiced.
 func Split(text string) []string {
+	text = stripTags(text)
 	chunks := []string{}
 	current := ""
 	flush := func() {
