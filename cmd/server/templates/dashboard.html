@@ -1,131 +1,82 @@
 {{define "title"}}{{.User.Title}}{{end}}
 {{define "content"}}
-<article class="card">
-  <h1>{{.User.Title}}</h1>
-  <p class="muted">@{{.User.ID}} · <a href="{{.FeedPage}}">subscribe page with QR</a> ·
-  <a href="{{.DeepLink}}">open in AntennaPod</a></p>
-  <div class="invite-row" id="feed-row">
-    <code class="feed-url" title="Your private feed URL — the URL is the key">{{.FeedURL}}</code>
-    <button class="copy" data-copy>Copy</button>
-    <button class="danger" id="reset-feed"
-            title="Mint a new feed URL; the old one stops working and every device must resubscribe">Reset</button>
-  </div>
+<div class="dash">
 
-  <section class="panel">
-    <h2>Invite a friend</h2>
-    <p class="muted">Creates a single-use link, valid for 7 days. Send it to
-    one person; they pick a username and get their own feed.</p>
-    <div class="actions">
-      <button id="mk-invite">Create invite link</button>
-    </div>
-    <div id="new-invite" class="invite-row" hidden>
-      <code class="feed-url"></code>
-      <button class="copy" data-copy>Copy</button>
-    </div>
-    {{if .Invites}}
-    <h3 class="muted">Pending invites</h3>
-    {{range .Invites}}
-    <div class="invite-row" data-token="{{.Token}}">
-      <code class="feed-url">{{.URL}}</code>
-      <button class="copy" data-copy>Copy</button>
-      <button class="danger" data-revoke>Revoke</button>
-    </div>
-    {{end}}
-    {{end}}
-  </section>
-
-  {{if .GenerateEnabled}}
-  <section class="panel">
-    <h2>Generate an episode</h2>
-    <p class="muted">Give a topic; an agent researches, writes, and voices
-    it into your feed.</p>
-    <div class="actions">
-      <a class="button" href="/me/generate">Generate an episode</a>
-    </div>
-    {{if .Generations}}
-    <h3 class="muted">In progress</h3>
-    {{range .Generations}}
-    <div class="invite-row gen-row">
-      <code class="feed-url">{{.Topic}}</code>
-      <span class="muted">{{.StageLabel}}</span>
-      <a class="button" href="/me/generations/{{.ID}}">View</a>
-    </div>
-    {{end}}
-    {{end}}
-  </section>
-  {{end}}
-
-  <section class="panel">
-    <h2>API keys</h2>
-    <p class="muted">Credentials for your publishing agents. A key can
-    publish and manage your feed, but can never change your password,
-    mint keys, or move your feed URL.</p>
-    <div class="actions">
-      <input id="key-name" placeholder="name it, e.g. laptop-agent"
-             autocomplete="off" spellcheck="false">
-      <button id="mk-key">Create API key</button>
-    </div>
-    <div id="new-key" class="invite-row" hidden>
-      <code class="feed-url"></code>
-      <button class="copy" data-copy>Copy</button>
-    </div>
-    <p id="new-key-warn" class="warn" hidden><strong>Save this key now — it
-    is shown exactly once.</strong></p>
-    {{range .APIKeys}}
-    <div class="invite-row key-row" data-keyid="{{.KeyID}}">
-      <code class="feed-url">{{.Name}}</code>
-      <span class="muted">pods_{{.KeyID}}_…</span>
-      <button class="danger" data-revoke-key>Revoke</button>
-    </div>
-    {{end}}
-  </section>
-
-  <section class="panel">
-    <h2>Security</h2>
-    <form id="pw-form" class="join">
-      {{if .HasPassword}}
-      <label for="pw-current">Current password</label>
-      <input id="pw-current" type="password" autocomplete="current-password">
-      {{end}}
-      <label for="pw-new">New password</label>
-      <input id="pw-new" type="password" minlength="8" required
-             autocomplete="new-password">
-      <button type="submit">{{if .HasPassword}}Change password{{else}}Set a password{{end}}</button>
-    </form>
-    <p id="pw-msg" class="muted" hidden></p>
-    {{if .GoogleEnabled}}
-    <div class="actions">
-      {{if .GoogleLinked}}
-      <span class="muted">Google linked{{with .GoogleEmail}}: {{.}}{{end}}</span>
-      <button id="google-unlink" class="danger">Unlink Google</button>
+  <aside class="side">
+    <section class="card id-block">
+      {{if .CoverURL}}
+      <img class="cover" src="{{.CoverURL}}" alt="Cover art for {{.User.Title}}">
       {{else}}
-      <a class="button" href="/auth/google?link=1">Link a Google account</a>
+      <div class="cover-fallback" aria-hidden="true">{{printf "%.1s" .User.Title}}</div>
       {{end}}
+      <h1>{{.User.Title}}</h1>
+      <p class="callsign">@{{.User.ID}}</p>
+
+      <details class="subscribe">
+        <summary>Subscribe</summary>
+        <div>
+          <img class="qr" src="{{.QRURL}}" alt="QR code of the feed URL"
+               width="200" height="200" loading="lazy">
+          <div class="invite-row" id="feed-row">
+            <code class="feed-url">{{.FeedURL}}</code>
+            <button class="copy" data-copy>Copy</button>
+          </div>
+          <p class="actions">
+            <a class="button quiet" href="{{.DeepLink}}">Open in AntennaPod</a>
+            <a class="button quiet" href="{{.FeedPage}}">Subscribe page</a>
+          </p>
+          <p class="muted" style="font-size:.82rem">The URL is the key — share
+          the whole thing or not at all.</p>
+        </div>
+      </details>
+
+      <p class="actions"><a class="button quiet" href="/me/settings">Settings</a></p>
+    </section>
+
+    {{if .GenerateEnabled}}
+    <section class="card">
+      <p class="eyebrow">Studio</p>
+      <p class="actions"><a class="button" href="/me/generate">Generate an episode</a></p>
+      <p class="muted" style="font-size:.85rem;margin:0">Give a topic; an agent
+      researches, writes, and voices it into your feed.</p>
+      {{range .Generations}}
+      <div class="gen-row">
+        <span class="topic">{{.Topic}}</span>
+        {{if eq .Stage "failed"}}
+        <span class="offair">Off air — failed</span>
+        {{else}}
+        <span class="onair">On air — {{.StageLabel}}</span>
+        {{end}}
+        <a class="button quiet" href="/me/generations/{{.ID}}">View</a>
+      </div>
+      {{end}}
+    </section>
+    {{end}}
+  </aside>
+
+  <section class="log">
+    <p class="eyebrow">Episodes · {{len .Episodes}}</p>
+    {{if not .Episodes}}
+    <div class="card">
+      <p class="muted" style="margin:0">Nothing published yet.
+      {{if .GenerateEnabled}}Generate an episode or point a publishing agent
+      at your feed — it will show up here.{{end}}</p>
     </div>
     {{end}}
-    <div class="actions">
-      <form method="post" action="/logout"><button>Log out</button></form>
-      <form method="post" action="/me/logout-everywhere">
-        <button class="danger"
-                title="Kills every logged-in browser, including this one">Log out everywhere</button>
-      </form>
-    </div>
-  </section>
-
-  <section class="panel">
-    <h2>Your episodes</h2>
-    {{if not .Episodes}}<p class="muted">Nothing published yet.</p>{{end}}
     {{range .Episodes}}
     <div class="episode" data-owner="{{.OwnerID}}" data-slug="{{.Slug}}">
-      <div class="ep-head">
-        <strong>{{.Title}}</strong>
-        <span class="muted">{{.Slug}}</span>
-      </div>
+      <p class="ep-title">{{.Title}}</p>
+      <p class="ep-meta">{{.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
       <div class="actions">
         <input class="share-to" list="users-dl" placeholder="friend's username…"
                autocomplete="off" spellcheck="false">
         <button data-share>Share</button>
-        <button data-ep-invite title="Invite someone new; this episode will be in their feed">Invite with this</button>
+        <button class="quiet" data-ep-invite
+                title="Invite someone new; this episode will be in their feed">Invite with this</button>
+      </div>
+      <div class="invite-row ep-invite" hidden>
+        <code class="feed-url"></code>
+        <button class="copy" data-copy>Copy</button>
       </div>
       <p class="msg muted" hidden></p>
     </div>
@@ -133,8 +84,7 @@
     <datalist id="users-dl"></datalist>
   </section>
 
-  {{if .Version}}<p class="muted">Server version {{.Version}}</p>{{end}}
-</article>
+</div>
 
 <script>
 async function api(path, opts = {}) {
@@ -152,82 +102,7 @@ function wireCopy(row) {
     setTimeout(() => (e.target.textContent = "Copy"), 1500);
   };
 }
-document.querySelectorAll(".invite-row:not(.gen-row):not(.key-row)").forEach(wireCopy);
-
-document.getElementById("reset-feed").onclick = async () => {
-  if (!confirm("Mint a new feed URL? The current one stops working immediately and your podcast app must resubscribe (scan the new QR)."))
-    return;
-  await api("/me/feed-token", {method: "POST"});
-  location.reload();
-};
-
-document.querySelectorAll("[data-revoke]").forEach((btn) => {
-  btn.onclick = async () => {
-    const row = btn.closest(".invite-row");
-    await api("/me/invites/" + row.dataset.token, {method: "DELETE"});
-    row.remove();
-  };
-});
-
-async function mintInvite(payload) {
-  const inv = await api("/me/invites", {method: "POST", body: JSON.stringify(payload || {})});
-  const row = document.getElementById("new-invite");
-  row.querySelector("code").textContent = inv.url;
-  row.hidden = false;
-  wireCopy(row);
-  row.scrollIntoView({block: "nearest"});
-  return inv;
-}
-document.getElementById("mk-invite").onclick = () => mintInvite().catch(alert);
-
-document.getElementById("mk-key").onclick = async () => {
-  const input = document.getElementById("key-name");
-  const name = input.value.trim();
-  if (!name) return alert("Name the key first — which agent is it for?");
-  try {
-    const k = await api("/me/api-keys", {method: "POST", body: JSON.stringify({name})});
-    const row = document.getElementById("new-key");
-    row.querySelector("code").textContent = k.key;
-    row.hidden = false;
-    document.getElementById("new-key-warn").hidden = false;
-    wireCopy(row);
-    input.value = "";
-  } catch (err) { alert("Could not create key: " + err.message); }
-};
-
-document.querySelectorAll("[data-revoke-key]").forEach((btn) => {
-  btn.onclick = async () => {
-    if (!confirm("Revoke this key? The agent using it stops working immediately."))
-      return;
-    const row = btn.closest(".invite-row");
-    await api("/me/api-keys/" + row.dataset.keyid, {method: "DELETE"});
-    row.remove();
-  };
-});
-
-document.getElementById("pw-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const msg = document.getElementById("pw-msg");
-  const current = document.getElementById("pw-current");
-  try {
-    await api("/me/password", {method: "POST", body: JSON.stringify({
-      current: current ? current.value : "",
-      new: document.getElementById("pw-new").value,
-    })});
-    msg.textContent = "Password updated ✓ — every other session is logged out.";
-  } catch (err) { msg.textContent = "Could not update password: " + err.message; }
-  msg.hidden = false;
-};
-
-const unlinkBtn = document.getElementById("google-unlink");
-if (unlinkBtn) unlinkBtn.onclick = async () => {
-  if (!confirm("Unlink your Google account? You will log in with your password only."))
-    return;
-  try {
-    await api("/me/google/unlink", {method: "POST"});
-    location.reload();
-  } catch (err) { alert(err.message); }
-};
+wireCopy(document.getElementById("feed-row"));
 
 // Friend search: any share box feeds the shared datalist as you type.
 let searchTimer;
@@ -258,8 +133,13 @@ document.querySelectorAll(".episode").forEach((ep) => {
   };
   ep.querySelector("[data-ep-invite]").onclick = async () => {
     try {
-      await mintInvite({owner: ep.dataset.owner, slug: ep.dataset.slug});
-      say("Invite created above — copy it and send it; this episode will be waiting in their new feed.");
+      const inv = await api("/me/invites", {method: "POST",
+        body: JSON.stringify({owner: ep.dataset.owner, slug: ep.dataset.slug})});
+      const row = ep.querySelector(".ep-invite");
+      row.querySelector("code").textContent = inv.url;
+      row.hidden = false;
+      wireCopy(row);
+      say("Send this link to one person — the episode will be waiting in their new feed. Valid 7 days.");
     } catch (err) { say("Could not create invite: " + err.message); }
   };
 });

@@ -1,0 +1,259 @@
+{{define "title"}}Settings — {{.User.Title}}{{end}}
+{{define "content"}}
+<article class="card shell-wide">
+  <a class="backlink" href="/me">← Back to your podcast</a>
+  <h1>Settings</h1>
+  <p class="callsign">@{{.User.ID}}</p>
+
+  <section class="panel">
+    <p class="eyebrow">Podcast profile</p>
+    <div class="actions">
+      {{if .CoverURL}}
+      <img class="cover-preview" id="cover-preview" src="{{.CoverURL}}" alt="Current cover art">
+      {{else}}
+      <img class="cover-preview" id="cover-preview" alt="Cover art preview" hidden>
+      {{end}}
+      <input type="file" id="cover-file" accept="image/jpeg,image/png" hidden>
+      <button class="quiet" id="cover-pick">Upload cover art</button>
+    </div>
+    <p class="msg muted" id="cover-msg" hidden></p>
+    <form id="profile-form" class="join">
+      <label for="pf-title">Title</label>
+      <input id="pf-title" value="{{.User.Title}}" required maxlength="200">
+      <label for="pf-desc">Description</label>
+      <textarea id="pf-desc" maxlength="4000">{{.User.Description}}</textarea>
+      <label for="pf-lang">Language code</label>
+      <input id="pf-lang" value="{{.User.Language}}" placeholder="en"
+             maxlength="20" autocomplete="off" spellcheck="false">
+      <button type="submit">Save profile</button>
+    </form>
+    <p class="msg muted" id="profile-msg" hidden></p>
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">Feed URL</p>
+    <div class="invite-row" id="feed-row">
+      <code class="feed-url">{{.FeedURL}}</code>
+      <button class="copy" data-copy>Copy</button>
+    </div>
+    <div class="actions">
+      <button class="danger" id="reset-feed"
+              title="Mint a new feed URL; the old one stops working and every device must resubscribe">Reset feed URL</button>
+    </div>
+    <p class="muted" style="font-size:.85rem">Resetting kills the current URL
+    instantly — every podcast app must resubscribe with the new one.</p>
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">Invite a friend</p>
+    <p class="muted" style="font-size:.85rem">Creates a single-use link, valid
+    for 7 days. Send it to one person; they pick a username and get their own
+    feed.</p>
+    <div class="actions">
+      <button id="mk-invite">Create invite link</button>
+    </div>
+    <div id="new-invite" class="invite-row" hidden>
+      <code class="feed-url"></code>
+      <button class="copy" data-copy>Copy</button>
+    </div>
+    {{if .Invites}}
+    <h3 class="muted">Pending invites</h3>
+    {{range .Invites}}
+    <div class="invite-row" data-token="{{.Token}}">
+      <code class="feed-url">{{.URL}}</code>
+      <button class="copy" data-copy>Copy</button>
+      <button class="danger" data-revoke>Revoke</button>
+    </div>
+    {{end}}
+    {{end}}
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">API keys</p>
+    <p class="muted" style="font-size:.85rem">Credentials for your publishing
+    agents. A key can publish and manage your feed, but can never change your
+    password, mint keys, or move your feed URL.</p>
+    <div class="actions">
+      <input id="key-name" placeholder="name it, e.g. laptop-agent"
+             autocomplete="off" spellcheck="false">
+      <button id="mk-key">Create API key</button>
+    </div>
+    <div id="new-key" class="invite-row" hidden>
+      <code class="feed-url"></code>
+      <button class="copy" data-copy>Copy</button>
+    </div>
+    <p id="new-key-warn" class="warn" hidden><strong>Save this key now — it
+    is shown exactly once.</strong></p>
+    {{range .APIKeys}}
+    <div class="invite-row key-row" data-keyid="{{.KeyID}}">
+      <code class="feed-url">{{.Name}}</code>
+      <span class="muted">pods_{{.KeyID}}_…</span>
+      <button class="danger" data-revoke-key>Revoke</button>
+    </div>
+    {{end}}
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">Security</p>
+    <form id="pw-form" class="join">
+      {{if .HasPassword}}
+      <label for="pw-current">Current password</label>
+      <input id="pw-current" type="password" autocomplete="current-password">
+      {{end}}
+      <label for="pw-new">New password</label>
+      <input id="pw-new" type="password" minlength="8" required
+             autocomplete="new-password">
+      <button type="submit">{{if .HasPassword}}Change password{{else}}Set a password{{end}}</button>
+    </form>
+    <p id="pw-msg" class="muted" hidden></p>
+    {{if .GoogleEnabled}}
+    <div class="actions">
+      {{if .GoogleLinked}}
+      <span class="muted">Google linked{{with .GoogleEmail}}: {{.}}{{end}}</span>
+      <button id="google-unlink" class="danger">Unlink Google</button>
+      {{else}}
+      <a class="button quiet" href="/auth/google?link=1">Link a Google account</a>
+      {{end}}
+    </div>
+    {{end}}
+    <div class="actions">
+      <form method="post" action="/logout"><button class="quiet">Log out</button></form>
+      <form method="post" action="/me/logout-everywhere">
+        <button class="danger"
+                title="Kills every logged-in browser, including this one">Log out everywhere</button>
+      </form>
+    </div>
+  </section>
+
+  {{if .Version}}<footer class="colophon">server {{.Version}}</footer>{{end}}
+</article>
+
+<script>
+async function api(path, opts = {}) {
+  if (opts.body && !opts.headers) opts.headers = {"Content-Type": "application/json"};
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.text()).trim() || r.status);
+  const text = await r.text();
+  return text ? JSON.parse(text) : null;
+}
+
+function wireCopy(row) {
+  row.querySelector("[data-copy]").onclick = async (e) => {
+    await navigator.clipboard.writeText(row.querySelector("code").textContent);
+    e.target.textContent = "Copied ✓";
+    setTimeout(() => (e.target.textContent = "Copy"), 1500);
+  };
+}
+document.querySelectorAll(".invite-row:not(.key-row)").forEach(wireCopy);
+
+// Podcast profile
+const coverFile = document.getElementById("cover-file");
+document.getElementById("cover-pick").onclick = () => coverFile.click();
+coverFile.onchange = async () => {
+  const f = coverFile.files[0];
+  if (!f) return;
+  const msg = document.getElementById("cover-msg");
+  try {
+    await api("/me/image", {method: "PUT", body: f, headers: {"Content-Type": f.type}});
+    const img = document.getElementById("cover-preview");
+    img.src = URL.createObjectURL(f);
+    img.hidden = false;
+    msg.textContent = "Cover art updated ✓";
+  } catch (err) { msg.textContent = "Could not upload cover: " + err.message; }
+  msg.hidden = false;
+};
+
+document.getElementById("profile-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("profile-msg");
+  try {
+    await api("/me", {method: "PUT", body: JSON.stringify({
+      title: document.getElementById("pf-title").value.trim(),
+      description: document.getElementById("pf-desc").value.trim(),
+      language: document.getElementById("pf-lang").value.trim(),
+    })});
+    msg.textContent = "Profile saved ✓";
+  } catch (err) { msg.textContent = "Could not save profile: " + err.message; }
+  msg.hidden = false;
+};
+
+// Feed URL
+document.getElementById("reset-feed").onclick = async () => {
+  if (!confirm("Mint a new feed URL? The current one stops working immediately and your podcast app must resubscribe (scan the new QR)."))
+    return;
+  await api("/me/feed-token", {method: "POST"});
+  location.reload();
+};
+
+// Invites
+document.getElementById("mk-invite").onclick = async () => {
+  try {
+    const inv = await api("/me/invites", {method: "POST", body: JSON.stringify({})});
+    const row = document.getElementById("new-invite");
+    row.querySelector("code").textContent = inv.url;
+    row.hidden = false;
+    wireCopy(row);
+    row.scrollIntoView({block: "nearest"});
+  } catch (err) { alert(err.message); }
+};
+
+document.querySelectorAll("[data-revoke]").forEach((btn) => {
+  btn.onclick = async () => {
+    const row = btn.closest(".invite-row");
+    await api("/me/invites/" + row.dataset.token, {method: "DELETE"});
+    row.remove();
+  };
+});
+
+// API keys
+document.getElementById("mk-key").onclick = async () => {
+  const input = document.getElementById("key-name");
+  const name = input.value.trim();
+  if (!name) return alert("Name the key first — which agent is it for?");
+  try {
+    const k = await api("/me/api-keys", {method: "POST", body: JSON.stringify({name})});
+    const row = document.getElementById("new-key");
+    row.querySelector("code").textContent = k.key;
+    row.hidden = false;
+    document.getElementById("new-key-warn").hidden = false;
+    wireCopy(row);
+    input.value = "";
+  } catch (err) { alert("Could not create key: " + err.message); }
+};
+
+document.querySelectorAll("[data-revoke-key]").forEach((btn) => {
+  btn.onclick = async () => {
+    if (!confirm("Revoke this key? The agent using it stops working immediately."))
+      return;
+    const row = btn.closest(".invite-row");
+    await api("/me/api-keys/" + row.dataset.keyid, {method: "DELETE"});
+    row.remove();
+  };
+});
+
+// Security
+document.getElementById("pw-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("pw-msg");
+  const current = document.getElementById("pw-current");
+  try {
+    await api("/me/password", {method: "POST", body: JSON.stringify({
+      current: current ? current.value : "",
+      new: document.getElementById("pw-new").value,
+    })});
+    msg.textContent = "Password updated ✓ — every other session is logged out.";
+  } catch (err) { msg.textContent = "Could not update password: " + err.message; }
+  msg.hidden = false;
+};
+
+const unlinkBtn = document.getElementById("google-unlink");
+if (unlinkBtn) unlinkBtn.onclick = async () => {
+  if (!confirm("Unlink your Google account? You will log in with your password only."))
+    return;
+  try {
+    await api("/me/google/unlink", {method: "POST"});
+    location.reload();
+  } catch (err) { alert(err.message); }
+};
+</script>
+{{end}}

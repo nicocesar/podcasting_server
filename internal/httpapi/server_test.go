@@ -797,8 +797,8 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	resp.Body.Close()
 
 	// A logged-in browser (session + Accept: text/html) gets the
-	// Dashboard: feed URL, episode, invite button, API key and security
-	// sections. A browser with no session is sent to /login instead.
+	// Dashboard: feed URL, episode with share actions, and a link to
+	// Settings. A browser with no session is sent to /login instead.
 	req, _ := http.NewRequest("GET", ts.URL+"/me", nil)
 	req.AddCookie(&http.Cookie{Name: "session", Value: alice.Session})
 	req.Header.Set("Accept", "text/html")
@@ -812,13 +812,47 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	if htmlResp.StatusCode != 200 || !strings.Contains(htmlResp.Header.Get("Content-Type"), "text/html") {
 		t.Fatalf("dashboard: %d %q", htmlResp.StatusCode, htmlResp.Header.Get("Content-Type"))
 	}
-	for _, want := range []string{"Morning Update", alice.FeedURL, "antennapod.org/deeplink", "reset-feed", "mk-invite", "share-to", "mk-key", "pw-form", "test-agent"} {
+	for _, want := range []string{"Morning Update", alice.FeedURL, "antennapod.org/deeplink", "share-to", "data-ep-invite", "/me/settings"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
 	}
+	for _, gone := range []string{"reset-feed", "mk-key", "pw-form"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("dashboard still shows settings-only element %q", gone)
+		}
+	}
 	if strings.Contains(page, alice.Key) {
 		t.Errorf("dashboard re-shows the API key plaintext")
+	}
+
+	// Settings has the credential/account management the Dashboard shed.
+	req, _ = http.NewRequest("GET", ts.URL+"/me/settings", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: alice.Session})
+	setResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(setResp.Body)
+	setResp.Body.Close()
+	page = string(body)
+	if setResp.StatusCode != 200 {
+		t.Fatalf("settings: %d", setResp.StatusCode)
+	}
+	for _, want := range []string{alice.FeedURL, "reset-feed", "mk-invite", "mk-key", "pw-form", "profile-form", "test-agent"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("settings missing %q", want)
+		}
+	}
+	if strings.Contains(page, alice.Key) {
+		t.Errorf("settings re-shows the API key plaintext")
+	}
+
+	// Settings is session-only: an API key is refused outright.
+	resp = do(t, "GET", ts.URL+"/me/settings", alice.publishCreds(), nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("settings with API key: got %d, want 403", resp.StatusCode)
 	}
 
 	anonReq, _ := http.NewRequest("GET", ts.URL+"/me", nil)

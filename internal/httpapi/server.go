@@ -99,6 +99,7 @@ type server struct {
 	tmplNotFound   *template.Template
 	tmplGenerate   *template.Template
 	tmplGeneration *template.Template
+	tmplSettings   *template.Template
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -143,6 +144,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplNotFound, []string{"templates/layout.html", "templates/notfound.html"}},
 		{&s.tmplGenerate, []string{"templates/layout.html", "templates/generate.html"}},
 		{&s.tmplGeneration, []string{"templates/layout.html", "templates/generation.html"}},
+		{&s.tmplSettings, []string{"templates/layout.html", "templates/settings.html"}},
 	} {
 		t, err := template.ParseFS(cfg.Assets, p.files...)
 		if err != nil {
@@ -223,6 +225,7 @@ func New(cfg Config) (http.Handler, error) {
 	// Credential Management: session-only by construction, so a leaked
 	// API Key can never widen itself, change the Login, or move the
 	// Feed Token (CONTEXT.md "Credential Management").
+	mux.HandleFunc("GET /me/settings", s.session(s.handleGetSettings))
 	mux.HandleFunc("POST /me/feed-token", s.session(s.handleResetFeedToken))
 	mux.HandleFunc("GET /me/api-keys", s.session(s.handleListAPIKeys))
 	mux.HandleFunc("POST /me/api-keys", s.session(s.handleMintAPIKey))
@@ -575,6 +578,95 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
+	views := make([]episodeView, 0, len(episodes))
+	for _, ep := range episodes {
+		views = append(views, episodeView{
+			Episode:  ep,
+			Aired:    relativeDate(ep.PublishedAt),
+			Duration: humanDuration(ep.DurationSec),
+		})
+	}
+	generations, err := s.dashboardGenerations(r, u)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.render(w, http.StatusOK, s.tmplDashboard, struct {
+		User            store.User
+		FeedPage        string
+		CoverURL        string
+		Episodes        []episodeView
+		GenerateEnabled bool
+		Generations     []generationView
+		subscribeBox
+	}{
+		User:            u,
+		FeedPage:        "/f/" + u.FeedToken,
+		CoverURL:        coverURL(u),
+		Episodes:        views,
+		GenerateEnabled: s.generator != nil,
+		Generations:     generations,
+		subscribeBox:    s.subscribeBox(r, u),
+	})
+}
+
+// episodeView is an Episode plus the display strings the Dashboard
+// shows for it, precomputed like inviteView/generationView.
+type episodeView struct {
+	store.Episode
+	Aired    string
+	Duration string
+}
+
+// coverURL is where the owner's Cover Art is served, or "" without one.
+func coverURL(u store.User) string {
+	if u.CoverType == "" {
+		return ""
+	}
+	return "/f/" + u.FeedToken + "/cover"
+}
+
+// relativeDate renders a publish time the way a program log would:
+// close dates relative, older ones absolute.
+func relativeDate(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	d := time.Since(t)
+	switch {
+	case d < 24*time.Hour:
+		return "today"
+	case d < 48*time.Hour:
+		return "yesterday"
+	case d < 14*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	case d < 60*24*time.Hour:
+		return fmt.Sprintf("%dw ago", int(d.Hours()/(24*7)))
+	default:
+		return t.Format("Jan 2, 2006")
+	}
+}
+
+func humanDuration(sec int) string {
+	switch {
+	case sec <= 0:
+		return ""
+	case sec < 60:
+		return fmt.Sprintf("%ds", sec)
+	default:
+		return fmt.Sprintf("%d min", (sec+30)/60)
+	}
+}
+
+// handleGetSettings renders the Settings page: everything about the
+// account that isn't the daily publish/share loop. Session-only, like
+// the Credential Management API it fronts.
+func (s *server) handleGetSettings(w http.ResponseWriter, r *http.Request, u store.User) {
+	u, err := s.ensureFeedToken(r, u)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
 	invs, err := s.store.ListInvites(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, err)
@@ -586,44 +678,33 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			pending = append(pending, v)
 		}
 	}
-	generations, err := s.dashboardGenerations(r, u)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
 	apiKeys, err := s.store.ListAPIKeys(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	s.render(w, http.StatusOK, s.tmplDashboard, struct {
-		User            store.User
-		FeedPage        string
-		Episodes        []store.Episode
-		Invites         []inviteView
-		GenerateEnabled bool
-		Generations     []generationView
-		APIKeys         []store.APIKey
-		HasPassword     bool
-		GoogleLinked    bool
-		GoogleEmail     string
-		GoogleEnabled   bool
-		Version         string
+	s.render(w, http.StatusOK, s.tmplSettings, struct {
+		User          store.User
+		CoverURL      string
+		Invites       []inviteView
+		APIKeys       []store.APIKey
+		HasPassword   bool
+		GoogleLinked  bool
+		GoogleEmail   string
+		GoogleEnabled bool
+		Version       string
 		subscribeBox
 	}{
-		User:            u,
-		FeedPage:        "/f/" + u.FeedToken,
-		Episodes:        episodes,
-		Invites:         pending,
-		GenerateEnabled: s.generator != nil,
-		Generations:     generations,
-		APIKeys:         apiKeys,
-		HasPassword:     u.PasswordHash != "",
-		GoogleLinked:    u.GoogleSub != "",
-		GoogleEmail:     u.GoogleEmail,
-		GoogleEnabled:   s.google != nil,
-		Version:         s.version,
-		subscribeBox:    s.subscribeBox(r, u),
+		User:          u,
+		CoverURL:      coverURL(u),
+		Invites:       pending,
+		APIKeys:       apiKeys,
+		HasPassword:   u.PasswordHash != "",
+		GoogleLinked:  u.GoogleSub != "",
+		GoogleEmail:   u.GoogleEmail,
+		GoogleEnabled: s.google != nil,
+		Version:       s.version,
+		subscribeBox:  s.subscribeBox(r, u),
 	})
 }
 

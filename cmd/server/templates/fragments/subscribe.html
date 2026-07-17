@@ -1,8 +1,8 @@
 {{define "subscribe"}}
-<section class="subscribe">
-  <h2>Subscribe</h2>
-  <p>This feed is private — the URL itself is the key. On a phone, point
-  the camera at the code:</p>
+<section class="panel">
+  <p class="eyebrow">Subscribe</p>
+  <p class="muted" style="font-size:.9rem">This feed is private — the URL
+  itself is the key. On a phone, point the camera at the code:</p>
   <p class="center"><img class="qr" src="{{.QRURL}}" alt="QR code of the feed URL" width="220" height="220"></p>
   <p><code class="feed-url">{{.FeedURL}}</code></p>
   <p class="center"><a class="button" href="{{.DeepLink}}">Open in AntennaPod</a></p>

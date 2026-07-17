@@ -4,12 +4,37 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{block "title" .}}podcasting_server{{end}}</title>
+  <script>
+    // Apply the saved theme before first paint so there is no flash.
+    (function () {
+      var t = localStorage.getItem("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <button class="theme-toggle" id="theme-toggle" title="Switch between light and dark">◐</button>
   <main>
     {{template "content" .}}
   </main>
+  <script>
+    (function () {
+      var btn = document.getElementById("theme-toggle");
+      function current() {
+        return document.documentElement.dataset.theme ||
+          (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      }
+      function paint() { btn.textContent = current() === "dark" ? "☀" : "☾"; }
+      btn.onclick = function () {
+        var next = current() === "dark" ? "light" : "dark";
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem("theme", next);
+        paint();
+      };
+      paint();
+    })();
+  </script>
 </body>
 </html>
 {{end}}

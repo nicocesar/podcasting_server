@@ -15,7 +15,7 @@
            required autocomplete="new-password">
     <button type="submit" name="method" value="password">Join</button>
     {{if .GoogleEnabled}}
-    <button type="submit" name="method" value="google" formnovalidate
+    <button type="submit" name="method" value="google" formnovalidate class="quiet"
             title="No password: your Google account becomes your login">Join with Google instead</button>
     {{end}}
   </form>
