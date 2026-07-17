@@ -16,13 +16,13 @@ Arguments: `"<topic>" <duration> [freshness]`
 
 ## 1. Preflight
 
-- `PODCAST_HOST` and `PODCAST_PUBLISH_CREDENTIALS` (`user:publish-token`,
-  from provisioning) must be set in the environment; stop and name
+- `PODCAST_HOST` and `PODCAST_PUBLISH_CREDENTIALS` (a `pods_…` API key,
+  minted on /me/settings) must be set in the environment; stop and name
   whichever is missing.
 - `edge-tts` and `ffprobe` must be on PATH (`pipx install edge-tts`, or run
   via `uvx edge-tts`).
 - The credentials must work:
-  `curl -sfu "$PODCAST_PUBLISH_CREDENTIALS" "$PODCAST_HOST/me/episodes"`.
+  `curl -sf -H "Authorization: Bearer $PODCAST_PUBLISH_CREDENTIALS" "$PODCAST_HOST/me/episodes"`.
   On 401/403, stop and report the credentials as the problem — the target
   feed is implied by them; there is nothing else to configure.
 
@@ -98,7 +98,7 @@ frames.
 ```sh
 cat sources.txt script.txt > description.txt
 jq -n --arg t "$TITLE" --rawfile d description.txt '{title:$t, description:$d}' > metadata.json
-curl -sfu "$PODCAST_PUBLISH_CREDENTIALS" -X PUT \
+curl -sf -H "Authorization: Bearer $PODCAST_PUBLISH_CREDENTIALS" -X PUT \
   -F 'metadata=<metadata.json;type=application/json' \
   -F 'audio=@briefing.mp3;type=audio/mpeg' \
   "$PODCAST_HOST/me/episodes/<slug>"
@@ -106,4 +106,4 @@ curl -sfu "$PODCAST_PUBLISH_CREDENTIALS" -X PUT \
 
 Done when the PUT succeeds. Report the title, slug, measured duration, and
 the feed URL — read it from `feed_url` in
-`curl -sfu "$PODCAST_PUBLISH_CREDENTIALS" "$PODCAST_HOST/me"`.
+`curl -sf -H "Authorization: Bearer $PODCAST_PUBLISH_CREDENTIALS" "$PODCAST_HOST/me"`.
