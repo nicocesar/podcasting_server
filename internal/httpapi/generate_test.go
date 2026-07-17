@@ -193,7 +193,7 @@ func TestGenerateValidation(t *testing.T) {
 		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"fr"}, "voice": {"female"}},
 		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"robot"}},
 		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}},
-		{"topic": {strings.Repeat("a", 501)}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}},
+		{"topic": {strings.Repeat("a", 2001)}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}},
 	}
 	for i, form := range bad {
 		resp := postGenerate(t, ts, alice, form)

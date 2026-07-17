@@ -4,7 +4,7 @@
          data-stage="{{.Stage}}">
   <h1>Generating an episode</h1>
   <p class="muted">“{{.Topic}}” · {{.LengthMinutes}} min ·
-  last {{.FreshnessDays}} days · {{.Language}}</p>
+  {{if .FreshnessDays}}last {{.FreshnessDays}} days{{else}}timeless{{end}} · {{.Language}}</p>
 
   <section class="panel">
     <p id="stage-label"><strong>{{.StageLabel}}</strong></p>

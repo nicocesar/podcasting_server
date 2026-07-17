@@ -10,9 +10,9 @@
 
   <form class="join" method="post" action="/me/generate">
     <label for="topic">Topic</label>
-    <input id="topic" name="topic" required maxlength="500"
-           placeholder="e.g. developments in fusion energy"
-           value="{{.Topic}}" autocomplete="off">
+    <textarea id="topic" name="topic" required maxlength="2000" rows="4"
+              placeholder="e.g. developments in fusion energy — or a whole brief: angle, things to include, tone…"
+              autocomplete="off">{{.Topic}}</textarea>
 
     <label for="length">Episode length</label>
     <select id="length" name="length">

@@ -47,7 +47,7 @@ func (s *server) handleGeneratePage(w http.ResponseWriter, r *http.Request, _ st
 	})
 }
 
-const maxTopicLen = 500
+const maxTopicLen = 2000
 
 func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u store.User) {
 	retry := func(msg string) {
@@ -62,7 +62,7 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 
 	topic := strings.TrimSpace(r.FormValue("topic"))
 	if topic == "" || len(topic) > maxTopicLen {
-		retry("The topic is required, up to 500 characters.")
+		retry("The topic is required, up to 2000 characters.")
 		return
 	}
 	length, err := strconv.Atoi(r.FormValue("length"))

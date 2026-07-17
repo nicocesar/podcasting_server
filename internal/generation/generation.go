@@ -20,7 +20,9 @@ var Lengths = []int{2, 5, 10, 15, 25, 60}
 
 const wordsPerMinute = 150
 
-// FreshnessOption is one Freshness Window choice.
+// FreshnessOption is one Freshness Window choice. Days == 0 is the
+// Timeless window: the topic isn't news-bound, so research skips
+// recency anchoring entirely (geography, history, how things work).
 type FreshnessOption struct {
 	Days  int
 	Label string
@@ -34,6 +36,7 @@ var FreshnessOptions = []FreshnessOption{
 	{30, "Last month"},
 	{90, "Last 3 months"},
 	{365, "Last year"},
+	{0, "Timeless — not tied to the news"},
 }
 
 // ValidLength reports whether minutes is one of the offered options.
@@ -180,6 +183,7 @@ Research rules:
 - Use web search (and web fetch on promising results) to find out what has happened around the topic.
 - Anchor the episode in developments from sources published within the freshness window. Older material may be used for background and context only.
 - If the window contains little or nothing new on the topic, say so naturally in the episode itself, and cover the freshest material available instead. Never refuse the task for lack of news.
+- Some tasks are timeless instead of giving a freshness window: cover the enduring substance of the topic — history, geography, mechanisms, the standing state of things — as an evergreen piece. Recency rules do not apply; source quality still does.
 - Prefer primary and reputable sources; note each source's publication date.
 
 Writing rules:
@@ -197,9 +201,13 @@ If the tool result rejects the submission, it explains what is wrong: fix exactl
 // collected, resolved into concrete instructions.
 func userMessage(topic string, lengthMinutes, freshnessDays int, language string, now time.Time) string {
 	words := lengthMinutes * wordsPerMinute
+	freshness := fmt.Sprintf("the last %d days", freshnessDays)
+	if freshnessDays == 0 {
+		freshness = "none — this is a timeless topic; write an evergreen episode"
+	}
 	return fmt.Sprintf(
-		"Today is %s.\nTopic: %s\nTarget length: about %d spoken words (a %d-minute episode).\nFreshness window: the last %d days.\nLanguage: %s\n\nResearch the topic and produce the episode as specified in your instructions.",
-		now.UTC().Format("Monday, 2 January 2006"), topic, words, lengthMinutes, freshnessDays, languageName(language),
+		"Today is %s.\nTopic: %s\nTarget length: about %d spoken words (a %d-minute episode).\nFreshness window: %s.\nLanguage: %s\n\nResearch the topic and produce the episode as specified in your instructions.",
+		now.UTC().Format("Monday, 2 January 2006"), topic, words, lengthMinutes, freshness, languageName(language),
 	)
 }
 

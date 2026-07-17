@@ -3,6 +3,7 @@ package generation
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseScript(t *testing.T) {
@@ -87,7 +88,18 @@ func TestValidators(t *testing.T) {
 	if !ValidLength(5) || ValidLength(7) {
 		t.Fatal("ValidLength wrong")
 	}
-	if !ValidFreshness(30) || ValidFreshness(2) {
+	if !ValidFreshness(30) || !ValidFreshness(0) || ValidFreshness(2) {
 		t.Fatal("ValidFreshness wrong")
+	}
+}
+
+func TestUserMessageFreshness(t *testing.T) {
+	dated := userMessage("volcanoes", 5, 7, "en", time.Now())
+	if !strings.Contains(dated, "the last 7 days") {
+		t.Fatalf("dated task missing window: %q", dated)
+	}
+	timeless := userMessage("volcanoes", 5, 0, "en", time.Now())
+	if !strings.Contains(timeless, "timeless") || strings.Contains(timeless, "last 0 days") {
+		t.Fatalf("timeless task wrong: %q", timeless)
 	}
 }
