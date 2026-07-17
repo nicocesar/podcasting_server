@@ -89,6 +89,7 @@ type server struct {
 	generator     *generation.Runner
 	adminAPI      *anthropicAdmin
 	version       string
+	assetVersion  string // content hash of style.css; cache-busts the stylesheet URL
 
 	tmplHome       *template.Template
 	tmplUser       *template.Template
@@ -130,6 +131,14 @@ func New(cfg Config) (http.Handler, error) {
 		s.log = slog.Default()
 	}
 
+	// The stylesheet URL carries a content hash so a deploy invalidates
+	// cached CSS immediately, while /static keeps its long max-age.
+	s.assetVersion = "dev"
+	if b, err := fs.ReadFile(cfg.Assets, "static/style.css"); err == nil {
+		sum := sha256.Sum256(b)
+		s.assetVersion = hex.EncodeToString(sum[:4])
+	}
+
 	// Each page is layout + its content template (+ shared fragments).
 	for _, p := range []struct {
 		dst   **template.Template
@@ -146,7 +155,9 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplGeneration, []string{"templates/layout.html", "templates/generation.html"}},
 		{&s.tmplSettings, []string{"templates/layout.html", "templates/settings.html"}},
 	} {
-		t, err := template.ParseFS(cfg.Assets, p.files...)
+		t, err := template.New("page").Funcs(template.FuncMap{
+			"assetv": func() string { return s.assetVersion },
+		}).ParseFS(cfg.Assets, p.files...)
 		if err != nil {
 			return nil, fmt.Errorf("parse templates: %w", err)
 		}

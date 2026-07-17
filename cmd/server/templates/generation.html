@@ -17,7 +17,7 @@
     <p id="gen-error" class="error" {{if not .Error}}hidden{{end}}>{{.Error}}</p>
     <form id="retry" method="post" action="/me/generations/{{.ID}}/retry"
           {{if ne .Stage "failed"}}hidden{{end}}>
-      <button type="submit"><svg class="icon"><use href="#i-rotate"/></svg>Retry</button>
+      <button type="submit"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rotate"/></svg>Retry</button>
     </form>
     <p id="done-link" {{if ne .Stage "done"}}hidden{{end}}>
       Published as <code>{{.EpisodeSlug}}</code> —

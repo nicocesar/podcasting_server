@@ -13,30 +13,30 @@
       <p class="callsign">@{{.User.ID}}</p>
 
       <details class="subscribe">
-        <summary><svg class="icon"><use href="#i-rss"/></svg>Subscribe</summary>
+        <summary><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rss"/></svg>Subscribe</summary>
         <div>
           <img class="qr" src="{{.QRURL}}" alt="QR code of the feed URL"
                width="200" height="200" loading="lazy">
           <div class="invite-row" id="feed-row">
             <code class="feed-url">{{.FeedURL}}</code>
-            <button class="copy" data-copy><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
+            <button class="copy" data-copy><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-copy"/></svg><span>Copy</span></button>
           </div>
           <p class="actions">
-            <a class="button quiet" href="{{.DeepLink}}"><svg class="icon"><use href="#i-external"/></svg>Open in AntennaPod</a>
-            <a class="button quiet" href="{{.FeedPage}}"><svg class="icon"><use href="#i-arrow"/></svg>Subscribe page</a>
+            <a class="button quiet" href="{{.DeepLink}}"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-external"/></svg>Open in AntennaPod</a>
+            <a class="button quiet" href="{{.FeedPage}}"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-arrow"/></svg>Subscribe page</a>
           </p>
           <p class="muted" style="font-size:.82rem">The URL is the key — share
           the whole thing or not at all.</p>
         </div>
       </details>
 
-      <p class="actions"><a class="button quiet" href="/me/settings"><svg class="icon"><use href="#i-gear"/></svg>Settings</a></p>
+      <p class="actions"><a class="button quiet" href="/me/settings"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-gear"/></svg>Settings</a></p>
     </section>
 
     {{if .GenerateEnabled}}
     <section class="card">
       <p class="eyebrow">Studio</p>
-      <p class="actions"><a class="button" href="/me/generate"><svg class="icon"><use href="#i-mic"/></svg>Generate an episode</a></p>
+      <p class="actions"><a class="button" href="/me/generate"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-mic"/></svg>Generate an episode</a></p>
       <p class="muted" style="font-size:.85rem;margin:0">Give a topic; an agent
       researches, writes, and voices it into your feed.</p>
       {{range .Generations}}
@@ -47,7 +47,7 @@
         {{else}}
         <span class="onair">On air — {{.StageLabel}}</span>
         {{end}}
-        <a class="button quiet" href="/me/generations/{{.ID}}"><svg class="icon"><use href="#i-arrow"/></svg>View</a>
+        <a class="button quiet" href="/me/generations/{{.ID}}"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-arrow"/></svg>View</a>
       </div>
       {{end}}
     </section>
@@ -70,13 +70,13 @@
       <div class="actions">
         <input class="share-to" list="users-dl" placeholder="friend's username…"
                autocomplete="off" spellcheck="false">
-        <button data-share><svg class="icon"><use href="#i-share"/></svg>Share</button>
+        <button data-share><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-share"/></svg>Share</button>
         <button class="quiet" data-ep-invite
-                title="Invite someone new; this episode will be in their feed"><svg class="icon"><use href="#i-user-plus"/></svg>Invite with this</button>
+                title="Invite someone new; this episode will be in their feed"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-user-plus"/></svg>Invite with this</button>
       </div>
       <div class="invite-row ep-invite" hidden>
         <code class="feed-url"></code>
-        <button class="copy" data-copy><svg class="icon"><use href="#i-copy"/></svg><span>Copy</span></button>
+        <button class="copy" data-copy><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-copy"/></svg><span>Copy</span></button>
       </div>
       <p class="msg muted" hidden></p>
     </div>
