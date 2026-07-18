@@ -6,13 +6,13 @@ options:
   substitution_option: ALLOW_LOOSE
 
 substitutions:
-  # Build the image name from PROJECT_ID using the ${...} form
-  _IMAGE: gcr.io/${PROJECT_ID}/github.com/nicocesar/podcasting_server
-  _CACHE_IMAGE: gcr.io/${PROJECT_ID}/github.com/nicocesar/podcasting_server:buildcache
+  # The image lives where Cloud Run's original source-deploy trigger put
+  # it (Artifact Registry, us-east4) so trigger deploys and `make deploy`
+  # update the same service with the same image lineage.
+  _IMAGE: us-east4-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/podcasting_server/podcasting-server
+  _CACHE_IMAGE: us-east4-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/podcasting_server/podcasting-server:buildcache
   _SERVICE: podcasting-server
-  _REGION: us-central1
-  _BUCKET: ${PROJECT_ID}-podcast-audio
-  _SERVICE_ACCOUNT: podcasting-server@${PROJECT_ID}.iam.gserviceaccount.com
+  _REGION: us-east4
 
 steps:
   # (Optional) sanity check: print what we'll use
@@ -50,22 +50,19 @@ steps:
       - --push
       - .
 
-  # Deploy to Cloud Run. IAM allows unauthenticated; the app enforces
-  # Basic auth itself (AntennaPod can't do Google IAM).
+  # Swap the image on the existing service and nothing else: env vars,
+  # secrets, and the runtime service account are managed on the service
+  # itself (Cloud Run console / gcloud), so a deploy can never clobber
+  # them. `services update` also leaves the public-access IAM binding
+  # alone, unlike `run deploy --allow-unauthenticated`.
   - name: gcr.io/google.com/cloudsdktool/google-cloud-cli
     entrypoint: gcloud
     args:
       - run
-      - deploy
+      - services
+      - update
       - ${_SERVICE}
       - --image=${_IMAGE}:${SHORT_SHA}
       - --region=${_REGION}
       - --platform=managed
-      - --allow-unauthenticated
-      - --service-account=${_SERVICE_ACCOUNT}
-      # --update-* merges with the service's existing env/secrets instead
-      # of replacing the whole set: keys set by hand in the Cloud Run
-      # console (ANTHROPIC_API_KEY, ANTHROPIC_ADMIN_KEY, ...) survive
-      # deploys. --set-* would silently wipe them.
-      - --update-env-vars=STORAGE=gcp,GCS_BUCKET=${_BUCKET}
-      - --update-secrets=ADMIN_TOKEN=podcast-admin-token:latest
+      - --quiet
