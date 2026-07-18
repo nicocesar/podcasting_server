@@ -443,3 +443,21 @@ func TestEngineFallback(t *testing.T) {
 		t.Errorf("tts meters = engine %q, %d attempts (want google, 2)", g.TTSEngine, g.TTSAttempts)
 	}
 }
+
+func TestProviderPreferenceReordersEngines(t *testing.T) {
+	st := testStore(t)
+	r := testRunner(st, newFakeAPI(),
+		fakeEngine{name: "edge"},
+		fakeEngine{name: "google"},
+	)
+	g := newGeneration()
+	g.Provider = "google" // prefer the engine that is second in the chain
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenDone)
+	if g.TTSEngine != "google" || g.TTSAttempts != 1 {
+		t.Errorf("tts meters = engine %q, %d attempts (want google, 1)", g.TTSEngine, g.TTSAttempts)
+	}
+}

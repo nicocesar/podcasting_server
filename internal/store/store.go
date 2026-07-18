@@ -158,6 +158,10 @@ type Generation struct {
 	FreshnessDays int    `json:"freshness_days" datastore:"freshness_days,noindex"`
 	Language      string `json:"language" datastore:"language,noindex"`
 	Voice         string `json:"voice,omitempty" datastore:"voice,noindex"` // "female" or "male"; empty predates the voice picker
+	// Provider is the preferred TTS engine name ("edge-tts",
+	// "google-tts"); empty = auto (default chain order). Preference only —
+	// TTSEngine below records which engine actually voiced the episode.
+	Provider string `json:"provider,omitempty" datastore:"provider,noindex"`
 
 	Stage string `json:"stage" datastore:"stage,noindex"`
 	// Active indexes the resume scan: true until done or failed.
@@ -180,7 +184,7 @@ type Generation struct {
 	OutputTokens     int64  `json:"output_tokens,omitempty" datastore:"output_tokens,noindex"`
 	CacheReadTokens  int64  `json:"cache_read_tokens,omitempty" datastore:"cache_read_tokens,noindex"`
 	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty" datastore:"cache_write_tokens,noindex"`
-	TTSEngine        string `json:"tts_engine,omitempty" datastore:"tts_engine,noindex"`   // engine that voiced the published episode
+	TTSEngine        string `json:"tts_engine,omitempty" datastore:"tts_engine,noindex"`         // engine that voiced the published episode
 	TTSCharacters    int    `json:"tts_characters,omitempty" datastore:"tts_characters,noindex"` // runes synthesized by the winning engine
 	TTSAttempts      int    `json:"tts_attempts,omitempty" datastore:"tts_attempts,noindex"`     // engines tried; >1 per voicing means a fallback fired
 

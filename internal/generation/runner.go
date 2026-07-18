@@ -89,6 +89,18 @@ func NewRunner(cfg Config) *Runner {
 	}
 }
 
+// EngineNames lists the configured TTS engines in chain order, for the
+// voice-provider dropdown on /me/generate. Only engines that actually
+// initialized appear. Lock-free by design: engines is set once in
+// NewRunner and never mutated (tts.Prefer copies rather than reorders).
+func (r *Runner) EngineNames() []string {
+	names := make([]string, len(r.engines))
+	for i, e := range r.engines {
+		names[i] = e.Name()
+	}
+	return names
+}
+
 // Bootstrap provisions the agent and environment (idempotent: pushing
 // the repo's system prompt is a no-op unless it changed, else a new
 // agent version) and resumes any Generation a previous instance left
@@ -414,7 +426,7 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		return g, err
 	}
-	mp3, engine, attempts, err := tts.SynthesizeAll(ctx, r.engines, chunks, voice, func(done, total int) {
+	mp3, engine, attempts, err := tts.SynthesizeAll(ctx, tts.Prefer(r.engines, g.Provider), chunks, voice, func(done, total int) {
 		g.VoicedChunks, g.TotalChunks = done, total
 		if err := r.store.PutGeneration(ctx, g); err != nil {
 			r.log.Warn("generation: progress checkpoint failed", "user", g.UserID, "id", g.ID, "err", err)

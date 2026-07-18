@@ -158,6 +158,27 @@ func splitSentences(s string) []string {
 	return pieces
 }
 
+// Prefer returns engines with the named engine first and the rest in
+// their original order as fallback. Empty or unknown name returns engines
+// unchanged: the provider choice is a preference, not a demand, so a
+// Generation naming an engine that didn't initialize still voices with
+// the default chain. Always returns a fresh slice — the input is shared
+// across concurrent generations and must never be reordered in place.
+func Prefer(engines []Engine, name string) []Engine {
+	if name == "" {
+		return engines
+	}
+	out := make([]Engine, 0, len(engines))
+	for _, e := range engines {
+		if e.Name() == name {
+			out = append([]Engine{e}, out...)
+		} else {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // SynthesizeAll voices every chunk with one engine, falling through to
 // the next engine from chunk zero on any failure (voice consistency over
 // partial progress — chunks are cheap, the Script was the expensive

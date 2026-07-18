@@ -35,6 +35,12 @@
       <option value="male">Male</option>
     </select>
 
+    <label for="provider">Voice provider</label>
+    <select id="provider" name="provider">
+      <option value="">Auto</option>
+      {{range .Providers}}<option value="{{.}}">{{.}}</option>{{end}}
+    </select>
+
     <button type="submit">Generate</button>
   </form>
 </article>

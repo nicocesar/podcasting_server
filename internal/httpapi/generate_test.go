@@ -36,7 +36,7 @@ func (instantAPI) SessionStatus(context.Context, string) (string, error) { retur
 func (instantAPI) SessionUsage(context.Context, string) (generation.Usage, error) {
 	return generation.Usage{InputTokens: 10, OutputTokens: 5}, nil
 }
-func (instantAPI) DeleteSession(context.Context, string) error { return nil }
+func (instantAPI) DeleteSession(context.Context, string) error              { return nil }
 func (instantAPI) LastAgentMessage(context.Context, string) (string, error) { return "", nil }
 func (instantAPI) LastToolUse(_ context.Context, sessionID, _ string) (*generation.ToolUse, error) {
 	return &generation.ToolUse{
@@ -110,10 +110,15 @@ func TestGenerateFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "Freshness") {
 		t.Fatalf("form: %d\n%s", resp.StatusCode, body)
 	}
+	// The provider dropdown offers Auto plus the configured engines.
+	if !strings.Contains(string(body), "Voice provider") || !strings.Contains(string(body), `<option value="instant">`) {
+		t.Fatalf("provider dropdown missing:\n%s", body)
+	}
 
 	// Submitting starts a Generation and answers JSON (non-browser).
 	resp = postGenerate(t, ts, alice, url.Values{
 		"topic": {"fusion energy"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"},
+		"provider": {"instant"},
 	})
 	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
@@ -125,7 +130,7 @@ func TestGenerateFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if g.ID == "" || g.Stage != store.GenResearching {
+	if g.ID == "" || g.Stage != store.GenResearching || g.Provider != "instant" {
 		t.Fatalf("generation = %+v", g)
 	}
 
@@ -194,6 +199,7 @@ func TestGenerateValidation(t *testing.T) {
 		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"robot"}},
 		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}},
 		{"topic": {strings.Repeat("a", 2001)}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}},
+		{"topic": {"x"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}, "provider": {"nope"}},
 	}
 	for i, form := range bad {
 		resp := postGenerate(t, ts, alice, form)

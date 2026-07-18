@@ -116,6 +116,39 @@ func TestSynthesizeAllAllEnginesFail(t *testing.T) {
 	}
 }
 
+func TestPrefer(t *testing.T) {
+	edge := &stubEngine{name: "edge"}
+	google := &stubEngine{name: "google"}
+	chain := []Engine{edge, google}
+
+	names := func(es []Engine) string {
+		out := []string{}
+		for _, e := range es {
+			out = append(out, e.Name())
+		}
+		return strings.Join(out, ",")
+	}
+
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"", "edge,google"},           // auto: chain untouched
+		{"edge", "edge,google"},       // already first
+		{"google", "google,edge"},     // moved to front, rest as fallback
+		{"elevenlabs", "edge,google"}, // unknown engine: preference, not a demand
+	}
+	for _, c := range cases {
+		if got := names(Prefer(chain, c.name)); got != c.want {
+			t.Errorf("Prefer(%q) = %s, want %s", c.name, got, c.want)
+		}
+	}
+	// The shared chain must never be reordered in place.
+	if names(chain) != "edge,google" {
+		t.Fatalf("input mutated: %s", names(chain))
+	}
+}
+
 func TestVoiceFor(t *testing.T) {
 	if v, ok := VoiceFor("en", "male"); !ok || v.Edge != "en-US-GuyNeural" {
 		t.Fatalf("en/male = %+v, %v", v, ok)

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ type generatePage struct {
 	Lengths   []int
 	Freshness []generation.FreshnessOption
 	Languages []tts.Voice // one entry per language
+	Providers []string    // engine names, chain order; "" (Auto) is added in the template
 	Error     string
 	Topic     string
 }
@@ -44,6 +46,7 @@ func (s *server) handleGeneratePage(w http.ResponseWriter, r *http.Request, _ st
 		Lengths:   generation.Lengths,
 		Freshness: generation.FreshnessOptions,
 		Languages: tts.Languages(),
+		Providers: s.generator.EngineNames(),
 	})
 }
 
@@ -55,6 +58,7 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 			Lengths:   generation.Lengths,
 			Freshness: generation.FreshnessOptions,
 			Languages: tts.Languages(),
+			Providers: s.generator.EngineNames(),
 			Error:     msg,
 			Topic:     r.FormValue("topic"),
 		})
@@ -85,6 +89,11 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		retry("Pick a voice from the list.")
 		return
 	}
+	provider := r.FormValue("provider")
+	if provider != "" && !slices.Contains(s.generator.EngineNames(), provider) {
+		retry("Pick a voice provider from the list.")
+		return
+	}
 
 	id, err := randomHex(8)
 	if err != nil {
@@ -99,6 +108,7 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		FreshnessDays: freshness,
 		Language:      language,
 		Voice:         voice,
+		Provider:      provider,
 		Stage:         store.GenResearching,
 		Active:        true,
 		CreatedAt:     time.Now().UTC(),
