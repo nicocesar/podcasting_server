@@ -31,11 +31,13 @@ type Voice struct {
 }
 
 // Voices is the curated list, in dropdown order. The first entry per
-// Language is its default. Spanish speaks Argentinian on edge-tts; Google
-// has no es-AR locale, so its fallback is Latin American (es-US).
+// Language is its default. The accents are a deliberate bit of
+// personality: English speaks British, Spanish speaks Argentinian.
+// Google has no es-AR locale, so its Spanish fallback is Latin American
+// (es-US) — an accent shift when the edge-tts → Google fallback fires.
 var Voices = []Voice{
-	{Language: "en", Label: "English", Gender: "female", Edge: "en-US-AriaNeural", Google: "en-US-Neural2-F", GoogleLang: "en-US"},
-	{Language: "en", Label: "English", Gender: "male", Edge: "en-US-GuyNeural", Google: "en-US-Neural2-D", GoogleLang: "en-US"},
+	{Language: "en", Label: "English", Gender: "female", Edge: "en-GB-SoniaNeural", Google: "en-GB-Neural2-A", GoogleLang: "en-GB"},
+	{Language: "en", Label: "English", Gender: "male", Edge: "en-GB-RyanNeural", Google: "en-GB-Neural2-B", GoogleLang: "en-GB"},
 	{Language: "es", Label: "Español", Gender: "female", Edge: "es-AR-ElenaNeural", Google: "es-US-Neural2-A", GoogleLang: "es-US"},
 	{Language: "es", Label: "Español", Gender: "male", Edge: "es-AR-TomasNeural", Google: "es-US-Neural2-B", GoogleLang: "es-US"},
 }

@@ -156,7 +156,7 @@ func TestPrefer(t *testing.T) {
 }
 
 func TestVoiceFor(t *testing.T) {
-	if v, ok := VoiceFor("en", "male"); !ok || v.Edge != "en-US-GuyNeural" {
+	if v, ok := VoiceFor("en", "male"); !ok || v.Edge != "en-GB-RyanNeural" {
 		t.Fatalf("en/male = %+v, %v", v, ok)
 	}
 	// Empty gender (records that predate the voice picker) gets the
