@@ -89,10 +89,16 @@ func TestSynthesizeAllFallsBackFromChunkZero(t *testing.T) {
 	primary := &stubEngine{name: "edge", fails: 2}
 	fallback := &stubEngine{name: "google"}
 	var last int
+	var failed string
 	out, engine, attempts, err := SynthesizeAll(context.Background(), []Engine{primary, fallback},
-		[]string{"one", "two", "three"}, Voice{}, func(done, total int) { last = done })
+		[]string{"one", "two", "three"}, Voice{}, func(done, total int) { last = done },
+		func(engine string, err error) { failed = engine + ": " + err.Error() })
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The rescued failure must still be reported, not swallowed.
+	if !strings.Contains(failed, "edge") || !strings.Contains(failed, "boom") {
+		t.Fatalf("onFail reported %q", failed)
 	}
 	if string(out) != "googlegooglegoogle" {
 		t.Fatalf("out = %q", out)
@@ -107,7 +113,7 @@ func TestSynthesizeAllFallsBackFromChunkZero(t *testing.T) {
 
 func TestSynthesizeAllAllEnginesFail(t *testing.T) {
 	_, engine, attempts, err := SynthesizeAll(context.Background(),
-		[]Engine{&stubEngine{name: "edge", fails: 99}}, []string{"one"}, Voice{}, nil)
+		[]Engine{&stubEngine{name: "edge", fails: 99}}, []string{"one"}, Voice{}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "edge") {
 		t.Fatalf("err = %v", err)
 	}

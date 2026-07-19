@@ -182,17 +182,23 @@ func Prefer(engines []Engine, name string) []Engine {
 // SynthesizeAll voices every chunk with one engine, falling through to
 // the next engine from chunk zero on any failure (voice consistency over
 // partial progress — chunks are cheap, the Script was the expensive
-// part). progress is called after each chunk with (done, total). It also
-// reports which engine completed the episode ("" on failure) and how many
-// engines were tried — attempts > 1 means a fallback fired, which the
-// caller meters rather than letting it pass silently.
-func SynthesizeAll(ctx context.Context, engines []Engine, chunks []string, v Voice, progress func(done, total int)) (mp3 []byte, engine string, attempts int, err error) {
+// part). progress is called after each chunk with (done, total). onFail
+// is called with each engine that fails, even when a later engine
+// rescues the episode — otherwise the only trace of a fallback is the
+// attempts meter, with the actual error discarded. It also reports which
+// engine completed the episode ("" on failure) and how many engines were
+// tried — attempts > 1 means a fallback fired, which the caller meters
+// rather than letting it pass silently.
+func SynthesizeAll(ctx context.Context, engines []Engine, chunks []string, v Voice, progress func(done, total int), onFail func(engine string, err error)) (mp3 []byte, engine string, attempts int, err error) {
 	var lastErr error
 	for _, e := range engines {
 		attempts++
 		audio, err := synthesizeWith(ctx, e, chunks, v, progress)
 		if err == nil {
 			return audio, e.Name(), attempts, nil
+		}
+		if onFail != nil {
+			onFail(e.Name(), err)
 		}
 		lastErr = fmt.Errorf("%s: %w", e.Name(), err)
 		if ctx.Err() != nil {

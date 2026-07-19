@@ -431,6 +431,8 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		if err := r.store.PutGeneration(ctx, g); err != nil {
 			r.log.Warn("generation: progress checkpoint failed", "user", g.UserID, "id", g.ID, "err", err)
 		}
+	}, func(name string, err error) {
+		r.log.Warn("generation: tts engine failed, trying next", "user", g.UserID, "id", g.ID, "engine", name, "provider", g.Provider, "err", err)
 	})
 	// Attempts accumulate even on failure (run() persists g with the
 	// failure record); characters count only what the winning engine
