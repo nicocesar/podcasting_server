@@ -37,8 +37,9 @@
     <section class="card">
       <p class="eyebrow">Studio</p>
       <p class="actions"><a class="button" href="/me/generate"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-mic"/></svg>Generate an episode</a></p>
-      <p class="muted" style="font-size:.85rem;margin:0">Give a topic; an agent
-      researches, writes, and voices it into your feed.</p>
+      <p class="muted" style="font-size:.85rem;margin:0">Pick a program — news
+      briefing or children's story — and an agent writes and voices it into
+      your feed.</p>
       {{range .Generations}}
       <div class="gen-row">
         <span class="topic">{{.Topic}}</span>
@@ -73,6 +74,12 @@
         <button data-share><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-share"/></svg>Share</button>
         <button class="quiet" data-ep-invite
                 title="Invite someone new; this episode will be in their feed"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-user-plus"/></svg>Invite with this</button>
+        {{if .NeedsCharacters}}
+        <form method="post" action="/me/episodes/{{.Slug}}/characters"
+              title="Extract this story's characters so a later story can bring them back">
+          <button class="quiet" type="submit"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-user-plus"/></svg>Save characters</button>
+        </form>
+        {{end}}
       </div>
       <div class="invite-row ep-invite" hidden>
         <code class="feed-url"></code>

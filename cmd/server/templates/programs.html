@@ -1,0 +1,19 @@
+{{define "title"}}What's on the program?{{end}}
+{{define "content"}}
+<article class="card">
+  <p class="eyebrow">Studio</p>
+  <h1>What's on the program?</h1>
+  <p class="muted">Pick a program; an agent writes the episode and it lands
+  in your feed. <a href="/me">Back to your dashboard</a>.</p>
+
+  <div class="programs">
+    {{range .Programs}}
+    <a class="program-card" href="/me/generate/{{.ID}}">
+      <p class="eyebrow">Program</p>
+      <h2>{{.Name}}</h2>
+      <p class="muted">{{.Tagline}}</p>
+    </a>
+    {{end}}
+  </div>
+</article>
+{{end}}

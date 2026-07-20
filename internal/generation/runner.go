@@ -62,10 +62,10 @@ type Runner struct {
 	poll           time.Duration
 	deleteSessions bool
 
-	mu      sync.Mutex
-	running map[string]bool // "{user}/{id}" → a goroutine owns it
-	agentID string          // cached after provision
-	envID   string
+	mu       sync.Mutex
+	running  map[string]bool   // "{user}/{id}" → a goroutine owns it
+	agentIDs map[string]string // agent name → ID, cached after provision
+	envID    string
 }
 
 func NewRunner(cfg Config) *Runner {
@@ -86,6 +86,7 @@ func NewRunner(cfg Config) *Runner {
 		poll:           poll,
 		deleteSessions: cfg.DeleteSessions,
 		running:        make(map[string]bool),
+		agentIDs:       make(map[string]string),
 	}
 }
 
@@ -101,14 +102,18 @@ func (r *Runner) EngineNames() []string {
 	return names
 }
 
-// Bootstrap provisions the agent and environment (idempotent: pushing
-// the repo's system prompt is a no-op unless it changed, else a new
-// agent version) and resumes any Generation a previous instance left
-// unfinished. Errors are logged, not fatal: provisioning is retried on
-// the first Kick.
+// Bootstrap provisions every template's agent and the environment
+// (idempotent: pushing the repo's system prompts is a no-op unless one
+// changed, else a new agent version) and resumes any Generation a
+// previous instance left unfinished. Errors are logged, not fatal:
+// provisioning is retried on the first Kick.
 func (r *Runner) Bootstrap(ctx context.Context) {
-	if err := r.provision(ctx); err != nil {
-		r.log.Warn("generation: bootstrap provisioning failed (will retry on first use)", "err", err)
+	for _, id := range TemplateIDs {
+		tpl, _ := TemplateByID(id)
+		if err := r.provision(ctx, tpl); err != nil {
+			r.log.Warn("generation: bootstrap provisioning failed (will retry on first use)",
+				"template", id, "err", err)
+		}
 	}
 	gens, err := r.store.ListActiveGenerations(ctx)
 	if err != nil {
@@ -121,24 +126,26 @@ func (r *Runner) Bootstrap(ctx context.Context) {
 	}
 }
 
-// provision ensures the pre-baked agent + environment exist and caches
-// their IDs for the process lifetime.
-func (r *Runner) provision(ctx context.Context) error {
+// provision ensures the template's pre-baked agent + the shared
+// environment exist and caches their IDs for the process lifetime.
+func (r *Runner) provision(ctx context.Context, tpl Template) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.agentID != "" && r.envID != "" {
-		return nil
+	if r.envID == "" {
+		envID, err := r.api.EnsureEnvironment(ctx, environmentName)
+		if err != nil {
+			return fmt.Errorf("ensure environment: %w", err)
+		}
+		r.envID = envID
 	}
-	agentID, err := r.api.EnsureAgent(ctx, agentName, r.model, systemPrompt)
-	if err != nil {
-		return fmt.Errorf("ensure agent: %w", err)
+	if r.agentIDs[tpl.AgentName] == "" {
+		agentID, err := r.api.EnsureAgent(ctx, tpl.AgentName, r.model, tpl.SystemPrompt, tpl.Tools)
+		if err != nil {
+			return fmt.Errorf("ensure agent: %w", err)
+		}
+		r.agentIDs[tpl.AgentName] = agentID
+		r.log.Info("generation: provisioned", "agent", agentID, "template", tpl.ID, "environment", r.envID)
 	}
-	envID, err := r.api.EnsureEnvironment(ctx, environmentName)
-	if err != nil {
-		return fmt.Errorf("ensure environment: %w", err)
-	}
-	r.agentID, r.envID = agentID, envID
-	r.log.Info("generation: provisioned", "agent", agentID, "environment", envID)
 	return nil
 }
 
@@ -265,14 +272,21 @@ func (r *Runner) recordSessionUsage(ctx context.Context, g *store.Generation) {
 // wrong language (research sources often set the agent's tongue) gets
 // one rejection round before the pipeline gives up.
 func (r *Runner) research(ctx context.Context, g store.Generation) (store.Generation, error) {
-	if err := r.provision(ctx); err != nil {
+	tpl, ok := TemplateByID(g.Template)
+	if !ok {
+		return g, fmt.Errorf("unknown generation template %q", g.Template)
+	}
+	if err := r.provision(ctx, tpl); err != nil {
 		return g, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, researchTimeout)
 	defer cancel()
 
 	if g.SessionID == "" {
-		id, err := r.api.CreateSession(ctx, r.agentID, r.envID, "episode: "+g.Topic)
+		r.mu.Lock()
+		agentID := r.agentIDs[tpl.AgentName]
+		r.mu.Unlock()
+		id, err := r.api.CreateSession(ctx, agentID, r.envID, "episode: "+g.Topic)
 		if err != nil {
 			return g, fmt.Errorf("create session: %w", err)
 		}
@@ -336,7 +350,7 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 				return g, perr // a legacy delivery that is broken JSON
 			}
 			if !sent {
-				task := userMessage(g.Topic, g.LengthMinutes, g.FreshnessDays, g.Language, time.Now())
+				task := tpl.TaskMessage(g, time.Now())
 				if err := r.api.SendMessage(ctx, g.SessionID, task); err != nil {
 					return g, fmt.Errorf("send task: %w", err)
 				}
@@ -454,6 +468,7 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	if err != nil {
 		return g, err
 	}
+	tpl, _ := TemplateByID(g.Template)
 	ep := store.Episode{
 		OwnerID:     g.UserID,
 		Slug:        slug,
@@ -461,14 +476,38 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		Description: script.Description(),
 		PublishedAt: time.Now().UTC(),
 		AudioType:   "audio/mpeg",
+		Template:    tpl.ID,
 	}
 	// Same courtesy the Publishing Contract extends (ADR 0004): estimate
 	// the duration from the MP3 frames; failure is non-fatal.
 	if d, err := audio.MP3Duration(bytes.NewReader(mp3)); err == nil {
 		ep.DurationSec = int(d.Round(time.Second).Seconds())
 	}
-	if _, err := r.store.UpsertEpisode(ctx, ep, bytes.NewReader(mp3)); err != nil {
+	ep, err = r.store.UpsertEpisode(ctx, ep, bytes.NewReader(mp3))
+	if err != nil {
 		return g, fmt.Errorf("publish: %w", err)
+	}
+
+	// The cast extraction the form asked for. Non-fatal by design: the
+	// Episode is already published, and the backfill button covers a
+	// missed extraction.
+	if g.SaveCharacters {
+		chars, u, err := ExtractCharacters(ctx, r.api, script.Script)
+		// Extraction burned real tokens either way; fold them into the
+		// meters SessionsCount-free (statsLabel keys off sessions).
+		g.InputTokens += u.InputTokens
+		g.OutputTokens += u.OutputTokens
+		g.CacheReadTokens += u.CacheReadTokens
+		if err != nil {
+			r.log.Warn("generation: character extraction failed",
+				"user", g.UserID, "id", g.ID, "episode", slug, "err", err)
+		} else {
+			ep.Characters = chars
+			if err := r.store.UpdateEpisode(ctx, ep); err != nil {
+				r.log.Warn("generation: could not save characters",
+					"user", g.UserID, "id", g.ID, "episode", slug, "err", err)
+			}
+		}
 	}
 
 	// The Script is checkpointed server-side, so the session can go once
@@ -484,6 +523,13 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	g.Stage = store.GenDone
 	g.Active = false
 	return g, r.store.PutGeneration(ctx, g)
+}
+
+// ExtractCharacters distills a story script's cast for the HTTP layer's
+// backfill endpoint, keeping the raw API out of httpapi.
+func (r *Runner) ExtractCharacters(ctx context.Context, script string) ([]store.Character, error) {
+	chars, _, err := ExtractCharacters(ctx, r.api, script)
+	return chars, err
 }
 
 // freeSlug is YYYY-MM-DD-<topic slug>, suffixed -2, -3, … until free, so

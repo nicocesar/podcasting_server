@@ -358,6 +358,16 @@ func (s *Store) UpsertEpisode(ctx context.Context, ep store.Episode, audio io.Re
 	return ep, nil
 }
 
+func (s *Store) UpdateEpisode(ctx context.Context, ep store.Episode) error {
+	have, err := s.GetEpisode(ctx, ep.OwnerID, ep.Slug)
+	if err != nil {
+		return err
+	}
+	ep.AudioSize = have.AudioSize // audio object is untouched
+	_, err = s.ds.Put(ctx, episodeKey(ep.OwnerID, ep.Slug), &ep)
+	return err
+}
+
 func (s *Store) GetEpisode(ctx context.Context, ownerID, slug string) (store.Episode, error) {
 	var ep store.Episode
 	if err := s.ds.Get(ctx, episodeKey(ownerID, slug), &ep); err != nil {

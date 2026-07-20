@@ -145,6 +145,48 @@ func TestEpisodeUpsertReplaceAndOrder(t *testing.T) {
 	}
 }
 
+func TestUpdateEpisodeKeepsAudio(t *testing.T) {
+	ctx := context.Background()
+	s := newStore(t)
+	addUser(t, s, "alice")
+	publish(t, s, "alice", "2026-07-06-story", "The Dragon", "AUDIO-A", time.Now().UTC())
+
+	ep, err := s.GetEpisode(ctx, "alice", "2026-07-06-story")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep.Template = "stories"
+	ep.Characters = []store.Character{{Name: "Lila", Description: "A brave young fox."}}
+	if err := s.UpdateEpisode(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.GetEpisode(ctx, "alice", "2026-07-06-story")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Template != "stories" || len(got.Characters) != 1 || got.Characters[0].Name != "Lila" {
+		t.Fatalf("update lost fields: %+v", got)
+	}
+	if got.AudioSize != int64(len("AUDIO-A")) || got.Title != "The Dragon" {
+		t.Fatalf("update disturbed episode: %+v", got)
+	}
+	audio, err := s.OpenAudio(ctx, "alice", "2026-07-06-story")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer audio.Content.Close()
+	if b, _ := io.ReadAll(audio.Content); string(b) != "AUDIO-A" {
+		t.Fatalf("audio disturbed: %q", b)
+	}
+
+	// No episode, no update.
+	missing := store.Episode{OwnerID: "alice", Slug: "nope"}
+	if err := s.UpdateEpisode(ctx, missing); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing episode: got %v, want ErrNotFound", err)
+	}
+}
+
 func TestPublishToMissingUser(t *testing.T) {
 	s := newStore(t)
 	_, err := s.UpsertEpisode(context.Background(), store.Episode{OwnerID: "nope", Slug: "x"}, strings.NewReader("a"))

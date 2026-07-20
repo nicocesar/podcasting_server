@@ -98,6 +98,7 @@ type server struct {
 	tmplWelcome    *template.Template
 	tmplDashboard  *template.Template
 	tmplNotFound   *template.Template
+	tmplPrograms   *template.Template
 	tmplGenerate   *template.Template
 	tmplGeneration *template.Template
 	tmplSettings   *template.Template
@@ -151,6 +152,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplWelcome, []string{"templates/layout.html", "templates/welcome.html", "templates/fragments/*.html"}},
 		{&s.tmplDashboard, []string{"templates/layout.html", "templates/dashboard.html"}},
 		{&s.tmplNotFound, []string{"templates/layout.html", "templates/notfound.html"}},
+		{&s.tmplPrograms, []string{"templates/layout.html", "templates/programs.html"}},
 		{&s.tmplGenerate, []string{"templates/layout.html", "templates/generate.html"}},
 		{&s.tmplGeneration, []string{"templates/layout.html", "templates/generation.html"}},
 		{&s.tmplSettings, []string{"templates/layout.html", "templates/settings.html"}},
@@ -246,11 +248,18 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("POST /me/logout-everywhere", s.session(s.handleLogoutEverywhere))
 
 	// Built-in Generation (ADR 0009): topic in, Episode in the caller's
-	// own feed out, with an observable in-between.
-	mux.HandleFunc("GET /me/generate", s.auth(s.generating(s.handleGeneratePage)))
+	// own feed out, with an observable in-between. /me/generate is the
+	// program chooser; each template has its own form page. The bare
+	// POST stays as the news alias for JSON/API clients that predate
+	// templates.
+	mux.HandleFunc("GET /me/generate", s.auth(s.generating(s.handleGenerateChooser)))
 	mux.HandleFunc("POST /me/generate", s.auth(s.generating(s.handleGenerateStart)))
+	mux.HandleFunc("GET /me/generate/{template}", s.auth(s.generating(s.handleGeneratePage)))
+	mux.HandleFunc("POST /me/generate/{template}", s.auth(s.generating(s.handleGenerateStart)))
 	mux.HandleFunc("GET /me/generations/{id}", s.auth(s.generating(s.handleGeneration)))
 	mux.HandleFunc("POST /me/generations/{id}/retry", s.auth(s.generating(s.handleGenerationRetry)))
+	// Cast extraction backfill for a story episode the checkbox missed.
+	mux.HandleFunc("POST /me/episodes/{slug}/characters", s.auth(s.generating(s.handleEpisodeCharacters)))
 
 	// Admin: fallback provisioning and credential recovery (ADR 0007).
 	mux.HandleFunc("GET /admin/users", s.admin(s.handleListUsers))
@@ -592,9 +601,10 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 	views := make([]episodeView, 0, len(episodes))
 	for _, ep := range episodes {
 		views = append(views, episodeView{
-			Episode:  ep,
-			Aired:    relativeDate(ep.PublishedAt),
-			Duration: humanDuration(ep.DurationSec),
+			Episode:         ep,
+			Aired:           relativeDate(ep.PublishedAt),
+			Duration:        humanDuration(ep.DurationSec),
+			NeedsCharacters: s.generator != nil && ep.Template == "stories" && len(ep.Characters) == 0,
 		})
 	}
 	generations, err := s.dashboardGenerations(r, u)
@@ -627,6 +637,9 @@ type episodeView struct {
 	store.Episode
 	Aired    string
 	Duration string
+	// NeedsCharacters offers the "save characters" backfill button: a
+	// story episode whose cast was never extracted.
+	NeedsCharacters bool
 }
 
 // coverURL is where the owner's Cover Art is served, or "" without one.

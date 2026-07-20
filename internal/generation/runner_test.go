@@ -45,6 +45,9 @@ type fakeAPI struct {
 	deleted       []string
 	submissions   []string
 	legacyReplies []string
+	agents        []string // names EnsureAgent was called with, in order
+	completions   []string // canned CompleteJSON outputs, consumed in order
+	completeErr   error
 }
 
 func newFakeAPI() *fakeAPI {
@@ -55,8 +58,11 @@ func newFakeAPI() *fakeAPI {
 	}
 }
 
-func (f *fakeAPI) EnsureAgent(context.Context, string, string, string) (string, error) {
-	return "agent-1", nil
+func (f *fakeAPI) EnsureAgent(_ context.Context, name, _, _ string, _ []map[string]any) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.agents = append(f.agents, name)
+	return "agent-" + name, nil
 }
 func (f *fakeAPI) EnsureEnvironment(context.Context, string) (string, error) { return "env-1", nil }
 
@@ -131,6 +137,22 @@ func (f *fakeAPI) DeleteSession(_ context.Context, sessionID string) error {
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, sessionID)
 	return nil
+}
+
+func (f *fakeAPI) CompleteJSON(context.Context, string, string, map[string]any, int) (string, Usage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.completeErr != nil {
+		return "", Usage{}, f.completeErr
+	}
+	if len(f.completions) == 0 {
+		return `{"characters":[{"name":"Lila","description":"A brave young fox."}]}`, Usage{InputTokens: 20, OutputTokens: 10}, nil
+	}
+	out := f.completions[0]
+	if len(f.completions) > 1 {
+		f.completions = f.completions[1:]
+	}
+	return out, Usage{InputTokens: 20, OutputTokens: 10}, nil
 }
 
 type fakeEngine struct {
@@ -262,6 +284,115 @@ func TestPipelineHappyPath(t *testing.T) {
 	if g.TTSEngine != "fake" || g.TTSAttempts != 1 || g.TTSCharacters != wantChars {
 		t.Errorf("tts meters = engine %q, %d attempts, %d chars (want fake, 1, %d)",
 			g.TTSEngine, g.TTSAttempts, g.TTSCharacters, wantChars)
+	}
+}
+
+// TestStoriesPipeline: a stories Generation provisions the storyteller
+// agent (not the news one), sends the story task with the returning cast,
+// and — SaveCharacters — extracts the cast onto the published Episode.
+func TestStoriesPipeline(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+
+	g := newGeneration()
+	g.Template = "stories"
+	g.FreshnessDays = 0
+	g.AgeRange = "5-7"
+	g.SaveCharacters = true
+	g.Cast = []store.Character{{Name: "Grandpa Bear", Description: "Slow and warm."}}
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenDone)
+
+	if len(api.agents) != 1 || api.agents[0] != "podcasting-storyteller" {
+		t.Errorf("agents ensured = %v, want [podcasting-storyteller]", api.agents)
+	}
+	task := api.sent["sess-1"][0]
+	for _, want := range []string{"aged 5 to 7", "Returning characters", "Grandpa Bear"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("task missing %q:\n%s", want, task)
+		}
+	}
+	ep, err := st.GetEpisode(context.Background(), "alice", g.EpisodeSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Template != "stories" {
+		t.Errorf("episode template = %q", ep.Template)
+	}
+	if len(ep.Characters) != 1 || ep.Characters[0].Name != "Lila" {
+		t.Errorf("episode characters = %+v", ep.Characters)
+	}
+	// Extraction tokens joined the meters (100+20 in, 40+10 out), without
+	// counting as a session.
+	if g.SessionsCount != 1 || g.InputTokens != 120 || g.OutputTokens != 50 {
+		t.Errorf("meters = %d sessions, %d/%d tokens", g.SessionsCount, g.InputTokens, g.OutputTokens)
+	}
+}
+
+// A failed extraction never fails the pipeline: the Episode is already
+// published, and the dashboard's backfill button covers the gap.
+func TestCharacterExtractionFailureIsNonFatal(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	api.completeErr = errors.New("model overloaded")
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+
+	g := newGeneration()
+	g.Template = "stories"
+	g.AgeRange = "all"
+	g.SaveCharacters = true
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenDone)
+
+	ep, err := st.GetEpisode(context.Background(), "alice", g.EpisodeSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ep.Characters) != 0 {
+		t.Errorf("characters = %+v, want none", ep.Characters)
+	}
+}
+
+// News Generations — including legacy records with no Template — keep
+// using the original agent.
+func TestNewsPipelineKeepsItsAgent(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+
+	g := newGeneration() // Template empty: a pre-template record
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	waitStage(t, st, store.GenDone)
+
+	if len(api.agents) != 1 || api.agents[0] != "podcasting-generator" {
+		t.Errorf("agents ensured = %v, want [podcasting-generator]", api.agents)
+	}
+}
+
+// Bootstrap warms every template's agent so the first request of either
+// kind pays no provisioning latency.
+func TestBootstrapProvisionsAllTemplates(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+	r.Bootstrap(context.Background())
+
+	want := map[string]bool{"podcasting-generator": true, "podcasting-storyteller": true}
+	for _, name := range api.agents {
+		delete(want, name)
+	}
+	if len(want) != 0 {
+		t.Errorf("agents not provisioned: %v (got %v)", want, api.agents)
 	}
 }
 

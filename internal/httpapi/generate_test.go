@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -24,8 +25,8 @@ import (
 // generation package's own tests.
 type instantAPI struct{}
 
-func (instantAPI) EnsureAgent(context.Context, string, string, string) (string, error) {
-	return "agent-1", nil
+func (instantAPI) EnsureAgent(_ context.Context, name, _, _ string, _ []map[string]any) (string, error) {
+	return "agent-" + name, nil
 }
 func (instantAPI) EnsureEnvironment(context.Context, string) (string, error) { return "env-1", nil }
 func (instantAPI) CreateSession(context.Context, string, string, string) (string, error) {
@@ -45,6 +46,10 @@ func (instantAPI) LastToolUse(_ context.Context, sessionID, _ string) (*generati
 	}, nil
 }
 func (instantAPI) SendToolResult(context.Context, string, string, string, bool) error { return nil }
+func (instantAPI) CompleteJSON(context.Context, string, string, map[string]any, int) (string, generation.Usage, error) {
+	return `{"characters":[{"name":"Lila","description":"A brave young fox."}]}`,
+		generation.Usage{InputTokens: 20, OutputTokens: 10}, nil
+}
 
 type instantEngine struct{}
 
@@ -103,9 +108,19 @@ func TestGenerateFlow(t *testing.T) {
 	ts := newGeneratingServer(t)
 	alice := createUser(t, ts, "alice")
 
-	// The form renders.
+	// The chooser lists every program.
 	resp := do(t, "GET", ts.URL+"/me/generate", alice.publishCreds(), nil, "")
 	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK ||
+		!strings.Contains(string(body), "/me/generate/news") ||
+		!strings.Contains(string(body), "/me/generate/stories") {
+		t.Fatalf("chooser: %d\n%s", resp.StatusCode, body)
+	}
+
+	// The news form renders.
+	resp = do(t, "GET", ts.URL+"/me/generate/news", alice.publishCreds(), nil, "")
+	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "Freshness") {
 		t.Fatalf("form: %d\n%s", resp.StatusCode, body)
@@ -230,6 +245,187 @@ func TestGenerationIsOwnerScoped(t *testing.T) {
 
 	// Drain the pipeline before the test's TempDir is torn down.
 	waitGenerationDone(t, ts, alice, g.ID)
+}
+
+func postGenerateStories(t *testing.T, ts *httptest.Server, a account, form url.Values) *http.Response {
+	t.Helper()
+	return do(t, "POST", ts.URL+"/me/generate/stories", a.publishCreds(),
+		strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+}
+
+// generateStory drives one stories Generation to done and returns the
+// published episode.
+func generateStory(t *testing.T, ts *httptest.Server, a account, form url.Values) store.Episode {
+	t.Helper()
+	resp := postGenerateStories(t, ts, a, form)
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("start story: %d %s", resp.StatusCode, b)
+	}
+	var g store.Generation
+	if err := json.NewDecoder(resp.Body).Decode(&g); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if g.Template != "stories" {
+		t.Fatalf("generation template = %q", g.Template)
+	}
+	waitGenerationDone(t, ts, a, g.ID)
+
+	resp = do(t, "GET", ts.URL+"/me/generations/"+g.ID, a.publishCreds(), nil, "")
+	var v struct {
+		Stage       string `json:"stage"`
+		Error       string `json:"error"`
+		EpisodeSlug string `json:"episode_slug"`
+	}
+	json.NewDecoder(resp.Body).Decode(&v)
+	resp.Body.Close()
+	if v.Stage != store.GenDone {
+		t.Fatalf("story generation ended %q: %s", v.Stage, v.Error)
+	}
+	resp = do(t, "GET", ts.URL+"/me/episodes", a.publishCreds(), nil, "")
+	var eps []store.Episode
+	json.NewDecoder(resp.Body).Decode(&eps)
+	resp.Body.Close()
+	for _, ep := range eps {
+		if ep.Slug == v.EpisodeSlug {
+			return ep
+		}
+	}
+	t.Fatalf("episode %q not listed", v.EpisodeSlug)
+	return store.Episode{}
+}
+
+var storyForm = url.Values{
+	"topic": {"a dragon afraid of heights"}, "length": {"2"}, "age": {"5-7"},
+	"language": {"en"}, "voice": {"female"},
+}
+
+func TestGenerateStoriesFlow(t *testing.T) {
+	ts := newGeneratingServer(t)
+	alice := createUser(t, ts, "alice")
+	bob := createUser(t, ts, "bob")
+
+	// The stories form: age band and save-characters, no freshness, and no
+	// cast picker while there is nothing to bring back.
+	resp := do(t, "GET", ts.URL+"/me/generate/stories", alice.publishCreds(), nil, "")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	page := string(body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(page, "Listener age") ||
+		!strings.Contains(page, "save_characters") {
+		t.Fatalf("stories form: %d\n%s", resp.StatusCode, page)
+	}
+	if strings.Contains(page, "Freshness") || strings.Contains(page, "Returning characters") {
+		t.Fatalf("stories form has foreign fields:\n%s", page)
+	}
+
+	// Unknown programs are a 404.
+	resp = do(t, "GET", ts.URL+"/me/generate/nope", alice.publishCreds(), nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown template: %d", resp.StatusCode)
+	}
+
+	// A story with save-characters ends up with its cast on the episode.
+	form := url.Values{}
+	maps.Copy(form, storyForm)
+	form.Set("save_characters", "1")
+	ep := generateStory(t, ts, alice, form)
+	if ep.Template != "stories" || len(ep.Characters) == 0 || ep.Characters[0].Name != "Lila" {
+		t.Fatalf("episode = %+v", ep)
+	}
+
+	// The cast picker now offers it…
+	resp = do(t, "GET", ts.URL+"/me/generate/stories", alice.publishCreds(), nil, "")
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "Returning characters") || !strings.Contains(string(body), "Lila") {
+		t.Fatalf("cast picker missing:\n%s", body)
+	}
+
+	// …and submitting with that cast is accepted.
+	form = url.Values{}
+	maps.Copy(form, storyForm)
+	form.Set("cast", "alice/"+ep.Slug)
+	generateStory(t, ts, alice, form)
+
+	// Sharing the episode brings the cast to bob's picker too (characters
+	// live on the canonical episode; ADR 0006).
+	resp = do(t, "POST", ts.URL+"/me/feed/alice/"+ep.Slug+"/share", alice.publishCreds(),
+		strings.NewReader(`{"to":"bob"}`), "application/json")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("share: %d", resp.StatusCode)
+	}
+	resp = do(t, "GET", ts.URL+"/me/generate/stories", bob.publishCreds(), nil, "")
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "Lila") || !strings.Contains(string(body), "alice/"+ep.Slug) {
+		t.Fatalf("shared cast missing from bob's picker:\n%s", body)
+	}
+}
+
+func TestGenerateStoriesValidation(t *testing.T) {
+	ts := newGeneratingServer(t)
+	alice := createUser(t, ts, "alice")
+	bad := []url.Values{
+		{"topic": {"x"}, "length": {"2"}, "language": {"en"}, "voice": {"female"}},                                    // no age
+		{"topic": {"x"}, "length": {"2"}, "age": {"0-99"}, "language": {"en"}, "voice": {"female"}},                   // bad age
+		{"topic": {"x"}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}, "cast": {"x"}},     // malformed cast
+		{"topic": {"x"}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}, "cast": {"a/b"}},   // cast not in feed
+		{"topic": {""}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}},                     // no idea
+	}
+	for i, form := range bad {
+		resp := postGenerateStories(t, ts, alice, form)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("case %d: status = %d, want 400", i, resp.StatusCode)
+		}
+	}
+}
+
+func TestCharacterBackfill(t *testing.T) {
+	ts := newGeneratingServer(t)
+	alice := createUser(t, ts, "alice")
+
+	// Published without the checkbox: no characters yet.
+	ep := generateStory(t, ts, alice, storyForm)
+	if len(ep.Characters) != 0 {
+		t.Fatalf("characters before backfill = %+v", ep.Characters)
+	}
+
+	resp := do(t, "POST", ts.URL+"/me/episodes/"+ep.Slug+"/characters", alice.publishCreds(), nil, "")
+	var got store.Episode
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || len(got.Characters) == 0 || got.Characters[0].Name != "Lila" {
+		t.Fatalf("backfill: %d %+v", resp.StatusCode, got)
+	}
+
+	// A non-story episode has no cast to extract.
+	news := url.Values{
+		"topic": {"fusion"}, "length": {"2"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"},
+	}
+	resp = postGenerate(t, ts, alice, news)
+	var g store.Generation
+	json.NewDecoder(resp.Body).Decode(&g)
+	resp.Body.Close()
+	waitGenerationDone(t, ts, alice, g.ID)
+	resp = do(t, "GET", ts.URL+"/me/generations/"+g.ID, alice.publishCreds(), nil, "")
+	var v struct {
+		EpisodeSlug string `json:"episode_slug"`
+	}
+	json.NewDecoder(resp.Body).Decode(&v)
+	resp.Body.Close()
+	resp = do(t, "POST", ts.URL+"/me/episodes/"+v.EpisodeSlug+"/characters", alice.publishCreds(), nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("news backfill: %d, want 409", resp.StatusCode)
+	}
 }
 
 func waitGenerationDone(t *testing.T, ts *httptest.Server, a account, id string) {

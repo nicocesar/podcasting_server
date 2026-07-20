@@ -9,6 +9,38 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
+func TestGenerationTemplateFieldsRoundTrip(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.UpsertUser(ctx, store.User{ID: "alice", Title: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	g := store.Generation{
+		UserID: "alice", ID: "story1",
+		Template: "stories", Topic: "a dragon", LengthMinutes: 2,
+		AgeRange: "5-7", SaveCharacters: true,
+		Cast:     []store.Character{{Name: "Lila", Description: "A brave young fox."}},
+		Language: "en", Stage: store.GenResearching, Active: true,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.PutGeneration(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetGeneration(ctx, "alice", "story1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Template != "stories" || got.AgeRange != "5-7" || !got.SaveCharacters {
+		t.Fatalf("round trip lost fields: %+v", got)
+	}
+	if len(got.Cast) != 1 || got.Cast[0] != g.Cast[0] {
+		t.Fatalf("cast = %+v", got.Cast) // Cast is json:"-": needs its record shadow
+	}
+}
+
 func TestGenerationRoundTrip(t *testing.T) {
 	s, err := New(t.TempDir())
 	if err != nil {

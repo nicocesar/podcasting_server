@@ -213,6 +213,44 @@ button.danger:hover { background: var(--live); color: var(--live-ink); }
   border-color: var(--accent);
 }
 
+.join .check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-weight: 400;
+  color: var(--text);
+}
+.join .check input { width: auto; }
+
+/* ── Program chooser (/me/generate) ────────────────────────────────── */
+.programs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+  margin: 1.25rem 0 0.5rem;
+}
+.program-card {
+  display: block;
+  padding: 1.1rem 1.2rem 1.2rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  text-decoration: none;
+  color: var(--text);
+  transition: transform 0.08s ease, border-color 0.08s ease;
+}
+.program-card:hover {
+  transform: translate(-2px, -2px);
+  border-color: var(--accent);
+}
+.program-card h2 {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  margin: 0.35rem 0 0.4rem;
+}
+.program-card .muted { margin: 0; font-size: 0.9rem; }
+
 .actions {
   display: flex;
   gap: 0.5rem;

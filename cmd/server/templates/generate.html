@@ -1,28 +1,45 @@
-{{define "title"}}Generate an episode{{end}}
+{{define "title"}}{{.Template.Name}} — generate an episode{{end}}
 {{define "content"}}
 <article class="card">
-  <h1>Generate an episode</h1>
-  <p class="muted">Give a topic; an agent researches it on the web, writes
-  the script, and the episode lands in your feed. <a href="/me">Back to
-  your dashboard</a>.</p>
+  <p class="eyebrow">Program</p>
+  <h1>{{.Template.Name}}</h1>
+  <p class="muted">{{.Template.Tagline}}
+  <a href="/me/generate">All programs</a> · <a href="/me">Dashboard</a></p>
 
   {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 
-  <form class="join" method="post" action="/me/generate">
-    <label for="topic">Topic</label>
+  <form class="join" method="post" action="/me/generate/{{.Template.ID}}">
+    <label for="topic">{{.Template.TopicLabel}}</label>
     <textarea id="topic" name="topic" required maxlength="2000" rows="4"
-              placeholder="e.g. developments in fusion energy — or a whole brief: angle, things to include, tone…"
+              placeholder="{{.Template.TopicPlaceholder}}"
               autocomplete="off">{{.Topic}}</textarea>
+
+    {{if .Template.HasAgeRange}}
+    <label for="age">Listener age</label>
+    <select id="age" name="age">
+      {{range .AgeRanges}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+    </select>
+    {{end}}
 
     <label for="length">Episode length</label>
     <select id="length" name="length">
       {{range .Lengths}}<option value="{{.}}">{{.}} minutes</option>{{end}}
     </select>
 
+    {{if .Template.HasFreshness}}
     <label for="freshness">Freshness</label>
     <select id="freshness" name="freshness">
       {{range .Freshness}}<option value="{{.Days}}">{{.Label}}</option>{{end}}
     </select>
+    {{end}}
+
+    {{if and .Template.HasCast .CastOptions}}
+    <label for="cast">Returning characters</label>
+    <select id="cast" name="cast">
+      <option value="">Fresh cast — new characters</option>
+      {{range .CastOptions}}<option value="{{.Value}}">{{.Label}}</option>{{end}}
+    </select>
+    {{end}}
 
     <label for="language">Output language</label>
     <select id="language" name="language">
@@ -40,6 +57,11 @@
       <option value="">Auto</option>
       {{range .Providers}}<option value="{{.}}">{{.}}</option>{{end}}
     </select>
+
+    {{if .Template.HasSaveCharacters}}
+    <label class="check"><input type="checkbox" name="save_characters" value="1" checked>
+    Save the characters, so a later story can bring them back</label>
+    {{end}}
 
     <button type="submit">Generate</button>
   </form>

@@ -17,9 +17,9 @@ import (
 // The tests substitute a fake; production uses Client.
 type API interface {
 	// EnsureAgent creates the named agent or brings its configuration up
-	// to date (a changed system prompt becomes a new agent version), and
-	// returns the agent ID.
-	EnsureAgent(ctx context.Context, name, model, system string) (string, error)
+	// to date (a changed system prompt or toolset becomes a new agent
+	// version), and returns the agent ID.
+	EnsureAgent(ctx context.Context, name, model, system string, tools []map[string]any) (string, error)
 	// EnsureEnvironment creates the named cloud environment if missing
 	// and returns its ID.
 	EnsureEnvironment(ctx context.Context, name string) (string, error)
@@ -38,6 +38,10 @@ type API interface {
 	// SendToolResult answers a custom tool call, unblocking the session.
 	SendToolResult(ctx context.Context, sessionID, toolUseID, text string, isError bool) error
 	DeleteSession(ctx context.Context, sessionID string) error
+	// CompleteJSON runs one plain /v1/messages call whose output is
+	// constrained to the given JSON schema, and returns the raw JSON
+	// text. Used for small non-agentic steps like character extraction.
+	CompleteJSON(ctx context.Context, model, prompt string, schema map[string]any, maxTokens int) (string, Usage, error)
 }
 
 // ToolUse is one custom tool call from the event stream. Answered means
@@ -65,10 +69,10 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
-// agentTools: web research plus file read/write (oversized tool outputs
-// land in sandbox files the agent must read back), and the custom
-// submit_episode tool the episode is delivered through. No bash — the
-// agent only writes text (ADR 0009).
+// agentTools is the base toolset every template's agent gets: web
+// research plus file read/write (oversized tool outputs land in sandbox
+// files the agent must read back). No bash — the agents only write text
+// (ADR 0009). The registry composes it with each template's submit tool.
 var agentTools = []map[string]any{
 	{
 		"type":           "agent_toolset_20260401",
@@ -80,7 +84,6 @@ var agentTools = []map[string]any{
 			{"name": "write", "enabled": true},
 		},
 	},
-	submitTool,
 }
 
 type apiError struct {
@@ -170,7 +173,7 @@ type agentInfo struct {
 	Version int    `json:"version"`
 }
 
-func (c *Client) EnsureAgent(ctx context.Context, name, model, system string) (string, error) {
+func (c *Client) EnsureAgent(ctx context.Context, name, model, system string, tools []map[string]any) (string, error) {
 	found, err := findByName(ctx, c, "/v1/agents", func(a agentInfo) bool { return a.Name == name })
 	if err != nil {
 		return "", err
@@ -181,7 +184,7 @@ func (c *Client) EnsureAgent(ctx context.Context, name, model, system string) (s
 			"name":   name,
 			"model":  map[string]any{"id": model},
 			"system": system,
-			"tools":  agentTools,
+			"tools":  tools,
 		}, &created)
 		if err != nil {
 			return "", err
@@ -196,7 +199,7 @@ func (c *Client) EnsureAgent(ctx context.Context, name, model, system string) (s
 			"version": version,
 			"model":   map[string]any{"id": model},
 			"system":  system,
-			"tools":   agentTools,
+			"tools":   tools,
 		}, nil)
 	}
 	err = update(found.Version)
@@ -412,4 +415,53 @@ func (c *Client) SendToolResult(ctx context.Context, sessionID, toolUseID, text 
 
 func (c *Client) DeleteSession(ctx context.Context, sessionID string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/sessions/"+sessionID, nil, nil)
+}
+
+func (c *Client) CompleteJSON(ctx context.Context, model, prompt string, schema map[string]any, maxTokens int) (string, Usage, error) {
+	var resp struct {
+		StopReason string `json:"stop_reason"`
+		Content    []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		Usage struct {
+			InputTokens     int64 `json:"input_tokens"`
+			OutputTokens    int64 `json:"output_tokens"`
+			CacheReadTokens int64 `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/messages", map[string]any{
+		"model":      model,
+		"max_tokens": maxTokens,
+		"messages": []map[string]any{
+			{"role": "user", "content": prompt},
+		},
+		"output_config": map[string]any{
+			"format": map[string]any{"type": "json_schema", "schema": schema},
+		},
+	}, &resp)
+	if err != nil {
+		return "", Usage{}, err
+	}
+	usage := Usage{
+		InputTokens:     resp.Usage.InputTokens,
+		OutputTokens:    resp.Usage.OutputTokens,
+		CacheReadTokens: resp.Usage.CacheReadTokens,
+	}
+	switch resp.StopReason {
+	case "refusal":
+		return "", usage, fmt.Errorf("completion refused")
+	case "max_tokens":
+		return "", usage, fmt.Errorf("completion truncated at %d tokens", maxTokens)
+	}
+	text := ""
+	for _, block := range resp.Content {
+		if block.Type == "text" {
+			text += block.Text
+		}
+	}
+	if strings.TrimSpace(text) == "" {
+		return "", usage, fmt.Errorf("completion returned no text")
+	}
+	return text, usage, nil
 }

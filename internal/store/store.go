@@ -86,6 +86,15 @@ type APIKey struct {
 	CreatedAt  time.Time `json:"created_at" datastore:"created_at,noindex"`
 }
 
+// Character is one recurring figure of a story Episode, extracted from
+// the script so later Generations can bring the cast back. It lives on
+// the canonical Episode: shares are references (ADR 0006), so anyone
+// with the Episode in their feed can reuse its cast.
+type Character struct {
+	Name        string `json:"name" datastore:"name,noindex"`
+	Description string `json:"description" datastore:"description,noindex"`
+}
+
 // Episode is one playable item. It exists once, under its Owner — the
 // User whose API Key created it — and is referenced by any number
 // of Personal Feeds. Identity is (OwnerID, Slug); publishing an existing
@@ -99,6 +108,13 @@ type Episode struct {
 	DurationSec int       `json:"duration_seconds,omitempty" datastore:"duration_seconds,noindex"`
 	AudioSize   int64     `json:"audio_size,omitempty" datastore:"audio_size,noindex"`
 	AudioType   string    `json:"audio_type,omitempty" datastore:"audio_type,noindex"`
+
+	// Template is the Generation Template that produced the episode
+	// ("news", "stories"); empty for uploads and pre-template episodes.
+	Template string `json:"template,omitempty" datastore:"template,noindex"`
+	// Characters is the extracted cast of a story episode; empty until
+	// the owner runs extraction (checkbox at generation, or backfill).
+	Characters []Character `json:"characters,omitempty" datastore:"characters,noindex"`
 }
 
 // Share is a reference placing one Episode into one User's Personal
@@ -153,10 +169,24 @@ type Generation struct {
 	ID     string `json:"id" datastore:"-"` // unguessable; key is "{UserID}/{ID}"
 
 	// The request, as submitted on /me/generate.
+	// Template names the Generation Template ("news", "stories"); empty
+	// means news, the only template that existed before the field.
+	Template      string `json:"template,omitempty" datastore:"template,noindex"`
 	Topic         string `json:"topic" datastore:"topic,noindex"`
 	LengthMinutes int    `json:"length_minutes" datastore:"length_minutes,noindex"`
 	FreshnessDays int    `json:"freshness_days" datastore:"freshness_days,noindex"`
-	Language      string `json:"language" datastore:"language,noindex"`
+	// AgeRange is the stories listener age band ("2-4", "5-7", "8-12",
+	// "all"); empty for templates without the field.
+	AgeRange string `json:"age_range,omitempty" datastore:"age_range,noindex"`
+	// SaveCharacters asks the pipeline to extract the cast onto the
+	// published Episode after publishing (stories only).
+	SaveCharacters bool `json:"save_characters,omitempty" datastore:"save_characters,noindex"`
+	// Cast is the returning cast frozen at submit time, so a resumed
+	// Generation rebuilds the identical task message even if the source
+	// episode has since been deleted or unshared (same checkpoint
+	// philosophy as Script).
+	Cast     []Character `json:"-" datastore:"cast,noindex"`
+	Language string      `json:"language" datastore:"language,noindex"`
 	Voice         string `json:"voice,omitempty" datastore:"voice,noindex"` // "female" or "male"; empty predates the voice picker
 	// Provider is the preferred TTS engine name ("edge-tts",
 	// "google-tts"); empty = auto (default chain order). Preference only —
@@ -232,6 +262,9 @@ type Store interface {
 	// episode with the same (OwnerID, Slug), and returns the episode
 	// with AudioSize filled in.
 	UpsertEpisode(ctx context.Context, ep Episode, audio io.Reader) (Episode, error)
+	// UpdateEpisode replaces the episode's metadata, keeping its audio;
+	// ErrNotFound if no episode exists at (OwnerID, Slug).
+	UpdateEpisode(ctx context.Context, ep Episode) error
 	GetEpisode(ctx context.Context, ownerID, slug string) (Episode, error)
 	// ListEpisodes returns the owner's episodes newest-first.
 	ListEpisodes(ctx context.Context, ownerID string) ([]Episode, error)

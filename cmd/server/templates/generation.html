@@ -3,8 +3,8 @@
 <article class="card" id="gen"
          data-stage="{{.Stage}}">
   <h1>Generating an episode</h1>
-  <p class="muted">“{{.Topic}}” · {{.LengthMinutes}} min ·
-  {{if .FreshnessDays}}last {{.FreshnessDays}} days{{else}}timeless{{end}} · {{.Language}}</p>
+  <p class="muted">{{.TemplateName}} · “{{.Topic}}” · {{.LengthMinutes}} min ·
+  {{if eq .Template "stories"}}for {{if or (eq .AgeRange "all") (not .AgeRange)}}all ages{{else}}ages {{.AgeRange}}{{end}}{{else if .FreshnessDays}}last {{.FreshnessDays}} days{{else}}timeless{{end}} · {{.Language}}</p>
 
   <section class="panel">
     <p id="stage-label"><strong>{{.StageLabel}}</strong></p>
