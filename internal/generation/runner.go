@@ -460,6 +460,27 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		g.TTSCharacters += utf8.RuneCountInString(chunk)
 	}
 
+	// Sign off out loud with the voice and engine that actually read the
+	// episode — on Auto that is whatever survived the fallback chain, and
+	// this is the only trace a listener gets. Voiced by the winning engine
+	// so the credit is in the same voice as the episode. Non-fatal: the
+	// script is already synthesized and paid for, and losing the credit is
+	// not worth losing the episode.
+	if credit := tts.Credit(engine, voice); credit != "" {
+		if e := tts.ByName(r.engines, engine); e != nil {
+			outro, err := e.Synthesize(ctx, credit, voice)
+			switch {
+			case err != nil:
+				r.log.Warn("generation: credit outro failed, publishing without it", "user", g.UserID, "id", g.ID, "engine", engine, "err", err)
+			case len(outro) == 0:
+				r.log.Warn("generation: credit outro returned no audio", "user", g.UserID, "id", g.ID, "engine", engine)
+			default:
+				mp3 = append(mp3, outro...)
+				g.TTSCharacters += utf8.RuneCountInString(credit)
+			}
+		}
+	}
+
 	g.Stage = store.GenPublishing
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		return g, err

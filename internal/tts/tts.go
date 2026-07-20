@@ -32,6 +32,16 @@ type Voice struct {
 	Google     string // Google Cloud TTS voice name
 	GoogleLang string // Google language code, e.g. "en-US"
 	Eleven     string // ElevenLabs voice ID
+
+	// Spoken names for the sign-off credit, one per engine because the
+	// same curated slot is a different persona on each: the "English
+	// female" voice is Sonia on edge-tts and Amelia on ElevenLabs. These
+	// are read aloud, so they are spelled for a speech engine rather than
+	// copied from the voice ID — Google names its neural voices
+	// "en-GB-Neural2-A", which is written out as "Neural Two A".
+	EdgeName   string
+	GoogleName string
+	ElevenName string
 }
 
 // Voices is the curated list, in dropdown order. The first entry per
@@ -44,13 +54,17 @@ type Voice struct {
 // because the ID alone says nothing about who you are hearing.
 var Voices = []Voice{
 	// Amelia - Enthusiastic and Expressive (British)
-	{Language: "en", Label: "English", Gender: "female", Edge: "en-GB-SoniaNeural", Google: "en-GB-Neural2-A", GoogleLang: "en-GB", Eleven: "ZF6FPAbjXT4488VcRRnw"},
+	{Language: "en", Label: "English", Gender: "female", Edge: "en-GB-SoniaNeural", Google: "en-GB-Neural2-A", GoogleLang: "en-GB", Eleven: "ZF6FPAbjXT4488VcRRnw",
+		EdgeName: "Sonia", GoogleName: "Neural Two A", ElevenName: "Amelia"},
 	// Christopher - Gentle and Trustworthy (British)
-	{Language: "en", Label: "English", Gender: "male", Edge: "en-GB-RyanNeural", Google: "en-GB-Neural2-B", GoogleLang: "en-GB", Eleven: "G17SuINrv2H9FC6nvetn"},
+	{Language: "en", Label: "English", Gender: "male", Edge: "en-GB-RyanNeural", Google: "en-GB-Neural2-B", GoogleLang: "en-GB", Eleven: "G17SuINrv2H9FC6nvetn",
+		EdgeName: "Ryan", GoogleName: "Neural Two B", ElevenName: "Christopher"},
 	// Mariana - Intimate and Assertive (Argentinian)
-	{Language: "es", Label: "Español", Gender: "female", Edge: "es-AR-ElenaNeural", Google: "es-US-Neural2-A", GoogleLang: "es-US", Eleven: "9rvdnhrYoXoUt4igKpBw"},
+	{Language: "es", Label: "Español", Gender: "female", Edge: "es-AR-ElenaNeural", Google: "es-US-Neural2-A", GoogleLang: "es-US", Eleven: "9rvdnhrYoXoUt4igKpBw",
+		EdgeName: "Elena", GoogleName: "Neural Dos A", ElevenName: "Mariana"},
 	// Juan - Rich, Soothing and Bassy (Argentinian)
-	{Language: "es", Label: "Español", Gender: "male", Edge: "es-AR-TomasNeural", Google: "es-US-Neural2-B", GoogleLang: "es-US", Eleven: "dGjL92Li0y7ZUQ3MESQW"},
+	{Language: "es", Label: "Español", Gender: "male", Edge: "es-AR-TomasNeural", Google: "es-US-Neural2-B", GoogleLang: "es-US", Eleven: "dGjL92Li0y7ZUQ3MESQW",
+		EdgeName: "Tomás", GoogleName: "Neural Dos B", ElevenName: "Juan"},
 }
 
 // Languages returns one Voice per Language, in dropdown order, for the
