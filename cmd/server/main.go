@@ -129,6 +129,15 @@ func run(log *slog.Logger) error {
 		} else {
 			engines = append(engines, google)
 		}
+		// ElevenLabs goes last: billed per character, so it voices an
+		// episode only when a Generation picks it in the provider
+		// dropdown, never as the automatic first choice.
+		if eleven, err := tts.NewElevenLabs(os.Getenv("ELEVENLABS_API_KEY")); err != nil {
+			log.Info("generation: ElevenLabs TTS unavailable", "err", err)
+		} else {
+			engines = append(engines, eleven)
+			log.Info("generation: ElevenLabs TTS enabled (opt-in per generation)")
+		}
 		generator = generation.NewRunner(generation.Config{
 			Store:   st,
 			API:     generation.NewClient(key),

@@ -29,10 +29,18 @@ content enters via the contract" survives with the server acting as the
 User's Generator.
 
 TTS lives behind one narrow interface (script chunks in, MP3 out) with
-two implementations: `edge-tts-go` primary (free, unofficial Microsoft
-endpoint) and Google Cloud TTS as automatic fallback (official, billed
-per character, authenticated by the existing service account — no new
-secret).
+three implementations: `edge-tts-go` primary (free, unofficial Microsoft
+endpoint), Google Cloud TTS as automatic fallback (official, billed per
+character, authenticated by the existing service account — no new
+secret), and ElevenLabs last (official REST API, billed per character,
+`ELEVENLABS_API_KEY`). ElevenLabs is opt-in per Generation from the
+provider dropdown rather than an automatic default, because unlike the
+first two it costs real money on the happy path; it earns its place by
+being the only engine that keeps the Argentinian accent for Spanish,
+where Google shifts to Latin American. Its curated voices come from
+ElevenLabs' shared library, which a free-tier account refuses over the
+API with a 402 — the engine registers regardless and the chain falls
+back, so the plan is a billing question, not a code one.
 
 Orchestration is a checkpointed in-process worker: each Generation
 persists its stage, agent session id, Script, and TTS progress. Progress

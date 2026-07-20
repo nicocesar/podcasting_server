@@ -1,8 +1,11 @@
 // Package tts turns a generated Script into MP3 audio (ADR 0009). One
-// narrow Engine interface, two implementations: edge-tts (free, unofficial
-// Microsoft endpoint) tried first, Google Cloud TTS (official, billed per
-// character) as the fallback. An episode is always voiced end-to-end by a
-// single engine so the voice never changes mid-episode.
+// narrow Engine interface, three implementations tried in chain order:
+// edge-tts (free, unofficial Microsoft endpoint) first, Google Cloud TTS
+// (official, billed per character) as the fallback, and ElevenLabs
+// (official, billed, best quality) last — opt-in per Generation rather
+// than a default, since it is the only engine that costs real money on
+// the happy path. An episode is always voiced end-to-end by a single
+// engine so the voice never changes mid-episode.
 package tts
 
 import (
@@ -28,6 +31,7 @@ type Voice struct {
 	Edge       string // edge-tts voice short name
 	Google     string // Google Cloud TTS voice name
 	GoogleLang string // Google language code, e.g. "en-US"
+	Eleven     string // ElevenLabs voice ID
 }
 
 // Voices is the curated list, in dropdown order. The first entry per
@@ -35,11 +39,18 @@ type Voice struct {
 // personality: English speaks British, Spanish speaks Argentinian.
 // Google has no es-AR locale, so its Spanish fallback is Latin American
 // (es-US) — an accent shift when the edge-tts → Google fallback fires.
+// ElevenLabs holds both accents, so it is the only engine that never
+// shifts. Its IDs are shared-library voices, named in the comments
+// because the ID alone says nothing about who you are hearing.
 var Voices = []Voice{
-	{Language: "en", Label: "English", Gender: "female", Edge: "en-GB-SoniaNeural", Google: "en-GB-Neural2-A", GoogleLang: "en-GB"},
-	{Language: "en", Label: "English", Gender: "male", Edge: "en-GB-RyanNeural", Google: "en-GB-Neural2-B", GoogleLang: "en-GB"},
-	{Language: "es", Label: "Español", Gender: "female", Edge: "es-AR-ElenaNeural", Google: "es-US-Neural2-A", GoogleLang: "es-US"},
-	{Language: "es", Label: "Español", Gender: "male", Edge: "es-AR-TomasNeural", Google: "es-US-Neural2-B", GoogleLang: "es-US"},
+	// Amelia - Enthusiastic and Expressive (British)
+	{Language: "en", Label: "English", Gender: "female", Edge: "en-GB-SoniaNeural", Google: "en-GB-Neural2-A", GoogleLang: "en-GB", Eleven: "ZF6FPAbjXT4488VcRRnw"},
+	// Christopher - Gentle and Trustworthy (British)
+	{Language: "en", Label: "English", Gender: "male", Edge: "en-GB-RyanNeural", Google: "en-GB-Neural2-B", GoogleLang: "en-GB", Eleven: "G17SuINrv2H9FC6nvetn"},
+	// Mariana - Intimate and Assertive (Argentinian)
+	{Language: "es", Label: "Español", Gender: "female", Edge: "es-AR-ElenaNeural", Google: "es-US-Neural2-A", GoogleLang: "es-US", Eleven: "9rvdnhrYoXoUt4igKpBw"},
+	// Juan - Rich, Soothing and Bassy (Argentinian)
+	{Language: "es", Label: "Español", Gender: "male", Edge: "es-AR-TomasNeural", Google: "es-US-Neural2-B", GoogleLang: "es-US", Eleven: "dGjL92Li0y7ZUQ3MESQW"},
 }
 
 // Languages returns one Voice per Language, in dropdown order, for the
