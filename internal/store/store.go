@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"time"
+	"unicode/utf8"
 )
 
 // ErrNotFound is returned by all backends when a User, Episode, Share,
@@ -53,6 +54,12 @@ type User struct {
 	GoogleSub    string `json:"-" datastore:"google_sub"`
 	GoogleEmail  string `json:"-" datastore:"google_email,noindex"`
 
+	// Admin grants the /admin surface: cost reporting, user provisioning,
+	// and the per-Generation execution trace. Appointed by the break-glass
+	// POST /admin/users/{user}/admin, which is the only route still
+	// guarded by ADMIN_TOKEN — it has to work before any admin exists.
+	Admin bool `json:"admin,omitempty" datastore:"admin,noindex"`
+
 	// CredentialVersion is stamped into every Session; bumping it (on
 	// password change or "log out everywhere") kills all outstanding
 	// sessions on their next request.
@@ -93,6 +100,49 @@ type APIKey struct {
 type Character struct {
 	Name        string `json:"name" datastore:"name,noindex"`
 	Description string `json:"description" datastore:"description,noindex"`
+}
+
+// Trace levels, ordered by how much they want an admin's attention.
+// LevelNotice is the one that earns its keep: not a failure, but a run
+// that quietly degraded — a TTS fallback that succeeded, a script that
+// needed translating. Without it a degraded episode is indistinguishable
+// from a clean one, which is the whole reason the trace exists.
+const (
+	LevelInfo   = "info"
+	LevelNotice = "notice"
+	LevelWarn   = "warn"
+	LevelError  = "error"
+)
+
+// Trace caps. A Generation entity shares a 1 MiB Datastore budget with
+// Script, which for a long episode is already the bulk of it, so the
+// trace takes a deliberate ~76 KB slice at worst and truncates rather
+// than letting a pathological run push the record over the limit.
+const (
+	MaxTraceEntries = 80
+	MaxTraceMessage = 200
+	MaxTraceDetail  = 512
+	MaxTraceURL     = 200
+)
+
+// TraceEntry is one notable thing that happened during a Generation:
+// enough for an admin to reconstruct a run — which TTS engine failed and
+// why, whether a script was rejected, whether characters were extracted —
+// without reaching for Cloud Logging.
+//
+// Every field is a scalar on purpose. Datastore cannot store a slice or
+// map nested inside a slice-of-structs, so arbitrary key/values live in
+// Detail as a compact JSON object rather than as a map. Adding a
+// non-scalar field here fails at Put time against real Datastore while
+// passing every fsstore test.
+type TraceEntry struct {
+	At      time.Time `json:"at" datastore:"at,noindex"`
+	Level   string    `json:"level" datastore:"level,noindex"`
+	Stage   string    `json:"stage,omitempty" datastore:"stage,noindex"`
+	Event   string    `json:"event" datastore:"event,noindex"` // stable dotted slug, e.g. "tts.fallback"
+	Message string    `json:"message" datastore:"message,noindex"`
+	Detail  string    `json:"detail,omitempty" datastore:"detail,noindex"` // JSON object, or ""
+	URL     string    `json:"url,omitempty" datastore:"url,noindex"`
 }
 
 // Episode is one playable item. It exists once, under its Owner — the
@@ -187,7 +237,7 @@ type Generation struct {
 	// philosophy as Script).
 	Cast     []Character `json:"-" datastore:"cast,noindex"`
 	Language string      `json:"language" datastore:"language,noindex"`
-	Voice         string `json:"voice,omitempty" datastore:"voice,noindex"` // "female" or "male"; empty predates the voice picker
+	Voice    string      `json:"voice,omitempty" datastore:"voice,noindex"` // "female" or "male"; empty predates the voice picker
 	// Provider is the preferred TTS engine name ("edge-tts",
 	// "google-tts", "elevenlabs"); empty = auto (default chain order).
 	// Preference only —
@@ -219,8 +269,61 @@ type Generation struct {
 	TTSCharacters    int    `json:"tts_characters,omitempty" datastore:"tts_characters,noindex"` // runes synthesized by the winning engine
 	TTSAttempts      int    `json:"tts_attempts,omitempty" datastore:"tts_attempts,noindex"`     // engines tried; >1 per voicing means a fallback fired
 
+	// Trace is the execution record: what happened during this run, for
+	// admin eyes. json:"-" because it carries raw upstream error strings,
+	// session ids and console links — it must never ride along on the
+	// owner-facing poll of /me/generations/{id}. Admin surfaces opt in
+	// explicitly. TraceDropped counts entries evicted at the cap, so a
+	// truncated trace can say so instead of quietly looking complete.
+	//
+	// Caveat for whoever debugs from this: the runner is the sole writer,
+	// but PutGeneration is a blind whole-entity overwrite, so if two
+	// replicas ever resume the same Generation (the known Kick race) one
+	// replica's entries are lost. A trace with holes is possible.
+	Trace        []TraceEntry `json:"-" datastore:"trace,noindex"`
+	TraceDropped int          `json:"-" datastore:"trace_dropped,noindex"`
+
 	CreatedAt time.Time `json:"created_at" datastore:"created_at,noindex"`
 	UpdatedAt time.Time `json:"updated_at" datastore:"updated_at,noindex"`
+}
+
+// AppendTrace adds one entry, truncating its strings and enforcing the
+// entry cap. When full it evicts the oldest info entry rather than the
+// oldest entry outright: a long run emits many routine events, and the
+// warn/error entries that motivated the trace must not be the ones pushed
+// out by them. Only when nothing routine is left does it drop the oldest
+// of any level.
+func (g *Generation) AppendTrace(e TraceEntry) {
+	e.Message = truncate(e.Message, MaxTraceMessage)
+	e.Detail = truncate(e.Detail, MaxTraceDetail)
+	e.URL = truncate(e.URL, MaxTraceURL)
+	g.Trace = append(g.Trace, e)
+	for len(g.Trace) > MaxTraceEntries {
+		i := g.evictIndex()
+		g.Trace = append(g.Trace[:i], g.Trace[i+1:]...)
+		g.TraceDropped++
+	}
+}
+
+// evictIndex picks the entry to drop: the oldest info, else the oldest.
+func (g *Generation) evictIndex() int {
+	for i, e := range g.Trace {
+		if e.Level == LevelInfo {
+			return i
+		}
+	}
+	return 0
+}
+
+// truncate cuts s to at most n bytes without splitting a rune.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // Audio is how a backend hands episode audio to the HTTP layer. Exactly

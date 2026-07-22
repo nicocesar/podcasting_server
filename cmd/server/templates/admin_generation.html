@@ -1,0 +1,53 @@
+{{define "title"}}Trace: {{.Topic}}{{end}}
+{{define "content"}}
+<article class="dash">
+  <p class="eyebrow">Execution trace</p>
+  <h1>{{.Topic}}</h1>
+  <p class="muted">
+    {{if .TemplateName}}{{.TemplateName}} · {{end}}{{.UserID}}/{{.ID}} ·
+    {{.Language}}{{if .Voice}} {{.Voice}}{{end}} ·
+    stage <strong>{{.Stage}}</strong>
+    {{if .Provider}} · requested <code>{{.Provider}}</code>{{end}}
+    {{if .TTSEngine}} · voiced by <code>{{.TTSEngine}}</code>{{end}}
+  </p>
+
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+  {{if ne .Worst "info"}}
+  <p class="trace-worst trace-{{.Worst}}">
+    This run needed attention: highest event level was <strong>{{.Worst}}</strong>.
+  </p>
+  {{end}}
+
+  {{if .StatsLabel}}<p class="muted">{{.StatsLabel}}</p>{{end}}
+
+  <section class="panel">
+    {{if .Trace}}
+    <ol class="trace">
+      {{range .Trace}}
+      <li class="trace-row trace-{{.Level}}">
+        <div class="trace-head">
+          <time datetime="{{.At.Format "2006-01-02T15:04:05Z07:00"}}">{{.At.Format "15:04:05"}}</time>
+          <span class="trace-level">{{.Level}}</span>
+          <code class="trace-event">{{.Event}}</code>
+          {{if .Stage}}<span class="muted">{{.Stage}}</span>{{end}}
+        </div>
+        <p class="trace-message">{{.Message}}</p>
+        {{if .Chips}}
+        <p class="trace-chips">{{range .Chips}}<span class="chip">{{.}}</span>{{end}}</p>
+        {{end}}
+        {{if .URL}}<p><a href="{{.URL}}" rel="noreferrer noopener" target="_blank">Open the agent session</a></p>{{end}}
+      </li>
+      {{end}}
+    </ol>
+    {{if .TraceDropped}}
+    <p class="muted">{{.TraceDropped}} earlier routine {{if eq .TraceDropped 1}}entry was{{else}}entries were{{end}} dropped at the size cap.</p>
+    {{end}}
+    {{else}}
+    <p class="muted">No trace recorded. Generations created before tracing shipped have none.</p>
+    {{end}}
+  </section>
+
+  <p class="muted"><a href="/me">Back to your dashboard</a></p>
+</article>
+{{end}}

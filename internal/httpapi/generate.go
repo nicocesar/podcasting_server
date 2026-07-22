@@ -196,9 +196,28 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		retry("Pick a voice provider from the list.")
 		return
 	}
+	// castDetail renders the trace detail for a reused cast: the source
+	// episode ref, which the frozen Cast on the Generation itself does not
+	// keep, plus who came back.
+	castDetail := func(ref string, chars []store.Character) string {
+		names := make([]string, len(chars))
+		for i, c := range chars {
+			names[i] = c.Name
+		}
+		b, err := json.Marshal(map[string]any{
+			"source": ref, "count": len(chars), "names": strings.Join(names, ", "),
+		})
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+
 	var cast []store.Character
+	var castRef string
 	if tpl.HasCast {
 		if ref := r.FormValue("cast"); ref != "" {
+			castRef = ref
 			owner, slug, ok := strings.Cut(ref, "/")
 			if !ok || s.inFeed(r, u, owner, slug) != nil {
 				retry("Pick a returning cast from the list.")
@@ -234,6 +253,16 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		Stage:          store.GenResearching,
 		Active:         true,
 		CreatedAt:      time.Now().UTC(),
+	}
+	// Traced here rather than in the runner because it happens exactly
+	// once, at creation: a resumed run would re-emit it on every restart.
+	// castRef is the source episode, which the frozen Cast itself loses.
+	if len(cast) > 0 {
+		g.AppendTrace(store.TraceEntry{
+			At: g.CreatedAt, Level: store.LevelInfo, Stage: g.Stage,
+			Event: "cast.reused", Message: "reusing a returning cast",
+			Detail: castDetail(castRef, cast),
+		})
 	}
 	if err := s.store.PutGeneration(r.Context(), g); err != nil {
 		s.fail(w, err)

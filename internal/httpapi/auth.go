@@ -215,6 +215,29 @@ func (s *server) session(h authedHandler) http.HandlerFunc {
 	}
 }
 
+// adminUser admits a normal credential (session cookie or API key) and
+// then requires the Admin flag. This is what makes /admin reachable from
+// a browser: ADMIN_TOKEN is a header-only credential, and a browser never
+// sends it on navigation. A non-admin gets 404, not 403 — the admin
+// surface does not advertise itself to people who cannot use it.
+//
+// The one route this does NOT guard is appointing the first admin, which
+// has to work before any admin exists; that stays on the ADMIN_TOKEN
+// path in server.go.
+func (s *server) adminUser(h authedHandler) http.HandlerFunc {
+	return s.auth(func(w http.ResponseWriter, r *http.Request, u store.User) {
+		if !u.Admin {
+			if wantsHTML(r) {
+				s.renderNotFound(w)
+				return
+			}
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		h(w, r, u)
+	})
+}
+
 // --- login / logout ---
 
 type loginPage struct {

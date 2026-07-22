@@ -58,8 +58,9 @@ func TestAdminCostsProxiesTheCostReport(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts := newCostReportingServer(t, upstream.URL)
+	admin := createAdmin(t, ts, "root")
 
-	resp := do(t, "GET", ts.URL+"/admin/costs?days=7", "bearer:"+adminToken, nil, "")
+	resp := do(t, "GET", ts.URL+"/admin/costs?days=7", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
@@ -81,7 +82,7 @@ func TestAdminCostsProxiesTheCostReport(t *testing.T) {
 	}
 
 	// The API caps 1d reports at 31 buckets; reject out-of-range early.
-	resp = do(t, "GET", ts.URL+"/admin/costs?days=90", "bearer:"+adminToken, nil, "")
+	resp = do(t, "GET", ts.URL+"/admin/costs?days=90", admin.sessionCreds(), nil, "")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("days=90 status = %d, want 400", resp.StatusCode)
@@ -100,8 +101,9 @@ func TestAdminUsageProxiesTheUsageReport(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts := newCostReportingServer(t, upstream.URL)
+	admin := createAdmin(t, ts, "root")
 
-	resp := do(t, "GET", ts.URL+"/admin/usage", "bearer:"+adminToken, nil, "")
+	resp := do(t, "GET", ts.URL+"/admin/usage", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
@@ -110,7 +112,8 @@ func TestAdminUsageProxiesTheUsageReport(t *testing.T) {
 
 func TestAdminCostsUnconfigured(t *testing.T) {
 	ts := newTestServer(t) // no ANTHROPIC_ADMIN_KEY
-	resp := do(t, "GET", ts.URL+"/admin/costs", "bearer:"+adminToken, nil, "")
+	admin := createAdmin(t, ts, "root")
+	resp := do(t, "GET", ts.URL+"/admin/costs", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", resp.StatusCode)

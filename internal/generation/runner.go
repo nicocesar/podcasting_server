@@ -121,7 +121,9 @@ func (r *Runner) Bootstrap(ctx context.Context) {
 		return
 	}
 	for _, g := range gens {
-		r.log.Info("generation: resuming", "user", g.UserID, "id", g.ID, "stage", g.Stage)
+		// Traced, not just logged: a run that was interrupted and picked
+		// up by another instance explains gaps in everything that follows.
+		r.trace(&g, store.LevelNotice, "run.resumed", "resuming after restart", "stage", g.Stage)
 		r.Kick(g)
 	}
 }
@@ -226,7 +228,7 @@ func (r *Runner) run(g store.Generation) {
 // fail records the failure on its own context: the run context may be
 // what just expired.
 func (r *Runner) fail(g store.Generation, cause error) {
-	r.log.Error("generation: failed", "user", g.UserID, "id", g.ID, "stage", g.Stage, "err", cause)
+	r.trace(&g, store.LevelError, "stage.failed", "failed", "stage", g.Stage, "err", cause)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// A failed research session still burned tokens; meter it before the
@@ -250,8 +252,8 @@ func (r *Runner) fail(g store.Generation, cause error) {
 func (r *Runner) recordSessionUsage(ctx context.Context, g *store.Generation) {
 	u, err := r.api.SessionUsage(ctx, g.SessionID)
 	if err != nil {
-		r.log.Warn("generation: could not fetch session usage",
-			"user", g.UserID, "id", g.ID, "session", g.SessionID, "err", err)
+		r.trace(g, store.LevelWarn, "session.usage_failed", "could not fetch session usage",
+			"session", g.SessionID, "err", err)
 		return
 	}
 	g.SessionsCount++
@@ -291,12 +293,15 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 			return g, fmt.Errorf("create session: %w", err)
 		}
 		g.SessionID = id
+		// Traced before the checkpoint, not after, so the console link is
+		// on the record from the first write — research can run for half an
+		// hour before the next PutGeneration.
+		r.traceURL(&g, store.LevelInfo, "session.created", "session created",
+			"https://platform.claude.com/workspaces/default/sessions/"+id,
+			"session", id)
 		if err := r.store.PutGeneration(ctx, g); err != nil {
 			return g, err
 		}
-		r.log.Info("generation: session created",
-			"user", g.UserID, "id", g.ID, "session", id,
-			"trace", "https://platform.claude.com/workspaces/default/sessions/"+id)
 	}
 
 	sent := false
@@ -315,7 +320,12 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 				return g, fmt.Errorf("fetch agent output: %w", err)
 			}
 			if use != nil {
-				g, done, err := r.judgeSubmission(ctx, g, use, &translationRequested)
+				// Assigned, not shadowed: judgeSubmission records why it
+				// rejected a submission onto the Generation, and a := here
+				// would drop those entries on the floor every time it did
+				// not accept — which is exactly when they matter.
+				var done bool
+				g, done, err = r.judgeSubmission(ctx, g, use, &translationRequested)
 				if done || err != nil {
 					return g, err
 				}
@@ -334,8 +344,9 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 				// on faith; a reported mismatch gets a translation pass.
 				if lang := PrimaryTag(script.Language); lang != "" && lang != g.Language {
 					if !translationRequested {
-						r.log.Info("generation: script in wrong language, translating",
-							"user", g.UserID, "id", g.ID, "got", lang, "want", g.Language)
+						r.trace(&g, store.LevelNotice, "script.translation_requested",
+							"script in wrong language, translating",
+							"got", lang, "want", g.Language, "path", "legacy")
 						if err := r.api.SendMessage(ctx, g.SessionID, translateMessage(g.Language)); err != nil {
 							return g, fmt.Errorf("request translation: %w", err)
 						}
@@ -375,6 +386,8 @@ func (r *Runner) judgeSubmission(ctx context.Context, g store.Generation, use *T
 	script, perr := ParseSubmission(use.Input)
 	if perr != nil {
 		if !use.Answered {
+			r.trace(&g, store.LevelNotice, "script.rejected",
+				"submission rejected, asking for a resubmission", "reason", perr)
 			reject := "Rejected: " + perr.Error() + ". Fix that and call submit_episode again with the full episode."
 			if err := r.api.SendToolResult(ctx, g.SessionID, use.ID, reject, true); err != nil {
 				return g, false, fmt.Errorf("reject submission: %w", err)
@@ -394,8 +407,9 @@ func (r *Runner) judgeSubmission(ctx context.Context, g store.Generation, use *T
 		if *translationRequested {
 			return g, false, fmt.Errorf("script is still in %q after a translation round (want %q)", lang, g.Language)
 		}
-		r.log.Info("generation: script in wrong language, translating",
-			"user", g.UserID, "id", g.ID, "got", lang, "want", g.Language)
+		r.trace(&g, store.LevelNotice, "script.translation_requested",
+			"script in wrong language, translating",
+			"got", lang, "want", g.Language, "path", "tool")
 		if err := r.api.SendToolResult(ctx, g.SessionID, use.ID, wrongLanguageResult(g.Language), true); err != nil {
 			return g, false, fmt.Errorf("request translation: %w", err)
 		}
@@ -419,6 +433,8 @@ func (r *Runner) acceptScript(ctx context.Context, g store.Generation, script Sc
 		return g, err
 	}
 	r.recordSessionUsage(ctx, &g)
+	r.trace(&g, store.LevelInfo, "script.accepted", "script accepted",
+		"title", script.Title, "language", script.Language, "sources", len(script.Sources))
 	g.Script = string(raw)
 	g.Stage = store.GenVoicing
 	return g, r.store.PutGeneration(ctx, g)
@@ -440,13 +456,18 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		return g, err
 	}
+	// Both callbacks are invoked synchronously by SynthesizeAll from this
+	// goroutine, so mutating g (counters and trace alike) needs no lock.
 	mp3, engine, attempts, err := tts.SynthesizeAll(ctx, tts.Prefer(r.engines, g.Provider), chunks, voice, func(done, total int) {
 		g.VoicedChunks, g.TotalChunks = done, total
 		if err := r.store.PutGeneration(ctx, g); err != nil {
-			r.log.Warn("generation: progress checkpoint failed", "user", g.UserID, "id", g.ID, "err", err)
+			r.trace(&g, store.LevelWarn, "progress.checkpoint_failed", "progress checkpoint failed", "err", err)
 		}
 	}, func(name string, err error) {
-		r.log.Warn("generation: tts engine failed, trying next", "user", g.UserID, "id", g.ID, "engine", name, "provider", g.Provider, "err", err)
+		// requested_provider is the point of this entry: it turns "a
+		// fallback happened" into "the listener asked for X and got Y".
+		r.trace(&g, store.LevelWarn, "tts.fallback", "tts engine failed, trying next",
+			"engine", name, "requested_provider", g.Provider, "err", err)
 	})
 	// Attempts accumulate even on failure (run() persists g with the
 	// failure record); characters count only what the winning engine
@@ -459,6 +480,8 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	for _, chunk := range chunks {
 		g.TTSCharacters += utf8.RuneCountInString(chunk)
 	}
+	r.trace(&g, store.LevelInfo, "tts.selected", "episode voiced",
+		"engine", engine, "requested_provider", g.Provider, "attempts", attempts, "chunks", len(chunks))
 
 	// Sign off out loud with the voice and engine that actually read the
 	// episode — on Auto that is whatever survived the fallback chain, and
@@ -471,9 +494,11 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 			outro, err := e.Synthesize(ctx, credit, voice)
 			switch {
 			case err != nil:
-				r.log.Warn("generation: credit outro failed, publishing without it", "user", g.UserID, "id", g.ID, "engine", engine, "err", err)
+				r.trace(&g, store.LevelNotice, "tts.credit_failed", "credit outro failed, publishing without it",
+					"engine", engine, "err", err)
 			case len(outro) == 0:
-				r.log.Warn("generation: credit outro returned no audio", "user", g.UserID, "id", g.ID, "engine", engine)
+				r.trace(&g, store.LevelNotice, "tts.credit_failed", "credit outro returned no audio",
+					"engine", engine, "reason", "no audio")
 			default:
 				mp3 = append(mp3, outro...)
 				g.TTSCharacters += utf8.RuneCountInString(credit)
@@ -485,7 +510,7 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		return g, err
 	}
-	slug, err := r.freeSlug(ctx, g.UserID, g.Topic)
+	slug, err := r.freeSlug(ctx, &g)
 	if err != nil {
 		return g, err
 	}
@@ -520,13 +545,16 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		g.OutputTokens += u.OutputTokens
 		g.CacheReadTokens += u.CacheReadTokens
 		if err != nil {
-			r.log.Warn("generation: character extraction failed",
-				"user", g.UserID, "id", g.ID, "episode", slug, "err", err)
+			r.trace(&g, store.LevelWarn, "characters.extraction_failed", "character extraction failed",
+				"episode", slug, "err", err)
 		} else {
 			ep.Characters = chars
 			if err := r.store.UpdateEpisode(ctx, ep); err != nil {
-				r.log.Warn("generation: could not save characters",
-					"user", g.UserID, "id", g.ID, "episode", slug, "err", err)
+				r.trace(&g, store.LevelWarn, "characters.save_failed", "could not save characters",
+					"episode", slug, "count", len(chars), "err", err)
+			} else {
+				r.trace(&g, store.LevelInfo, "characters.extracted", "characters extracted",
+					"episode", slug, "count", len(chars), "names", characterNames(chars))
 			}
 		}
 	}
@@ -536,7 +564,8 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	// remain inspectable in the Anthropic Console for prompt work.
 	if r.deleteSessions && g.SessionID != "" {
 		if err := r.api.DeleteSession(ctx, g.SessionID); err != nil {
-			r.log.Warn("generation: could not delete session", "session", g.SessionID, "err", err)
+			r.trace(&g, store.LevelWarn, "session.delete_failed", "could not delete session",
+				"session", g.SessionID, "err", err)
 		}
 	}
 
@@ -556,12 +585,20 @@ func (r *Runner) ExtractCharacters(ctx context.Context, script string) ([]store.
 // freeSlug is YYYY-MM-DD-<topic slug>, suffixed -2, -3, … until free, so
 // a new Generation never silently replaces an earlier Episode through
 // the republish semantics of ADR 0002.
-func (r *Runner) freeSlug(ctx context.Context, userID, topic string) (string, error) {
-	base := time.Now().UTC().Format("2006-01-02") + "-" + Slugify(topic)
+func (r *Runner) freeSlug(ctx context.Context, g *store.Generation) (string, error) {
+	base := time.Now().UTC().Format("2006-01-02") + "-" + Slugify(g.Topic)
 	slug := base
 	for i := 2; ; i++ {
-		_, err := r.store.GetEpisode(ctx, userID, slug)
+		_, err := r.store.GetEpisode(ctx, g.UserID, slug)
 		if errors.Is(err, store.ErrNotFound) {
+			if slug != base {
+				// Worth surfacing: the listener asked for a topic they have
+				// covered before, and the episode published under a name
+				// they did not choose.
+				r.trace(g, store.LevelNotice, "publish.slug_collision",
+					"episode name was taken, published under a numbered slug",
+					"base", base, "chosen", slug)
+			}
 			return slug, nil
 		}
 		if err != nil {
@@ -572,4 +609,14 @@ func (r *Runner) freeSlug(ctx context.Context, userID, topic string) (string, er
 		}
 		slug = base + "-" + strconv.Itoa(i)
 	}
+}
+
+// characterNames joins a cast for a trace detail field, where a compact
+// string beats a structure the entry cannot hold anyway.
+func characterNames(chars []store.Character) string {
+	names := make([]string, len(chars))
+	for i, c := range chars {
+		names[i] = c.Name
+	}
+	return strings.Join(names, ", ")
 }

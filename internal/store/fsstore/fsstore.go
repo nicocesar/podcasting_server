@@ -597,14 +597,20 @@ func (s *Store) PutGeneration(ctx context.Context, g store.Generation) error {
 // handlers).
 type generationRecord struct {
 	store.Generation
-	Active    bool              `json:"active"`
-	SessionID string            `json:"session_id,omitempty"`
-	Script    string            `json:"script,omitempty"`
-	Cast      []store.Character `json:"cast,omitempty"`
+	Active       bool               `json:"active"`
+	SessionID    string             `json:"session_id,omitempty"`
+	Script       string             `json:"script,omitempty"`
+	Cast         []store.Character  `json:"cast,omitempty"`
+	Trace        []store.TraceEntry `json:"trace,omitempty"`
+	TraceDropped int                `json:"trace_dropped,omitempty"`
 }
 
 func newGenerationRecord(g store.Generation) generationRecord {
-	return generationRecord{Generation: g, Active: g.Active, SessionID: g.SessionID, Script: g.Script, Cast: g.Cast}
+	return generationRecord{
+		Generation: g,
+		Active:     g.Active, SessionID: g.SessionID, Script: g.Script, Cast: g.Cast,
+		Trace: g.Trace, TraceDropped: g.TraceDropped,
+	}
 }
 
 func (r generationRecord) generation(userID, id string) store.Generation {
@@ -612,6 +618,7 @@ func (r generationRecord) generation(userID, id string) store.Generation {
 	g.UserID, g.ID = userID, id // file name is canonical
 	g.Active, g.SessionID, g.Script = r.Active, r.SessionID, r.Script
 	g.Cast = r.Cast
+	g.Trace, g.TraceDropped = r.Trace, r.TraceDropped
 	return g
 }
 

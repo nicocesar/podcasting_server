@@ -102,6 +102,8 @@ type server struct {
 	tmplGenerate   *template.Template
 	tmplGeneration *template.Template
 	tmplSettings   *template.Template
+
+	tmplAdminGeneration *template.Template
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -156,6 +158,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplGenerate, []string{"templates/layout.html", "templates/generate.html"}},
 		{&s.tmplGeneration, []string{"templates/layout.html", "templates/generation.html"}},
 		{&s.tmplSettings, []string{"templates/layout.html", "templates/settings.html"}},
+		{&s.tmplAdminGeneration, []string{"templates/layout.html", "templates/admin_generation.html"}},
 	} {
 		t, err := template.New("page").Funcs(template.FuncMap{
 			"assetv": func() string { return s.assetVersion },
@@ -261,17 +264,35 @@ func New(cfg Config) (http.Handler, error) {
 	// Cast extraction backfill for a story episode the checkbox missed.
 	mux.HandleFunc("POST /me/episodes/{slug}/characters", s.auth(s.generating(s.handleEpisodeCharacters)))
 
-	// Admin: fallback provisioning and credential recovery (ADR 0007).
-	mux.HandleFunc("GET /admin/users", s.admin(s.handleListUsers))
-	mux.HandleFunc("PUT /admin/users/{user}", s.admin(s.handleCreateUser))
+	// Admin, on two credentials by design.
+	//
+	// ADMIN_TOKEN (header-only, break-glass): provisioning and credential
+	// recovery (ADR 0007) plus appointing admins. These must work when
+	// normal login cannot — on a fresh deployment there are no users at
+	// all, so a session-authenticated "create the first user" is
+	// unreachable by construction. Their whole purpose is to be the path
+	// that survives a lockout, so they stay on the token.
+	// Provisioning and appointment take either credential, so an existing
+	// admin can do them from the webapp; the token still works, and is
+	// the only thing that works before the first admin exists.
+	mux.HandleFunc("PUT /admin/users/{user}", s.adminOrToken(s.handleCreateUser))
+	mux.HandleFunc("POST /admin/users/{user}/admin", s.adminOrToken(s.handleSetAdmin))
+	// Deleting a user and resetting anyone's password stay token-only.
+	// Both are account takeover in one call, and the token lives in Secret
+	// Manager and never touches a browser — so a stolen session cookie
+	// cannot reach them.
 	mux.HandleFunc("DELETE /admin/users/{user}", s.admin(s.handleDeleteUser))
 	mux.HandleFunc("POST /admin/users/{user}/password-reset", s.admin(s.handlePasswordReset))
 
-	// Admin cost reporting: real billed dollars from Anthropic's Usage &
-	// Cost Admin API, to reconcile against per-Generation meters.
-	mux.HandleFunc("GET /admin/costs", s.admin(s.handleAdminCosts))
-	mux.HandleFunc("GET /admin/costs/episodes", s.admin(s.handleAdminEpisodeCosts))
-	mux.HandleFunc("GET /admin/usage", s.admin(s.handleAdminUsage))
+	// A logged-in admin (store.User.Admin): the reporting surfaces. These
+	// are for reading, in a browser, which the header-only token cannot
+	// do. Real billed dollars come from Anthropic's Usage & Cost Admin
+	// API; the trace is the per-Generation execution record.
+	mux.HandleFunc("GET /admin/users", s.adminUser(ignoreUser(s.handleListUsers)))
+	mux.HandleFunc("GET /admin/costs", s.adminUser(ignoreUser(s.handleAdminCosts)))
+	mux.HandleFunc("GET /admin/costs/episodes", s.adminUser(ignoreUser(s.handleAdminEpisodeCosts)))
+	mux.HandleFunc("GET /admin/usage", s.adminUser(ignoreUser(s.handleAdminUsage)))
+	mux.HandleFunc("GET /admin/generations/{user}/{id}", s.adminUser(s.handleAdminGeneration))
 
 	return s.logged(mux), nil
 }
@@ -283,6 +304,12 @@ func hashEqual(a, b string) bool {
 }
 
 type authedHandler func(w http.ResponseWriter, r *http.Request, u store.User)
+
+// ignoreUser adapts a plain handler to authedHandler, for admin endpoints
+// that need the caller to *be* an admin but do not care which one.
+func ignoreUser(h http.HandlerFunc) authedHandler {
+	return func(w http.ResponseWriter, r *http.Request, _ store.User) { h(w, r) }
+}
 
 // feed resolves the {token} path segment to its User. An unknown token
 // is a plain 404: capability URLs reveal nothing, valid or not.
@@ -297,17 +324,51 @@ func (s *server) feed(h authedHandler) http.HandlerFunc {
 	}
 }
 
+// hasAdminToken reports whether the request carries ADMIN_TOKEN, compared
+// as a digest in constant time.
+func (s *server) hasAdminToken(r *http.Request) bool {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return false
+	}
+	got := sha256.Sum256([]byte(token))
+	return subtle.ConstantTimeCompare(got[:], s.adminHash[:]) == 1
+}
+
 func (s *server) admin(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if ok {
-			got := sha256.Sum256([]byte(token))
-			if subtle.ConstantTimeCompare(got[:], s.adminHash[:]) == 1 {
-				h(w, r)
-				return
-			}
+		if s.hasAdminToken(r) {
+			h(w, r)
+			return
 		}
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
+}
+
+// adminOrToken admits ADMIN_TOKEN or a logged-in admin. The token path is
+// what makes a fresh deployment bootstrappable — it has to work when no
+// admin exists yet — and the session path is what lets an existing admin
+// provision from the browser instead of reaching for a shared secret in a
+// terminal.
+//
+// Deliberately s.session and not s.auth: this grants user provisioning
+// and admin appointment, which are credential management. ADR 0010 keeps
+// those out of an API Key's reach, and that matters more here than
+// elsewhere — a leaked key that could appoint an admin would be a
+// privilege escalation path, not just an over-broad read.
+func (s *server) adminOrToken(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.hasAdminToken(r) {
+			h(w, r)
+			return
+		}
+		s.session(func(w http.ResponseWriter, r *http.Request, u store.User) {
+			if !u.Admin {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			h(w, r)
+		})(w, r)
 	}
 }
 
@@ -1137,6 +1198,27 @@ func (s *server) handlePasswordReset(w http.ResponseWriter, r *http.Request) {
 		"id":       id,
 		"password": password,
 	})
+}
+
+// handleSetAdmin appoints an admin. This is the break-glass route and the
+// only one still guarded by ADMIN_TOKEN: every other /admin endpoint
+// requires a logged-in admin, and something has to be able to create the
+// first one. It is also the recovery path if the last admin is locked
+// out, which is why it stays on the token rather than becoming an
+// admin-only action.
+func (s *server) handleSetAdmin(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("user")
+	u, err := s.store.GetUser(r.Context(), id)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	u.Admin = true
+	if err := s.store.UpsertUser(r.Context(), u); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, map[string]any{"id": id, "admin": true})
 }
 
 // tempPassword mints the operator-issued temporary password and its

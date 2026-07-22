@@ -538,3 +538,62 @@ footer.colophon {
   font-size: 0.72rem;
   color: var(--muted);
 }
+
+/* ── Execution trace: the admin's view of one generation ───────────── */
+.trace { list-style: none; margin: 0; padding: 0; }
+
+.trace-row {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 3px;
+  margin-bottom: 0.5rem;
+  background: var(--card);
+}
+/* Only warn/error earn the ON AIR red; notice is the working ink; a
+   routine entry stays quiet so the notable ones carry the page. */
+.trace-row.trace-notice { border-left-color: var(--accent); }
+.trace-row.trace-warn,
+.trace-row.trace-error { border-left-color: var(--live); }
+
+.trace-head {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+.trace-head time { font-family: var(--font-mono); color: var(--muted); }
+
+.trace-level {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.trace-notice .trace-level { color: var(--accent); }
+.trace-warn .trace-level,
+.trace-error .trace-level { color: var(--live); }
+
+.trace-event { font-size: 0.75rem; }
+.trace-message { margin: 0.35rem 0 0; }
+
+.trace-chips { display: flex; gap: 0.35rem; flex-wrap: wrap; margin: 0.45rem 0 0; }
+.chip {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.trace-worst {
+  padding: 0.6rem 0.85rem;
+  border-radius: 3px;
+  border: 1px solid var(--live);
+  color: var(--live);
+}
+.trace-worst.trace-notice { border-color: var(--accent); color: var(--accent); }

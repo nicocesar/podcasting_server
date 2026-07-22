@@ -69,6 +69,7 @@ func TestAdminEpisodeCostsReconcilesDollars(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts, st := newEpisodeCostServer(t, upstream.URL)
+	admin := createAdmin(t, ts, "root")
 
 	ctx := context.Background()
 	if err := st.UpsertUser(ctx, store.User{ID: "alice", Title: "Alice"}); err != nil {
@@ -92,7 +93,7 @@ func TestAdminEpisodeCostsReconcilesDollars(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := do(t, "GET", ts.URL+"/admin/costs/episodes?days=7", "bearer:"+adminToken, nil, "")
+	resp := do(t, "GET", ts.URL+"/admin/costs/episodes?days=7", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -135,6 +136,7 @@ func TestAdminEpisodeCostsPendingWhenBillNotPosted(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts, st := newEpisodeCostServer(t, upstream.URL)
+	admin := createAdmin(t, ts, "root")
 
 	ctx := context.Background()
 	if err := st.UpsertUser(ctx, store.User{ID: "alice", Title: "Alice"}); err != nil {
@@ -148,7 +150,7 @@ func TestAdminEpisodeCostsPendingWhenBillNotPosted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp := do(t, "GET", ts.URL+"/admin/costs/episodes", "bearer:"+adminToken, nil, "")
+	resp := do(t, "GET", ts.URL+"/admin/costs/episodes", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
 	var got struct {
 		Episodes []struct {

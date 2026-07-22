@@ -153,6 +153,24 @@ func createUser(t *testing.T, ts *httptest.Server, id string) account {
 	return a
 }
 
+// createAdmin provisions a user and appoints them admin through the
+// break-glass token route — the same two calls a real operator makes to
+// bootstrap a deployment. Reporting endpoints under /admin need the
+// resulting session; ADMIN_TOKEN alone no longer opens them.
+func createAdmin(t *testing.T, ts *httptest.Server, id string) account {
+	t.Helper()
+	a := createUser(t, ts, id)
+	resp := do(t, "POST", ts.URL+"/admin/users/"+id+"/admin", "bearer:"+adminToken, nil, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("appoint admin %s: %d %s", id, resp.StatusCode, b)
+	}
+	// The session predates the flag but carries only the user id, so it
+	// keeps working — the Admin check reads the record on each request.
+	return a
+}
+
 func publishEpisode(t *testing.T, ts *httptest.Server, a account, slug, metadata, audio string) *http.Response {
 	t.Helper()
 	var buf bytes.Buffer

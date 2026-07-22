@@ -41,6 +41,55 @@ func TestGenerationTemplateFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestGenerationTraceRoundTrips guards the same trap as Cast above:
+// Trace and TraceDropped are json:"-", so they survive only through the
+// generationRecord shadow. Forgetting a line there loses the whole
+// execution trace on every read, silently.
+func TestGenerationTraceRoundTrips(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := s.UpsertUser(ctx, store.User{ID: "alice", Title: "Alice"}); err != nil {
+		t.Fatal(err)
+	}
+	g := store.Generation{
+		UserID: "alice", ID: "gen1", Topic: "fusion",
+		Language: "en", Stage: store.GenDone,
+		CreatedAt: time.Now().UTC(),
+		Trace: []store.TraceEntry{{
+			At: time.Now().UTC().Truncate(time.Second), Level: store.LevelWarn,
+			Stage: store.GenVoicing, Event: "tts.fallback",
+			Message: "tts engine failed, trying next",
+			Detail:  `{"engine":"elevenlabs"}`,
+			URL:     "https://platform.claude.com/x",
+		}},
+		TraceDropped: 3,
+	}
+	if err := s.PutGeneration(ctx, g); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetGeneration(ctx, "alice", "gen1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Trace) != 1 {
+		t.Fatalf("trace = %+v, want 1 entry", got.Trace)
+	}
+	if !got.Trace[0].At.Equal(g.Trace[0].At) {
+		t.Errorf("At = %v, want %v", got.Trace[0].At, g.Trace[0].At)
+	}
+	want := g.Trace[0]
+	want.At = got.Trace[0].At // compared separately; time needs Equal
+	if got.Trace[0] != want {
+		t.Errorf("entry = %+v, want %+v", got.Trace[0], want)
+	}
+	if got.TraceDropped != 3 {
+		t.Errorf("TraceDropped = %d, want 3", got.TraceDropped)
+	}
+}
+
 func TestGenerationRoundTrip(t *testing.T) {
 	s, err := New(t.TempDir())
 	if err != nil {
