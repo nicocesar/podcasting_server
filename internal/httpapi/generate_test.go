@@ -39,11 +39,16 @@ func (instantAPI) SessionUsage(context.Context, string) (generation.Usage, error
 }
 func (instantAPI) DeleteSession(context.Context, string) error              { return nil }
 func (instantAPI) LastAgentMessage(context.Context, string) (string, error) { return "", nil }
-func (instantAPI) LastToolUse(_ context.Context, sessionID, _ string) (*generation.ToolUse, error) {
-	return &generation.ToolUse{
-		ID:    sessionID + "-use-0",
-		Input: []byte(`{"title":"Generated","summary":"A summary.","script":"Spoken words.","sources":[]}`),
-	}, nil
+func (instantAPI) LastToolUse(_ context.Context, sessionID, name string) (*generation.ToolUse, error) {
+	// The deliverable differs by program: prose for the spoken ones, a
+	// composition plan for the ambient one. A submission on the wrong
+	// shape is rejected and resubmitted forever, so this has to match the
+	// tool actually being polled for.
+	input := []byte(`{"title":"Generated","summary":"A summary.","script":"Spoken words.","sources":[]}`)
+	if name == "submit_music" {
+		input = []byte(`{"title":"Composed","summary":"A summary.","movements":[{"prompt":"warm rhodes, 60bpm","duration_ms":300000}]}`)
+	}
+	return &generation.ToolUse{ID: sessionID + "-use-0", Input: input}, nil
 }
 func (instantAPI) SendToolResult(context.Context, string, string, string, bool) error { return nil }
 func (instantAPI) CompleteJSON(context.Context, string, string, map[string]any, int) (string, generation.Usage, error) {
@@ -176,10 +181,137 @@ func TestAmbientSubmitWithoutVoice(t *testing.T) {
 		strings.NewReader(url.Values{
 			"topic": {"rain on a window"}, "length": {"5"}, "language": {"en"},
 		}.Encode()), "application/x-www-form-urlencoded")
-	body, _ := io.ReadAll(resp.Body)
+	var g store.Generation
+	if err := json.NewDecoder(resp.Body).Decode(&g); err != nil {
+		t.Fatal(err)
+	}
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status = %d, want 201\n%s", resp.StatusCode, body)
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+	if g.Voice != "" || g.Provider != "" {
+		t.Errorf("music generation carries voice %q / provider %q", g.Voice, g.Provider)
+	}
+	waitSettled(t, ts, alice, g.ID)
+}
+
+// TestProgressPageWordingPerTemplate: the progress page must describe the
+// program that was actually asked for. A composed piece has no script to
+// research and no voice to record, and nothing about it is "timeless".
+func TestProgressPageWordingPerTemplate(t *testing.T) {
+	cases := []struct {
+		name     string
+		tpl      string
+		form     url.Values
+		want     []string
+		unwanted []string
+	}{
+		{
+			name: "ambient",
+			tpl:  "ambient",
+			form: url.Values{"topic": {"rain on a window"}, "length": {"5"}, "language": {"en"}},
+			want: []string{"Composing your music", "Planning the composition", "Composing"},
+			// The spoken pipeline's vocabulary, and the freshness clause
+			// the ambient form never collects. ("script" alone would match
+			// the page's own <script> tag.)
+			unwanted: []string{"writing the script", "Researching", "Voicing", "timeless"},
+		},
+		{
+			name:     "news keeps its wording",
+			tpl:      "news",
+			form:     url.Values{"topic": {"fusion"}, "length": {"5"}, "freshness": {"7"}, "language": {"en"}, "voice": {"female"}},
+			want:     []string{"Generating an episode", "Researching &amp; writing the script", "Voicing", "last 7 days"},
+			unwanted: []string{"Composing"},
+		},
+		{
+			name:     "stories keeps its age range",
+			tpl:      "stories",
+			form:     url.Values{"topic": {"a dragon"}, "length": {"5"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}},
+			want:     []string{"Generating a story", "Writing the story", "for ages 5-7"},
+			unwanted: []string{"timeless", "Composing"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := newGeneratingServerWith(t, instantComposer{})
+			alice := createUser(t, ts, "alice")
+
+			resp := do(t, "POST", ts.URL+"/me/generate/"+tc.tpl, alice.publishCreds(),
+				strings.NewReader(tc.form.Encode()), "application/x-www-form-urlencoded")
+			var g store.Generation
+			if err := json.NewDecoder(resp.Body).Decode(&g); err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+
+			// Ask for HTML: the progress page, not the JSON poll. The
+			// page is a browser surface, so it authenticates by session
+			// cookie rather than the publish token.
+			req, _ := http.NewRequest("GET", ts.URL+"/me/generations/"+g.ID, nil)
+			req.AddCookie(&http.Cookie{Name: "session", Value: alice.Session})
+			req.Header.Set("Accept", "text/html")
+			page, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(page.Body)
+			page.Body.Close()
+
+			for _, want := range tc.want {
+				if !strings.Contains(string(body), want) {
+					t.Errorf("progress page missing %q", want)
+				}
+			}
+			for _, bad := range tc.unwanted {
+				if strings.Contains(string(body), bad) {
+					t.Errorf("progress page should not mention %q:\n%s", bad, body)
+				}
+			}
+			// The POST kicked a real run; let it land before the subtest's
+			// temp dir goes away underneath it.
+			waitSettled(t, ts, alice, g.ID)
+		})
+	}
+}
+
+// waitSettled polls a generation until it reaches a terminal stage, so a
+// test that starts one does not leave a goroutine writing into a temp
+// directory that is being removed.
+func waitSettled(t *testing.T, ts *httptest.Server, a account, id string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		resp := do(t, "GET", ts.URL+"/me/generations/"+id, a.publishCreds(), nil, "")
+		var v struct {
+			Stage string `json:"stage"`
+		}
+		json.NewDecoder(resp.Body).Decode(&v)
+		resp.Body.Close()
+		if v.Stage == "done" || v.Stage == "failed" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("generation never settled")
+}
+
+// TestLanguageLabelPerTemplate: the ambient form must not imply the
+// language does anything to the audio, because it does not — it never
+// reaches the Music API.
+func TestLanguageLabelPerTemplate(t *testing.T) {
+	ts := newGeneratingServerWith(t, instantComposer{})
+	alice := createUser(t, ts, "alice")
+
+	for tpl, want := range map[string]string{
+		"ambient": "Title &amp; summary language",
+		"news":    "Output language",
+	} {
+		resp := do(t, "GET", ts.URL+"/me/generate/"+tpl, alice.publishCreds(), nil, "")
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if !strings.Contains(string(body), want) {
+			t.Errorf("%s form: want label %q", tpl, want)
+		}
 	}
 }
 

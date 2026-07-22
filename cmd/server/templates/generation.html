@@ -2,17 +2,14 @@
 {{define "content"}}
 <article class="card" id="gen"
          data-stage="{{.Stage}}">
-  <h1>Generating an episode</h1>
-  <p class="muted">{{.TemplateName}} · “{{.Topic}}” · {{.LengthMinutes}} min ·
-  {{if eq .Template "stories"}}for {{if or (eq .AgeRange "all") (not .AgeRange)}}all ages{{else}}ages {{.AgeRange}}{{end}}{{else if .FreshnessDays}}last {{.FreshnessDays}} days{{else}}timeless{{end}} · {{.Language}}</p>
+  <h1>{{.ProgressTitle}}</h1>
+  <p class="muted">{{.TemplateName}} · “{{.Topic}}” · {{.LengthMinutes}} min{{with .Detail}} · {{.}}{{end}} · {{.Language}}</p>
 
   <section class="panel">
     <p id="stage-label"><strong>{{.StageLabel}}</strong></p>
     <ol class="stages">
-      <li data-stage="researching">Researching &amp; writing the script</li>
-      <li data-stage="voicing">Voicing</li>
-      <li data-stage="publishing">Publishing</li>
-      <li data-stage="done">In your feed</li>
+      {{range .Stages}}<li data-stage="{{.Key}}">{{.Label}}</li>
+      {{end}}
     </ol>
     <p id="gen-error" class="error" {{if not .Error}}hidden{{end}}>{{.Error}}</p>
     <form id="retry" method="post" action="/me/generations/{{.ID}}/retry"

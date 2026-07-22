@@ -41,7 +41,7 @@
     </select>
     {{end}}
 
-    <label for="language">Output language</label>
+    <label for="language">{{.Template.LanguageLabel}}</label>
     <select id="language" name="language">
       {{range .Languages}}<option value="{{.Language}}">{{.Label}}</option>{{end}}
     </select>

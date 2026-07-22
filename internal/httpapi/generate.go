@@ -349,18 +349,41 @@ type generationView struct {
 	StageLabel   string `json:"stage_label"`
 	StatsLabel   string `json:"stats_label,omitempty"` // human-readable meter summary
 	EpisodeURL   string `json:"episode_url,omitempty"`
+
+	// Progress-page wording, resolved per template so the page describes
+	// the program the listener actually asked for rather than the news
+	// briefing the pipeline was first written for.
+	ProgressTitle string      `json:"progress_title,omitempty"`
+	Stages        []stageStep `json:"stages,omitempty"`
+	Detail        string      `json:"detail,omitempty"` // the meta line's middle clause
+}
+
+// stageStep is one entry in the progress checklist. Key is the stage id
+// the page's script keys off; only Label varies by template.
+type stageStep struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
 }
 
 func (s *server) generationView(g store.Generation) generationView {
 	v := generationView{Generation: g}
-	if tpl, ok := generation.TemplateByID(g.Template); ok {
-		v.TemplateName = tpl.Name
+	tpl, _ := generation.TemplateByID(g.Template)
+	v.TemplateName = tpl.Name
+	v.ProgressTitle = tpl.ProgressTitle
+	v.Stages = []stageStep{
+		{store.GenResearching, tpl.PlanStage},
+		{store.GenVoicing, tpl.AudioStage},
+		{store.GenPublishing, "Publishing"},
+		{store.GenDone, "In your feed"},
 	}
+	v.Detail = generationDetail(g, tpl)
 	switch g.Stage {
 	case store.GenResearching:
-		v.StageLabel = "Researching & writing"
+		v.StageLabel = tpl.PlanStage
 	case store.GenVoicing:
-		v.StageLabel = "Voicing"
+		v.StageLabel = tpl.AudioStage
+		// For music the count is movements rather than text chunks, which
+		// is the honest unit either way: pieces of audio still to make.
 		if g.TotalChunks > 0 {
 			v.StageLabel += " (" + strconv.Itoa(g.VoicedChunks) + "/" + strconv.Itoa(g.TotalChunks) + ")"
 		}
@@ -378,6 +401,27 @@ func (s *server) generationView(g store.Generation) generationView {
 	}
 	v.StatsLabel = statsLabel(g)
 	return v
+}
+
+// generationDetail renders the meta line's middle clause: whatever
+// distinguishes this request beyond topic and length. Driven by the
+// template's form flags rather than its id, so a template that collects
+// neither an age range nor a freshness window — the ambient one — simply
+// has nothing to say here, instead of claiming to be "timeless".
+func generationDetail(g store.Generation, tpl generation.Template) string {
+	switch {
+	case tpl.HasAgeRange:
+		if g.AgeRange == "" || g.AgeRange == "all" {
+			return "for all ages"
+		}
+		return "for ages " + g.AgeRange
+	case tpl.HasFreshness:
+		if g.FreshnessDays > 0 {
+			return "last " + strconv.Itoa(g.FreshnessDays) + " days"
+		}
+		return "timeless"
+	}
+	return ""
 }
 
 // statsLabel renders the Generation's meters (raw counts; dollars live on

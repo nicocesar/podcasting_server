@@ -48,6 +48,16 @@ type Template struct {
 	TopicLabel       string
 	TopicPlaceholder string
 
+	// ProgressTitle heads the progress page, and PlanStage/AudioStage
+	// name the first two pipeline stages on it. The stages themselves are
+	// the same for every program, but what happens inside them is not:
+	// the spoken programs research and voice a script, the ambient one
+	// plans and renders a piece. A listener watching the page should read
+	// about the program they actually asked for.
+	ProgressTitle string
+	PlanStage     string
+	AudioStage    string
+
 	// TaskMessage renders the per-session task from the submitted
 	// request. It must be a pure function of (g, now) so a resumed
 	// Generation rebuilds the identical message (ADR 0009).
@@ -69,6 +79,9 @@ var templates = map[string]Template{
 		SubmitToolName: submitToolName,
 		HasFreshness:   true,
 		TopicLabel:     "Topic",
+		ProgressTitle:  "Generating an episode",
+		PlanStage:      "Researching & writing the script",
+		AudioStage:     "Voicing",
 		TopicPlaceholder: "e.g. developments in fusion energy — or a whole brief: " +
 			"angle, things to include, tone…",
 		TaskMessage: func(g store.Generation, now time.Time) string {
@@ -87,6 +100,9 @@ var templates = map[string]Template{
 		HasCast:           true,
 		HasSaveCharacters: true,
 		TopicLabel:        "Story idea",
+		ProgressTitle:     "Generating a story",
+		PlanStage:         "Writing the story",
+		AudioStage:        "Voicing",
 		TopicPlaceholder: "e.g. a dragon who is afraid of heights learns to trust her wings — " +
 			"or a whole brief: characters, setting, the lesson, tone…",
 		TaskMessage: storiesMessage,
@@ -107,8 +123,22 @@ var templates = map[string]Template{
 		TopicLabel: "Mood",
 		TopicPlaceholder: "e.g. rain on a window, late evening — " +
 			"or a whole brief: instruments, tempo, how it should end…",
-		TaskMessage: ambientMessage,
+		ProgressTitle: "Composing your music",
+		PlanStage:     "Planning the composition",
+		AudioStage:    "Composing",
+		TaskMessage:   ambientMessage,
 	},
+}
+
+// LanguageLabel brands the language select. It is deliberately narrower
+// for music: the language shapes the title and summary a person reads in
+// their feed, and nothing whatsoever about the audio — the composer is
+// never told it, and the Music API is never sent it.
+func (t Template) LanguageLabel() string {
+	if t.IsMusic {
+		return "Title & summary language"
+	}
+	return "Output language"
 }
 
 // TemplateByID resolves id, treating "" as news: every Generation that
