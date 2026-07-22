@@ -42,8 +42,9 @@ type programCard struct {
 // handleGenerateChooser renders "what's on the program?": one card per
 // template, each linking to its own form page.
 func (s *server) handleGenerateChooser(w http.ResponseWriter, r *http.Request, _ store.User) {
-	cards := make([]programCard, 0, len(generation.TemplateIDs))
-	for _, id := range generation.TemplateIDs {
+	ids := s.generator.AvailableTemplates()
+	cards := make([]programCard, 0, len(ids))
+	for _, id := range ids {
 		tpl, _ := generation.TemplateByID(id)
 		cards = append(cards, programCard{ID: tpl.ID, Name: tpl.Name, Tagline: tpl.Tagline})
 	}
@@ -74,10 +75,14 @@ type generatePage struct {
 // pre-template URL shape). Unknown ids are a 404.
 func (s *server) pageTemplate(w http.ResponseWriter, r *http.Request) (generation.Template, bool) {
 	tpl, ok := generation.TemplateByID(r.PathValue("template"))
-	if !ok {
+	if !ok || !slices.Contains(s.generator.AvailableTemplates(), tpl.ID) {
+		// Hiding the chooser card is not enough: a template this instance
+		// cannot produce must 404 on its own URL too, or a bookmark walks
+		// straight past the filter.
 		http.Error(w, "no such program", http.StatusNotFound)
+		return tpl, false
 	}
-	return tpl, ok
+	return tpl, true
 }
 
 // castOptions lists the reusable casts for the stories form: story
@@ -186,15 +191,21 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		retry("Pick a language from the list.")
 		return
 	}
-	voice := r.FormValue("voice")
-	if _, ok := tts.VoiceFor(language, voice); voice == "" || !ok {
-		retry("Pick a voice from the list.")
-		return
-	}
-	provider := r.FormValue("provider")
-	if provider != "" && !slices.Contains(s.generator.EngineNames(), provider) {
-		retry("Pick a voice provider from the list.")
-		return
+	// A composed piece has no narrator, so the form does not offer these
+	// and they stay empty on the Generation — nothing downstream resolves
+	// a Voice for it.
+	voice, provider := "", ""
+	if !tpl.IsMusic {
+		voice = r.FormValue("voice")
+		if _, ok := tts.VoiceFor(language, voice); voice == "" || !ok {
+			retry("Pick a voice from the list.")
+			return
+		}
+		provider = r.FormValue("provider")
+		if provider != "" && !slices.Contains(s.generator.EngineNames(), provider) {
+			retry("Pick a voice provider from the list.")
+			return
+		}
 	}
 	// castDetail renders the trace detail for a reused cast: the source
 	// episode ref, which the frozen Cast on the Generation itself does not
@@ -392,6 +403,22 @@ func statsLabel(g store.Generation) string {
 		}
 		if g.TTSAttempts > 1 {
 			s += fmt.Sprintf(" (%d engine attempts)", g.TTSAttempts)
+		}
+		parts = append(parts, s)
+	}
+	if g.MusicCalls > 0 {
+		// Minutes, not milliseconds: this line is read by a person, and
+		// the duration is the thing that costs.
+		s := fmt.Sprintf("%.0f min composed", float64(g.MusicMillis)/60000)
+		if g.MusicModel != "" {
+			s += " via " + g.MusicModel
+		}
+		if g.MusicCalls > 0 {
+			s += fmt.Sprintf(" (%d call", g.MusicCalls)
+			if g.MusicCalls > 1 {
+				s += "s"
+			}
+			s += ")"
 		}
 		parts = append(parts, s)
 	}

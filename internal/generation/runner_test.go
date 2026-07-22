@@ -48,6 +48,10 @@ type fakeAPI struct {
 	agents        []string // names EnsureAgent was called with, in order
 	completions   []string // canned CompleteJSON outputs, consumed in order
 	completeErr   error
+	// toolName is the tool the canned submissions arrive on, so the same
+	// fake serves both the spoken programs (submit_episode) and the
+	// ambient one (submit_music).
+	toolName string
 }
 
 func newFakeAPI() *fakeAPI {
@@ -55,6 +59,7 @@ func newFakeAPI() *fakeAPI {
 		sent:        map[string][]string{},
 		results:     map[string][]toolResult{},
 		submissions: []string{scriptInput},
+		toolName:    submitToolName,
 	}
 }
 
@@ -102,7 +107,7 @@ func (f *fakeAPI) LastAgentMessage(_ context.Context, sessionID string) (string,
 func (f *fakeAPI) LastToolUse(_ context.Context, sessionID, name string) (*ToolUse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if name != submitToolName || len(f.submissions) == 0 || len(f.sent[sessionID]) == 0 {
+	if name != f.toolName || len(f.submissions) == 0 || len(f.sent[sessionID]) == 0 {
 		return nil, nil
 	}
 	// Each rejection makes the agent resubmit: the current call is the

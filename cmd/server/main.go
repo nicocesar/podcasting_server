@@ -15,6 +15,7 @@ import (
 
 	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/httpapi"
+	"github.com/nicocesar/podcasting_server/internal/music"
 	"github.com/nicocesar/podcasting_server/internal/store"
 	"github.com/nicocesar/podcasting_server/internal/store/fsstore"
 	"github.com/nicocesar/podcasting_server/internal/store/gcpstore"
@@ -138,10 +139,22 @@ func run(log *slog.Logger) error {
 			engines = append(engines, eleven)
 			log.Info("generation: ElevenLabs TTS enabled (opt-in per generation)")
 		}
+		// The same key also buys music composition, on a different
+		// endpoint. Without it the ambient template is not merely
+		// degraded but impossible, so it drops off the chooser entirely
+		// rather than failing after an agent session has been spent.
+		var composer generation.Composer
+		if m, err := music.New(os.Getenv("ELEVENLABS_API_KEY")); err != nil {
+			log.Info("generation: music composition unavailable, ambient program hidden", "err", err)
+		} else {
+			composer = m
+			log.Info("generation: music composition enabled", "model", m.Model())
+		}
 		generator = generation.NewRunner(generation.Config{
 			Store:   st,
 			API:     generation.NewClient(key),
 			Engines: engines,
+			Music:   composer,
 			Model:   env("GENERATION_MODEL", "claude-sonnet-5"),
 			Logger:  log,
 			// Sessions are kept after publishing (inspectable in the

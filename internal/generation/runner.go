@@ -35,12 +35,19 @@ type Config struct {
 	// Engines are tried in order per episode (edge-tts first, Google
 	// fallback); see internal/tts.
 	Engines []tts.Engine
+	// Music composes the audio for templates whose IsMusic is set. Nil
+	// when ELEVENLABS_API_KEY is unset, which also takes those templates
+	// off the chooser (Templates) rather than letting them fail late.
+	Music Composer
 	// Model powers the agent, e.g. "claude-sonnet-5".
 	Model  string
 	Logger *slog.Logger
 	// PollInterval overrides how often the agent session is polled
 	// (default 5s; tests shorten it).
 	PollInterval time.Duration
+	// ComposeBackoff is the base delay between retries of a failed
+	// movement, scaled by attempt number (default 5s; tests shorten it).
+	ComposeBackoff time.Duration
 	// DeleteSessions removes each agent session once its Episode is
 	// published. Off by default: kept sessions stay inspectable in the
 	// Anthropic Console, which is how the prompts get improved.
@@ -52,14 +59,24 @@ type Config struct {
 // store.Generation record, so a restarted instance resumes from there
 // (ResumeAll); only in-flight audio bytes are lost, and those are cheap
 // to redo.
+// Composer renders one movement of instrumental audio. Narrow on
+// purpose: the runner needs exactly this much of internal/music, and a
+// test needs exactly this much to fake.
+type Composer interface {
+	Compose(ctx context.Context, prompt string, durationMS int) ([]byte, error)
+	Model() string
+}
+
 type Runner struct {
 	store   store.Store
 	api     API
 	engines []tts.Engine
+	music   Composer
 	model   string
 	log     *slog.Logger
 
 	poll           time.Duration
+	composeBackoff time.Duration
 	deleteSessions bool
 
 	mu       sync.Mutex
@@ -77,13 +94,19 @@ func NewRunner(cfg Config) *Runner {
 	if poll <= 0 {
 		poll = pollInterval
 	}
+	backoff := cfg.ComposeBackoff
+	if backoff <= 0 {
+		backoff = composeBackoff
+	}
 	return &Runner{
 		store:          cfg.Store,
 		api:            cfg.API,
 		engines:        cfg.Engines,
+		music:          cfg.Music,
 		model:          cfg.Model,
 		log:            log,
 		poll:           poll,
+		composeBackoff: backoff,
 		deleteSessions: cfg.DeleteSessions,
 		running:        make(map[string]bool),
 		agentIDs:       make(map[string]string),
@@ -108,7 +131,7 @@ func (r *Runner) EngineNames() []string {
 // previous instance left unfinished. Errors are logged, not fatal:
 // provisioning is retried on the first Kick.
 func (r *Runner) Bootstrap(ctx context.Context) {
-	for _, id := range TemplateIDs {
+	for _, id := range r.AvailableTemplates() {
 		tpl, _ := TemplateByID(id)
 		if err := r.provision(ctx, tpl); err != nil {
 			r.log.Warn("generation: bootstrap provisioning failed (will retry on first use)",
@@ -126,6 +149,22 @@ func (r *Runner) Bootstrap(ctx context.Context) {
 		r.trace(&g, store.LevelNotice, "run.resumed", "resuming after restart", "stage", g.Stage)
 		r.Kick(g)
 	}
+}
+
+// AvailableTemplates lists the templates this instance can actually
+// produce, in chooser order. A music template without a configured
+// Composer is dropped rather than offered: unlike TTS there is no
+// fallback chain behind it, so it would take the request, spend an agent
+// session, and only then discover it cannot make a sound.
+func (r *Runner) AvailableTemplates() []string {
+	ids := make([]string, 0, len(TemplateIDs))
+	for _, id := range TemplateIDs {
+		if tpl, ok := TemplateByID(id); ok && tpl.IsMusic && r.music == nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // provision ensures the template's pre-baked agent + the shared
@@ -212,7 +251,15 @@ func (r *Runner) run(g store.Generation) {
 			// One resumable unit: audio lives only in memory, so a
 			// crash mid-publish restarts from voicing. The Script
 			// checkpoint makes that cheap.
-			g, err = r.voiceAndPublish(ctx, g)
+			//
+			// Cheap for the spoken programs, at least. A composed piece
+			// pays the vendor per movement, which is why composeMovement
+			// retries in place rather than letting a blip get this far.
+			if tpl, ok := TemplateByID(g.Template); ok && tpl.IsMusic {
+				g, err = r.composeAndPublish(ctx, g)
+			} else {
+				g, err = r.voiceAndPublish(ctx, g)
+			}
 		case store.GenDone:
 			r.log.Info("generation: done",
 				"user", g.UserID, "id", g.ID, "episode", g.EpisodeSlug,
@@ -315,9 +362,29 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 		case "terminated":
 			return g, fmt.Errorf("agent session terminated")
 		case "idle":
-			use, err := r.api.LastToolUse(ctx, g.SessionID, submitToolName)
+			use, err := r.api.LastToolUse(ctx, g.SessionID, tpl.SubmitToolName)
 			if err != nil {
 				return g, fmt.Errorf("fetch agent output: %w", err)
+			}
+			if tpl.IsMusic {
+				// The composer has no legacy contract to fall back on and
+				// no language round-trip: it either submitted a plan or it
+				// has not submitted yet.
+				if use != nil {
+					var done bool
+					g, done, err = r.judgeComposition(ctx, g, use)
+					if done || err != nil {
+						return g, err
+					}
+					break // rejected: keep polling for the resubmission
+				}
+				if !sent {
+					if err := r.api.SendMessage(ctx, g.SessionID, tpl.TaskMessage(g, time.Now())); err != nil {
+						return g, fmt.Errorf("send task: %w", err)
+					}
+					sent = true
+				}
+				break
 			}
 			if use != nil {
 				// Assigned, not shadowed: judgeSubmission records why it
@@ -425,6 +492,51 @@ func (r *Runner) judgeSubmission(ctx context.Context, g store.Generation, use *T
 	return g, true, err
 }
 
+// judgeComposition answers one submit_music call, mirroring
+// judgeSubmission: accept and checkpoint, or reject with what to fix and
+// let the caller keep polling. An already-answered call is re-judged
+// without re-answering — the crash-recovery and awaiting-resubmission
+// paths in one.
+func (r *Runner) judgeComposition(ctx context.Context, g store.Generation, use *ToolUse) (store.Generation, bool, error) {
+	comp, perr := ParseMusicSubmission(use.Input, g.LengthMinutes)
+	if perr != nil {
+		if !use.Answered {
+			r.trace(&g, store.LevelNotice, "composition.rejected",
+				"submission rejected, asking for a resubmission", "reason", perr)
+			reject := "Rejected: " + perr.Error() + ". Fix that and call submit_music again with the full plan."
+			if err := r.api.SendToolResult(ctx, g.SessionID, use.ID, reject, true); err != nil {
+				return g, false, fmt.Errorf("reject submission: %w", err)
+			}
+		}
+		return g, false, nil
+	}
+	if !use.Answered {
+		if err := r.api.SendToolResult(ctx, g.SessionID, use.ID, "Composition received and accepted. You are done.", false); err != nil {
+			return g, false, fmt.Errorf("acknowledge submission: %w", err)
+		}
+	}
+	g, err := r.acceptComposition(ctx, g, comp)
+	return g, true, err
+}
+
+// acceptComposition checkpoints the Composition into the same Script
+// field the spoken programs use. Sharing the field is deliberate: Retry
+// keys off Script being non-empty to decide whether a failed Generation
+// resumes at voicing or goes back to the agent, and a composed piece
+// wants exactly that behavior — the plan is the expensive part.
+func (r *Runner) acceptComposition(ctx context.Context, g store.Generation, comp Composition) (store.Generation, error) {
+	raw, err := json.Marshal(comp)
+	if err != nil {
+		return g, err
+	}
+	r.recordSessionUsage(ctx, &g)
+	r.trace(&g, store.LevelInfo, "composition.accepted", "composition accepted",
+		"title", comp.Title, "movements", len(comp.Movements), "millis", comp.TotalMS())
+	g.Script = string(raw)
+	g.Stage = store.GenVoicing
+	return g, r.store.PutGeneration(ctx, g)
+}
+
 // acceptScript checkpoints the Script: the durable midpoint after which
 // research is never repeated (ADR 0009).
 func (r *Runner) acceptScript(ctx context.Context, g store.Generation, script Script) (store.Generation, error) {
@@ -506,33 +618,11 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		}
 	}
 
-	g.Stage = store.GenPublishing
-	if err := r.store.PutGeneration(ctx, g); err != nil {
-		return g, err
-	}
-	slug, err := r.freeSlug(ctx, &g)
+	g, ep, err := r.publishAudio(ctx, g, script.Title, script.Description(), mp3)
 	if err != nil {
 		return g, err
 	}
-	tpl, _ := TemplateByID(g.Template)
-	ep := store.Episode{
-		OwnerID:     g.UserID,
-		Slug:        slug,
-		Title:       script.Title,
-		Description: script.Description(),
-		PublishedAt: time.Now().UTC(),
-		AudioType:   "audio/mpeg",
-		Template:    tpl.ID,
-	}
-	// Same courtesy the Publishing Contract extends (ADR 0004): estimate
-	// the duration from the MP3 frames; failure is non-fatal.
-	if d, err := audio.MP3Duration(bytes.NewReader(mp3)); err == nil {
-		ep.DurationSec = int(d.Round(time.Second).Seconds())
-	}
-	ep, err = r.store.UpsertEpisode(ctx, ep, bytes.NewReader(mp3))
-	if err != nil {
-		return g, fmt.Errorf("publish: %w", err)
-	}
+	slug := ep.Slug
 
 	// The cast extraction the form asked for. Non-fatal by design: the
 	// Episode is already published, and the backfill button covers a
@@ -559,16 +649,148 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		}
 	}
 
-	// The Script is checkpointed server-side, so the session can go once
-	// the Episode is safe — but only when configured to: kept sessions
-	// remain inspectable in the Anthropic Console for prompt work.
+	return r.finish(ctx, g, slug)
+}
+
+// composeAttempts bounds the retries around a single movement. Each
+// movement is paid for on success, so a transient failure on the last one
+// must not throw away the movements already rendered — that is the whole
+// reason this loop retries in place rather than failing the run.
+const composeAttempts = 3
+
+// composeBackoff is the base delay between those attempts. Generous: the
+// failures worth retrying are upstream capacity blips, and the run has
+// forty-five minutes to play with.
+const composeBackoff = 5 * time.Second
+
+// composeAndPublish is voiceAndPublish's counterpart for the templates
+// whose audio is composed. Movements are rendered in order and appended
+// as raw MP3 frames — the same concatenation the TTS path relies on,
+// valid because the music client pins the identical mp3_44100_128 format.
+func (r *Runner) composeAndPublish(ctx context.Context, g store.Generation) (store.Generation, error) {
+	if r.music == nil {
+		return g, fmt.Errorf("no music client configured")
+	}
+	var comp Composition
+	if err := json.Unmarshal([]byte(g.Script), &comp); err != nil {
+		return g, fmt.Errorf("stored composition is corrupt: %w", err)
+	}
+	if len(comp.Movements) == 0 {
+		return g, fmt.Errorf("stored composition has no movements")
+	}
+
+	g.Stage = store.GenVoicing
+	g.VoicedChunks, g.TotalChunks = 0, len(comp.Movements)
+	g.MusicModel = r.music.Model()
+	if err := r.store.PutGeneration(ctx, g); err != nil {
+		return g, err
+	}
+
+	var mp3 []byte
+	for i, m := range comp.Movements {
+		piece, calls, err := r.composeMovement(ctx, &g, i, m)
+		// Calls are metered even when the movement ultimately failed:
+		// rejected attempts still cost, and run() persists g with the
+		// failure record.
+		g.MusicCalls += calls
+		if err != nil {
+			return g, fmt.Errorf("composing movement %d/%d: %w", i+1, len(comp.Movements), err)
+		}
+		g.MusicMillis += m.DurationMS
+		mp3 = append(mp3, piece...)
+
+		g.VoicedChunks = i + 1
+		if err := r.store.PutGeneration(ctx, g); err != nil {
+			r.trace(&g, store.LevelWarn, "progress.checkpoint_failed", "progress checkpoint failed", "err", err)
+		}
+	}
+	r.trace(&g, store.LevelInfo, "music.composed", "piece composed",
+		"model", g.MusicModel, "movements", len(comp.Movements),
+		"millis", g.MusicMillis, "calls", g.MusicCalls)
+
+	// No credit outro: tts.Credit names the engine and voice that read the
+	// episode, and nothing here was read. A spoken sign-off would also be
+	// the one voice in a track that is meant to have none.
+	g, ep, err := r.publishAudio(ctx, g, comp.Title, comp.Description(), mp3)
+	if err != nil {
+		return g, err
+	}
+	return r.finish(ctx, g, ep.Slug)
+}
+
+// composeMovement renders one movement, retrying transient failures in
+// place. It reports how many calls it made so the meter counts every
+// request, not just the one that worked.
+func (r *Runner) composeMovement(ctx context.Context, g *store.Generation, i int, m Movement) ([]byte, int, error) {
+	var lastErr error
+	for attempt := 1; attempt <= composeAttempts; attempt++ {
+		piece, err := r.music.Compose(ctx, m.Prompt, m.DurationMS)
+		if err == nil {
+			return piece, attempt, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			return nil, attempt, lastErr
+		}
+		r.trace(g, store.LevelWarn, "music.retry", "movement failed, retrying",
+			"movement", i+1, "attempt", attempt, "of", composeAttempts, "err", err)
+		if attempt < composeAttempts {
+			select {
+			case <-ctx.Done():
+				return nil, attempt, lastErr
+			case <-time.After(time.Duration(attempt) * r.composeBackoff):
+			}
+		}
+	}
+	return nil, composeAttempts, lastErr
+}
+
+// publishAudio is the publish half both pipelines share: whatever
+// produced the bytes — a voiced script or a composed piece — from here on
+// an episode is an episode. Returns the stored Episode, whose Slug is the
+// one that survived collision resolution.
+func (r *Runner) publishAudio(ctx context.Context, g store.Generation, title, description string, mp3 []byte) (store.Generation, store.Episode, error) {
+	g.Stage = store.GenPublishing
+	if err := r.store.PutGeneration(ctx, g); err != nil {
+		return g, store.Episode{}, err
+	}
+	slug, err := r.freeSlug(ctx, &g)
+	if err != nil {
+		return g, store.Episode{}, err
+	}
+	tpl, _ := TemplateByID(g.Template)
+	ep := store.Episode{
+		OwnerID:     g.UserID,
+		Slug:        slug,
+		Title:       title,
+		Description: description,
+		PublishedAt: time.Now().UTC(),
+		AudioType:   "audio/mpeg",
+		Template:    tpl.ID,
+	}
+	// Same courtesy the Publishing Contract extends (ADR 0004): estimate
+	// the duration from the MP3 frames; failure is non-fatal.
+	if d, err := audio.MP3Duration(bytes.NewReader(mp3)); err == nil {
+		ep.DurationSec = int(d.Round(time.Second).Seconds())
+	}
+	ep, err = r.store.UpsertEpisode(ctx, ep, bytes.NewReader(mp3))
+	if err != nil {
+		return g, store.Episode{}, fmt.Errorf("publish: %w", err)
+	}
+	return g, ep, nil
+}
+
+// finish closes out a successful run: the agent's output is checkpointed
+// server-side, so the session can go once the Episode is safe — but only
+// when configured to, since kept sessions remain inspectable in the
+// Anthropic Console for prompt work.
+func (r *Runner) finish(ctx context.Context, g store.Generation, slug string) (store.Generation, error) {
 	if r.deleteSessions && g.SessionID != "" {
 		if err := r.api.DeleteSession(ctx, g.SessionID); err != nil {
 			r.trace(&g, store.LevelWarn, "session.delete_failed", "could not delete session",
 				"session", g.SessionID, "err", err)
 		}
 	}
-
 	g.EpisodeSlug = slug
 	g.Stage = store.GenDone
 	g.Active = false

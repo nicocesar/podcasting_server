@@ -46,6 +46,7 @@
       {{range .Languages}}<option value="{{.Language}}">{{.Label}}</option>{{end}}
     </select>
 
+    {{if not .Template.IsMusic}}
     <label for="voice">Voice</label>
     <select id="voice" name="voice">
       <option value="female">Female</option>
@@ -57,6 +58,7 @@
       <option value="">Auto</option>
       {{range .Providers}}<option value="{{.}}">{{.}}</option>{{end}}
     </select>
+    {{end}}
 
     {{if .Template.HasSaveCharacters}}
     <label class="check"><input type="checkbox" name="save_characters" value="1" checked>

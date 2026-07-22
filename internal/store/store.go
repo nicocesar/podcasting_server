@@ -269,6 +269,16 @@ type Generation struct {
 	TTSCharacters    int    `json:"tts_characters,omitempty" datastore:"tts_characters,noindex"` // runes synthesized by the winning engine
 	TTSAttempts      int    `json:"tts_attempts,omitempty" datastore:"tts_attempts,noindex"`     // engines tried; >1 per voicing means a fallback fired
 
+	// Music meters, for the templates whose audio is composed rather than
+	// voiced. Separate fields rather than reusing the TTS ones: music is
+	// billed by duration and has no characters, so folding it into
+	// TTSCharacters would make that meter mean two different things
+	// depending on the template. Same rule as above — raw counts, no
+	// prices, and this is a different vendor's bill from Anthropic's.
+	MusicMillis int    `json:"music_millis,omitempty" datastore:"music_millis,noindex"` // audio composed, summed over movements
+	MusicCalls  int    `json:"music_calls,omitempty" datastore:"music_calls,noindex"`   // compose requests including retried ones
+	MusicModel  string `json:"music_model,omitempty" datastore:"music_model,noindex"`
+
 	// Trace is the execution record: what happened during this run, for
 	// admin eyes. json:"-" because it carries raw upstream error strings,
 	// session ids and console links — it must never ride along on the

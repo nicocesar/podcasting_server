@@ -58,8 +58,27 @@ func (instantEngine) Synthesize(context.Context, string, tts.Voice) ([]byte, err
 	return []byte("MP3!"), nil
 }
 
-// newGeneratingServer is newTestServer with the Generation feature on.
+// instantComposer is a music client that renders instantly, for the
+// server variants that offer the ambient program.
+type instantComposer struct{}
+
+func (instantComposer) Model() string { return "music-test" }
+func (instantComposer) Compose(context.Context, string, int) ([]byte, error) {
+	return []byte("MUSIC!"), nil
+}
+
+// newGeneratingServer is newTestServer with the Generation feature on,
+// and no music client — the default shape for an instance without an
+// ElevenLabs key.
 func newGeneratingServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return newGeneratingServerWith(t, nil)
+}
+
+// newGeneratingServerWith builds the generating server with an optional
+// music client, so tests can cover the ambient program being offered and
+// being absent.
+func newGeneratingServerWith(t *testing.T, composer generation.Composer) *httptest.Server {
 	t.Helper()
 	st, err := fsstore.New(t.TempDir())
 	if err != nil {
@@ -75,6 +94,7 @@ func newGeneratingServer(t *testing.T) *httptest.Server {
 			Store:        st,
 			API:          instantAPI{},
 			Engines:      []tts.Engine{instantEngine{}},
+			Music:        composer,
 			Model:        "claude-test",
 			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 			PollInterval: 5 * time.Millisecond,
@@ -86,6 +106,81 @@ func newGeneratingServer(t *testing.T) *httptest.Server {
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
 	return ts
+}
+
+// TestAmbientHiddenWithoutMusicClient: with no music client the ambient
+// program is absent from the chooser and its URL 404s, rather than taking
+// a request it cannot fulfil.
+func TestAmbientHiddenWithoutMusicClient(t *testing.T) {
+	ts := newGeneratingServer(t)
+	alice := createUser(t, ts, "alice")
+
+	resp := do(t, "GET", ts.URL+"/me/generate", alice.publishCreds(), nil, "")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if strings.Contains(string(body), "/me/generate/ambient") {
+		t.Errorf("ambient offered without a music client:\n%s", body)
+	}
+
+	// Hiding the card is not enough: the URL itself must not answer.
+	resp = do(t, "GET", ts.URL+"/me/generate/ambient", alice.publishCreds(), nil, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /me/generate/ambient = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestAmbientFormOmitsVoiceFields: a composed piece has no narrator, so
+// the voice and provider selects must not appear — a form that posts
+// them would be asking for something the pipeline ignores.
+func TestAmbientFormOmitsVoiceFields(t *testing.T) {
+	ts := newGeneratingServerWith(t, instantComposer{})
+	alice := createUser(t, ts, "alice")
+
+	resp := do(t, "GET", ts.URL+"/me/generate", alice.publishCreds(), nil, "")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(body), "/me/generate/ambient") {
+		t.Fatalf("ambient missing from the chooser:\n%s", body)
+	}
+
+	resp = do(t, "GET", ts.URL+"/me/generate/ambient", alice.publishCreds(), nil, "")
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("ambient form: %d\n%s", resp.StatusCode, body)
+	}
+	if strings.Contains(string(body), "Voice provider") || strings.Contains(string(body), `name="voice"`) {
+		t.Errorf("ambient form still offers voice fields:\n%s", body)
+	}
+	// The shared fields it does keep: the mood textarea and the length
+	// and language selects.
+	for _, want := range []string{"Mood", `name="length"`, `name="language"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("ambient form missing %q", want)
+		}
+	}
+	// Freshness and the cast picker belong to the other programs.
+	if strings.Contains(string(body), "Freshness") {
+		t.Error("ambient form should not offer a freshness window")
+	}
+}
+
+// TestAmbientSubmitWithoutVoice: the form posts no voice or provider, and
+// the submission must still be accepted.
+func TestAmbientSubmitWithoutVoice(t *testing.T) {
+	ts := newGeneratingServerWith(t, instantComposer{})
+	alice := createUser(t, ts, "alice")
+
+	resp := do(t, "POST", ts.URL+"/me/generate/ambient", alice.publishCreds(),
+		strings.NewReader(url.Values{
+			"topic": {"rain on a window"}, "length": {"5"}, "language": {"en"},
+		}.Encode()), "application/x-www-form-urlencoded")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201\n%s", resp.StatusCode, body)
+	}
 }
 
 func postGenerate(t *testing.T, ts *httptest.Server, a account, form url.Values) *http.Response {
@@ -371,11 +466,11 @@ func TestGenerateStoriesValidation(t *testing.T) {
 	ts := newGeneratingServer(t)
 	alice := createUser(t, ts, "alice")
 	bad := []url.Values{
-		{"topic": {"x"}, "length": {"2"}, "language": {"en"}, "voice": {"female"}},                                    // no age
-		{"topic": {"x"}, "length": {"2"}, "age": {"0-99"}, "language": {"en"}, "voice": {"female"}},                   // bad age
-		{"topic": {"x"}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}, "cast": {"x"}},     // malformed cast
-		{"topic": {"x"}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}, "cast": {"a/b"}},   // cast not in feed
-		{"topic": {""}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}},                     // no idea
+		{"topic": {"x"}, "length": {"2"}, "language": {"en"}, "voice": {"female"}},                                  // no age
+		{"topic": {"x"}, "length": {"2"}, "age": {"0-99"}, "language": {"en"}, "voice": {"female"}},                 // bad age
+		{"topic": {"x"}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}, "cast": {"x"}},   // malformed cast
+		{"topic": {"x"}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}, "cast": {"a/b"}}, // cast not in feed
+		{"topic": {""}, "length": {"2"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}},                   // no idea
 	}
 	for i, form := range bad {
 		resp := postGenerateStories(t, ts, alice, form)

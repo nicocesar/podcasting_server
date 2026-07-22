@@ -9,9 +9,12 @@ package generation
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/nicocesar/podcasting_server/internal/music"
 )
 
 // Lengths are the Target Length options (minutes), as offered on the
@@ -114,6 +117,115 @@ var submitTool = map[string]any{
 		},
 		"required": []string{"title", "summary", "language", "script", "sources"},
 	},
+}
+
+// submitMusicToolName is the ambient template's counterpart to
+// submit_episode: the composer hands back a plan, not prose.
+const submitMusicToolName = "submit_music"
+
+// Composition is the composer agent's output, and the ambient template's
+// durable midpoint — the same role Script plays for the spoken programs.
+// It is stored as JSON in Generation.Script so a failure during composing
+// resumes without re-running the agent.
+type Composition struct {
+	Title     string     `json:"title"`
+	Summary   string     `json:"summary"`
+	Movements []Movement `json:"movements"`
+}
+
+// Movement is one /v1/music call: the vendor caps a single generation at
+// ten minutes, so a longer track is a sequence of these.
+type Movement struct {
+	Prompt     string `json:"prompt"`
+	DurationMS int    `json:"duration_ms"`
+}
+
+// TotalMS is the composition's rendered length.
+func (c Composition) TotalMS() int {
+	total := 0
+	for _, m := range c.Movements {
+		total += m.DurationMS
+	}
+	return total
+}
+
+// Description renders the Episode description. Music has no sources, so
+// this is just the summary — but the method keeps Composition and Script
+// interchangeable at the publish step.
+func (c Composition) Description() string { return strings.TrimSpace(c.Summary) }
+
+// submitMusicTool is the composer's platform definition, mirroring
+// Composition. Pushed by EnsureAgent like every other agent surface; a
+// change here becomes a new agent version (ADR 0009).
+var submitMusicTool = map[string]any{
+	"type":        "custom",
+	"name":        submitMusicToolName,
+	"description": "Submit the finished composition. Call this exactly once when the piece is planned. Never paste the plan into a chat message.",
+	"input_schema": map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"title":   map[string]any{"type": "string", "description": "Track title, in the requested language, no date prefix."},
+			"summary": map[string]any{"type": "string", "description": "2-4 sentences describing the piece, in the requested language."},
+			"movements": map[string]any{
+				"type":        "array",
+				"description": "The piece in order, as one or more movements. Each is rendered separately and played back-to-back.",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"prompt": map[string]any{
+							"type":        "string",
+							"description": "What this movement sounds like: instruments, tempo, texture, mood. Written for a music generation model, not for a listener.",
+						},
+						"duration_ms": map[string]any{
+							"type":        "integer",
+							"description": fmt.Sprintf("Length of this movement in milliseconds, between %d and %d.", music.MinDurationMS, music.MaxDurationMS),
+						},
+					},
+					"required": []string{"prompt", "duration_ms"},
+				},
+			},
+		},
+		"required": []string{"title", "summary", "movements"},
+	},
+}
+
+// durationTolerance is how far the movement total may drift from the
+// requested length before the submission is rejected. The agent divides
+// a target into movements by hand, so exact arithmetic is not worth a
+// rejection round-trip; being minutes off is.
+const durationTolerance = 0.10
+
+// ParseMusicSubmission decodes and validates a submit_music tool input
+// against the requested length. Errors are written to be read by the
+// agent: each one says what to fix.
+func ParseMusicSubmission(input []byte, lengthMinutes int) (Composition, error) {
+	var c Composition
+	if err := json.Unmarshal(input, &c); err != nil {
+		return Composition{}, fmt.Errorf("submission does not match the contract: %w", err)
+	}
+	if c.Title == "" || c.Summary == "" {
+		return Composition{}, fmt.Errorf("submission is missing title or summary")
+	}
+	if len(c.Movements) == 0 {
+		return Composition{}, fmt.Errorf("submission has no movements")
+	}
+	for i, m := range c.Movements {
+		if strings.TrimSpace(m.Prompt) == "" {
+			return Composition{}, fmt.Errorf("movement %d has an empty prompt", i+1)
+		}
+		if m.DurationMS < music.MinDurationMS || m.DurationMS > music.MaxDurationMS {
+			return Composition{}, fmt.Errorf(
+				"movement %d is %dms, outside the allowed %d-%dms per movement — split it into more movements",
+				i+1, m.DurationMS, music.MinDurationMS, music.MaxDurationMS)
+		}
+	}
+	want := lengthMinutes * 60 * 1000
+	if got := c.TotalMS(); want > 0 && math.Abs(float64(got-want)) > float64(want)*durationTolerance {
+		return Composition{}, fmt.Errorf(
+			"movements total %dms but the request is for %dms (%d minutes) — adjust the durations so they add up",
+			got, want, lengthMinutes)
+	}
+	return c, nil
 }
 
 // ParseSubmission decodes a submit_episode tool input. The platform only

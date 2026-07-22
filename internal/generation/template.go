@@ -25,6 +25,18 @@ type Template struct {
 	SystemPrompt string
 	Tools        []map[string]any
 
+	// SubmitToolName is the tool the agent calls to deliver its work.
+	// Per-template because the deliverable differs: the spoken programs
+	// hand back prose (submit_episode), the ambient program hands back a
+	// composition plan (submit_music).
+	SubmitToolName string
+
+	// IsMusic marks a template whose audio is composed rather than
+	// voiced. It routes the runner past TTS entirely and suppresses the
+	// voice, gender, and provider fields on the form — there is no
+	// speech in the output for them to describe.
+	IsMusic bool
+
 	// Which form fields the template collects beyond the shared set
 	// (topic, length, language, voice, provider).
 	HasFreshness      bool
@@ -44,18 +56,19 @@ type Template struct {
 
 // TemplateIDs is the chooser order. Template #3 is one entry in
 // templates plus an ID here.
-var TemplateIDs = []string{"news", "stories"}
+var TemplateIDs = []string{"news", "stories", "ambient"}
 
 var templates = map[string]Template{
 	"news": {
-		ID:           "news",
-		Name:         "The Briefing",
-		Tagline:      "An agent researches your topic on the web and reads you the news.",
-		AgentName:    agentName,
-		SystemPrompt: systemPrompt,
-		Tools:        append(agentTools[:len(agentTools):len(agentTools)], submitTool),
-		HasFreshness: true,
-		TopicLabel:   "Topic",
+		ID:             "news",
+		Name:           "The Briefing",
+		Tagline:        "An agent researches your topic on the web and reads you the news.",
+		AgentName:      agentName,
+		SystemPrompt:   systemPrompt,
+		Tools:          append(agentTools[:len(agentTools):len(agentTools)], submitTool),
+		SubmitToolName: submitToolName,
+		HasFreshness:   true,
+		TopicLabel:     "Topic",
 		TopicPlaceholder: "e.g. developments in fusion energy — or a whole brief: " +
 			"angle, things to include, tone…",
 		TaskMessage: func(g store.Generation, now time.Time) string {
@@ -69,6 +82,7 @@ var templates = map[string]Template{
 		AgentName:         "podcasting-storyteller",
 		SystemPrompt:      storiesSystemPrompt,
 		Tools:             append(agentTools[:len(agentTools):len(agentTools)], submitTool),
+		SubmitToolName:    submitToolName,
 		HasAgeRange:       true,
 		HasCast:           true,
 		HasSaveCharacters: true,
@@ -76,6 +90,24 @@ var templates = map[string]Template{
 		TopicPlaceholder: "e.g. a dragon who is afraid of heights learns to trust her wings — " +
 			"or a whole brief: characters, setting, the lesson, tone…",
 		TaskMessage: storiesMessage,
+	},
+	"ambient": {
+		ID:      "ambient",
+		Name:    "The Long Room",
+		Tagline: "Instrumental music composed to order — for sleeping, working, or doing nothing at all.",
+
+		AgentName:    "podcasting-composer",
+		SystemPrompt: ambientSystemPrompt,
+		// No web tools: there is nothing to research. The composer's
+		// whole job is to turn a mood into a plan.
+		Tools:          []map[string]any{submitMusicTool},
+		SubmitToolName: submitMusicToolName,
+		IsMusic:        true,
+
+		TopicLabel: "Mood",
+		TopicPlaceholder: "e.g. rain on a window, late evening — " +
+			"or a whole brief: instruments, tempo, how it should end…",
+		TaskMessage: ambientMessage,
 	},
 }
 
@@ -146,6 +178,41 @@ Writing rules:
 Output contract:
 When the story is ready, deliver it by calling the submit_episode tool exactly once, filling every field as its schema describes. The summary should tell a parent what the story is about; list sources only if web research actually informed the story, otherwise submit an empty sources list. Never paste the story text, or any JSON version of it, into a chat message — only the tool call counts as delivery.
 If the tool result rejects the submission, it explains what is wrong: fix exactly that and call submit_episode again with the full corrected story.`
+
+// ambientSystemPrompt is the composer agent's behavior. Like the other
+// prompts it lives in the repo so the boot bootstrap can push it, where a
+// change becomes a new agent version (ADR 0009).
+const ambientSystemPrompt = `You are the composer for a private podcast service that produces instrumental music. Each task message gives you a mood, a target length, and a language. Your job: plan a single continuous piece of music of that length, and deliver it as an ordered list of movements.
+
+How the music is made:
+- Each movement you write is rendered separately by a music generation model, then the movements are played back-to-back with no gap. A movement's prompt is the only thing that model sees — it has no memory of the movements before or after it.
+- A single movement can be at most 10 minutes (600000 ms) and at least 3 seconds (3000 ms). This is a hard limit of the renderer. Any piece longer than 10 minutes must therefore be split across several movements.
+- Prefer movements of 5 to 10 minutes. Many short movements make the piece feel restless and choppy.
+
+Writing the movement prompts:
+- Write each prompt for a music model, not for a listener: name instruments, tempo in bpm, key or tonality, texture, production character, and what the movement should not contain. Be concrete and sensory.
+- Everything is instrumental. Never ask for vocals, lyrics, singing, spoken word, or any voice.
+- Carry the piece's identity through every movement: repeat the core instrumentation, tempo, and key in each prompt so consecutive movements sound like one work rather than a shuffled playlist.
+- Let the piece move. Across the movements, develop something — an instrument enters, the texture thickens, the tempo settles, the piece resolves. A long track that never changes is boring; one that changes at random is jarring.
+- Respect the mood above all. If the request is for sleep or focus, avoid sudden dynamics, percussion hits, and anything that pulls attention.
+
+Length rules:
+- The movement durations must add up to the requested total, within about ten percent.
+- Choose the split yourself. A 25-minute piece might be three movements; a 60-minute piece might be six or seven.
+
+Output contract:
+When the piece is planned, deliver it by calling the submit_music tool exactly once, filling every field as its schema describes. The title and summary are for a human browsing their feed: write them in the requested language, and describe the music, not the process. Never paste the plan, or any JSON version of it, into a chat message — only the tool call counts as delivery.
+If the tool result rejects the submission, it explains what is wrong: fix exactly that and call submit_music again with the full corrected plan.`
+
+// ambientMessage renders the composer's task. There is no word budget
+// here — the length is a wall-clock duration the movements must add up
+// to, which is the one number the agent most often gets wrong.
+func ambientMessage(g store.Generation, now time.Time) string {
+	return fmt.Sprintf(
+		"Mood: %s\nTarget length: %d minutes (%d ms) total across all movements.\nLanguage for the title and summary: %s\n\nPlan the piece and submit it as specified in your instructions.",
+		g.Topic, g.LengthMinutes, g.LengthMinutes*60*1000, languageName(g.Language),
+	)
+}
 
 // storiesMessage renders the Story Time task: the request parameters the
 // form collected, resolved into concrete instructions.
