@@ -69,8 +69,11 @@ logged-in admin.
   is account takeover in a single call, and the token lives in Secret
   Manager and never touches a browser, so a stolen session cookie cannot
   reach them.
-- **Token or admin session** — `PUT /admin/users/{user}` and
-  `POST /admin/users/{user}/admin`. The token path is what makes a fresh
+- **Token or admin session** — `GET /admin/users`,
+  `PUT /admin/users/{user}` and `POST /admin/users/{user}/admin`. Listing
+  is on this tier because it is how an operator finds the id to promote,
+  and before the first admin exists the token is the only credential
+  there is. The token path is what makes a fresh
   deployment bootstrappable: with no users at all, a session-authenticated
   "create the first user" is unreachable by construction. The session path
   is what lets an existing admin appoint a second one from the webapp

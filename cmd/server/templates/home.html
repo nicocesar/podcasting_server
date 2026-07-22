@@ -4,4 +4,78 @@
   <h1>podcasting_server</h1>
   <p class="muted">A private podcast server.</p>
 </section>
+
+{{if .LoggedIn}}
+{{/* Progressive enhancement: without JS this is a plain link and nothing
+     moves on its own, so the page never promises a redirect it cannot
+     deliver. The script upgrades it to a countdown. */}}
+<section class="card center resume" id="resume" data-seconds="5">
+  <p class="muted">Signed in{{if .Title}} to {{.Title}}{{end}}.</p>
+  <p class="sr-only" id="resume-sr"></p>
+  <p id="resume-msg"><a href="/me">Go to your dashboard</a></p>
+  <p class="actions"><button type="button" class="button quiet" id="resume-stay" hidden>Stay here</button></p>
+</section>
+
+<script>
+(function () {
+  const box = document.getElementById("resume");
+  const msg = document.getElementById("resume-msg");
+  const sr = document.getElementById("resume-sr");
+  const stay = document.getElementById("resume-stay");
+  let left = parseInt(box.dataset.seconds, 10) || 5;
+  let timer = null;
+
+  // Built as nodes rather than innerHTML: the only interpolated value is
+  // a number we own, and this keeps it that way if someone adds more.
+  function link(text) {
+    const a = document.createElement("a");
+    a.href = "/me";
+    a.textContent = text;
+    return a;
+  }
+
+  function tick() {
+    msg.textContent = "";
+    // The visible count is hidden from assistive tech: a per-second
+    // aria-live update is unusable noise. The static sentence in #resume-sr
+    // is announced once instead.
+    const span = document.createElement("span");
+    span.setAttribute("aria-hidden", "true");
+    span.textContent = "Taking you to your dashboard in " + left + "s… ";
+    msg.append(span, link("Go now"));
+  }
+
+  function cancel() {
+    if (timer === null) return;
+    clearInterval(timer);
+    timer = null;
+    stay.hidden = true;
+    msg.textContent = "";
+    msg.append(link("Go to your dashboard"));
+    sr.textContent = "Automatic redirect cancelled.";
+  }
+
+  stay.hidden = false;
+  sr.textContent = "You will be taken to your dashboard in " + left +
+    " seconds. Press Escape, or activate the Stay here button, to cancel.";
+  tick();
+
+  timer = setInterval(function () {
+    left -= 1;
+    if (left <= 0) {
+      clearInterval(timer);
+      timer = null;
+      location.href = "/me";
+      return;
+    }
+    tick();
+  }, 1000);
+
+  stay.addEventListener("click", cancel);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") cancel();
+  });
+})();
+</script>
+{{end}}
 {{end}}

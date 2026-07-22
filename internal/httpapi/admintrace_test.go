@@ -126,6 +126,11 @@ func TestProvisioningBoundaries(t *testing.T) {
 		creds      string
 		wantStatus int
 	}{
+		// Listing is how an operator finds the id to promote, so it must
+		// work with only the token, before any admin exists.
+		{"token lists users", "GET", "/admin/users", "bearer:" + adminToken, http.StatusOK},
+		{"admin session lists users", "GET", "/admin/users", admin.sessionCreds(), http.StatusOK},
+		{"plain user cannot list", "GET", "/admin/users", alice.sessionCreds(), http.StatusUnauthorized},
 		{"admin session appoints", "POST", "/admin/users/victim/admin", admin.sessionCreds(), http.StatusOK},
 		{"admin session creates", "PUT", "/admin/users/newbie", admin.sessionCreds(), http.StatusCreated},
 		{"plain user cannot appoint", "POST", "/admin/users/victim/admin", alice.sessionCreds(), http.StatusUnauthorized},

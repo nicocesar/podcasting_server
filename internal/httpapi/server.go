@@ -288,7 +288,10 @@ func New(cfg Config) (http.Handler, error) {
 	// are for reading, in a browser, which the header-only token cannot
 	// do. Real billed dollars come from Anthropic's Usage & Cost Admin
 	// API; the trace is the per-Generation execution record.
-	mux.HandleFunc("GET /admin/users", s.adminUser(ignoreUser(s.handleListUsers)))
+	// Listing users takes the token too: it is how an operator finds the
+	// id to promote, and before the first admin exists the token is the
+	// only credential there is.
+	mux.HandleFunc("GET /admin/users", s.adminOrToken(s.handleListUsers))
 	mux.HandleFunc("GET /admin/costs", s.adminUser(ignoreUser(s.handleAdminCosts)))
 	mux.HandleFunc("GET /admin/costs/episodes", s.adminUser(ignoreUser(s.handleAdminEpisodeCosts)))
 	mux.HandleFunc("GET /admin/usage", s.adminUser(ignoreUser(s.handleAdminUsage)))
@@ -560,8 +563,22 @@ func (s *server) handleQR(w http.ResponseWriter, r *http.Request, u store.User) 
 
 // --- pages ---
 
-func (s *server) handleHome(w http.ResponseWriter, _ *http.Request) {
-	s.render(w, http.StatusOK, s.tmplHome, nil)
+// handleHome is the public landing page. A caller who already has a
+// session is offered a trip to their dashboard on a short timer rather
+// than being redirected outright: "/" is also how someone reaches the
+// front door deliberately (to read it, to link it, to sign in as someone
+// else), and a hard redirect would make that impossible from a logged-in
+// browser. The timer is a nudge with an escape hatch, not a wall.
+func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
+	var data struct {
+		LoggedIn bool
+		Title    string
+	}
+	if u, ok := s.sessionUser(r); ok {
+		data.LoggedIn = true
+		data.Title = u.Title
+	}
+	s.render(w, http.StatusOK, s.tmplHome, data)
 }
 
 // subscribeBox is the shared template data for every place the feed URL
