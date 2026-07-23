@@ -750,6 +750,19 @@ func (r *Runner) composeMovement(ctx context.Context, g *store.Generation, i int
 // an episode is an episode. Returns the stored Episode, whose Slug is the
 // one that survived collision resolution.
 func (r *Runner) publishAudio(ctx context.Context, g store.Generation, title, description string, mp3 []byte) (store.Generation, store.Episode, error) {
+	// The blob was assembled by concatenating the MP3s of its parts. That
+	// leaves each part's ID3 tag and Info/Xing duration header buried
+	// inside the file, and players trust the first one and stop early —
+	// dropping the credit, or on a multi-part episode everything past the
+	// first part. Normalize to bare frames so the whole thing plays.
+	// Non-fatal: sentinel test audio and any non-MP3 bytes fall through
+	// unchanged rather than blocking the publish.
+	if stripped, err := audio.StripHeaders(mp3); err != nil {
+		r.trace(&g, store.LevelNotice, "audio.strip_skipped", "audio left un-normalized", "err", err)
+	} else {
+		mp3 = stripped
+	}
+
 	g.Stage = store.GenPublishing
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		return g, store.Episode{}, err

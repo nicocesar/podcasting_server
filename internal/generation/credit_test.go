@@ -1,6 +1,7 @@
 package generation
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/nicocesar/podcasting_server/internal/audio"
 	"github.com/nicocesar/podcasting_server/internal/store"
 	"github.com/nicocesar/podcasting_server/internal/tts"
 )
@@ -197,6 +199,102 @@ func TestCreditSkippedForUnknownEngine(t *testing.T) {
 		if isCredit(s) {
 			t.Errorf("unknown engine voiced a credit: %q", s)
 		}
+	}
+}
+
+// framedEngine returns realistic MP3 for each utterance: an Info header
+// frame followed by one audio frame, the shape ElevenLabs (speech and
+// music) emits and the reason the publish path normalizes. The audio
+// frame is filled by fill(text) so a test can find a specific utterance —
+// the credit — in the published bytes.
+type framedEngine struct {
+	name string
+	fill func(text string) byte
+	mu   sync.Mutex
+	said []string
+}
+
+func (e *framedEngine) Name() string { return e.name }
+func (e *framedEngine) Synthesize(_ context.Context, text string, _ tts.Voice) ([]byte, error) {
+	e.mu.Lock()
+	e.said = append(e.said, text)
+	e.mu.Unlock()
+	return append(testMP3Frame("Info", 0), testMP3Frame("", e.fill(text))...), nil
+}
+
+// testMP3Frame builds one 417-byte MPEG-1 L3 frame (128k/44.1k stereo).
+// tag at offset 36 marks it a Xing/Info header; empty tag is audio.
+func testMP3Frame(tag string, fill byte) []byte {
+	f := make([]byte, 417)
+	for i := range f {
+		f[i] = fill
+	}
+	f[0], f[1], f[2], f[3] = 0xFF, 0xFB, 0x90, 0x00
+	for i := 4; i < 36; i++ {
+		f[i] = 0
+	}
+	if tag != "" {
+		copy(f[36:40], tag)
+	} else {
+		f[36], f[37], f[38], f[39] = 0x11, 0x22, 0x33, 0x44
+	}
+	return f
+}
+
+// TestCreditSurvivesNormalization is the regression test for the bug this
+// whole path exists to fix: an episode built from Info-headed parts must
+// publish as bare frames — no Info/ID3 header left to make a player stop
+// early — with the credit frame still present at the tail. Before the fix
+// the credit bytes were in the file but beyond the advertised duration.
+func TestCreditSurvivesNormalization(t *testing.T) {
+	st := testStore(t)
+	const scriptFill, creditFill = 0xAA, 0xCC
+	eng := &framedEngine{name: "elevenlabs", fill: func(text string) byte {
+		if isCredit(text) {
+			return creditFill
+		}
+		return scriptFill
+	}}
+	r := testRunner(st, newFakeAPI(), eng)
+
+	g := newGeneration()
+	g.Voice, g.Provider = "female", "elevenlabs"
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenDone)
+
+	a, err := st.OpenAudio(context.Background(), "alice", g.EpisodeSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Content.Close()
+	published, _ := io.ReadAll(a.Content)
+
+	// Every Info header and every part boundary is gone.
+	if bytes.Contains(published, []byte("Info")) || bytes.Contains(published, []byte("ID3")) {
+		t.Error("published audio still carries framing headers; players will stop early")
+	}
+	// The credit frame (creditFill) survived, and it is the tail.
+	creditFrame := testMP3Frame("", creditFill)
+	if !bytes.Contains(published, creditFrame) {
+		t.Fatal("credit audio was dropped by normalization")
+	}
+	if !bytes.HasSuffix(published, creditFrame) {
+		t.Error("credit is not the final frame")
+	}
+	// The whole file is exactly the audio frames — two script chunks... one
+	// here... plus the credit, each part's Info header removed.
+	wantFrames := len(eng.said) // one audio frame kept per utterance
+	if got := len(published) / 417; got != wantFrames {
+		t.Errorf("published %d frames, want %d (one per utterance, headers stripped)", got, wantFrames)
+	}
+	// Duration must cover the credit: declared == every kept frame.
+	if d, err := audio.MP3Duration(bytes.NewReader(published)); err != nil {
+		t.Errorf("published audio does not parse: %v", err)
+	} else if d <= 0 {
+		t.Error("published audio has no duration")
 	}
 }
 
