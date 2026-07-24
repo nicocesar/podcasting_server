@@ -856,13 +856,24 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		}{User: u, FeedURL: s.feedURL(r, u)})
 		return
 	}
-	episodes, err := s.store.ListEpisodes(r.Context(), u.ID)
+	// The Dashboard shows the Personal Feed, not just what this user
+	// published: own Episodes and shared-in ones in one log, which is
+	// what the RSS feed has always carried. filter is the Feed Variant
+	// parameter (ADR 0005), spelled the same here as on /me/feed.
+	filter := r.URL.Query().Get("filter")
+	if filter != "mine" && filter != "shared" {
+		filter = ""
+	}
+	entries, err := s.feedEntries(r, u, "", filter)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 	// One query covers the whole Dashboard: every live link to anything
-	// this user owns, grouped by Episode below (ADR 0014).
+	// this user owns, grouped by Episode below (ADR 0014). Keyed by
+	// owner/slug and never the bare slug — a shared Episode may carry
+	// the same slug as one of this user's own, and it must not inherit
+	// that Episode's links or the Revoke button that comes with them.
 	invites, err := s.store.ListEpisodeInvites(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, err)
@@ -874,25 +885,50 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		if !inv.Live(now) {
 			continue
 		}
-		links[inv.Slug] = append(links[inv.Slug], episodeLink{
+		key := inv.OwnerID + "/" + inv.Slug
+		links[key] = append(links[key], episodeLink{
 			Token:    inv.Token,
 			Minter:   inv.InviterID,
 			Expires:  daysLeft(inv.ExpiresAt),
 			Redeemed: inv.RedeemedBy != "",
 		})
 	}
-	views := make([]episodeView, 0, len(episodes))
-	for _, ep := range episodes {
-		views = append(views, episodeView{
-			Links:           links[ep.Slug],
-			Episode:         ep,
-			Aired:           relativeDate(ep.PublishedAt),
-			Duration:        humanDuration(ep.DurationSec),
-			PageURL:         episodeBase(u, ep, true),
-			Player:          playerFor(u, ep, true),
-			NeedsCharacters: s.generator != nil && ep.Template == "stories" && len(ep.Characters) == 0,
-		})
+	views := make([]episodeView, 0, len(entries))
+	shared := 0
+	for _, e := range entries {
+		v := episodeView{
+			Episode:  e.Episode,
+			Aired:    relativeDate(e.PublishedAt),
+			Duration: humanDuration(e.DurationSec),
+			PageURL:  episodeBase(u, e.Episode, true),
+			// The cover art stays this feed's, for the reason
+			// episodePage gives: a shared Episode is presented under
+			// the art of the feed it arrived in. The credit line
+			// carries the attribution the art cannot.
+			Player: playerFor(u, e.Episode, true),
+			Rank:   e.PublishedAt,
+		}
+		if e.SharedAt == nil {
+			v.Links = links[e.OwnerID+"/"+e.Slug]
+			v.NeedsCharacters = s.generator != nil && e.Template == "stories" && len(e.Characters) == 0
+		} else {
+			shared++
+			v.Shared = true
+			v.SharerID = e.SharerID
+			v.Arrived = relativeDate(*e.SharedAt)
+			if e.SharedAt.After(v.Rank) {
+				v.Rank = *e.SharedAt
+			}
+		}
+		views = append(views, v)
 	}
+	// Newest-to-me first. An Episode aired in April but shared with me
+	// this morning is news; ranking it by its air date would bury it
+	// where I would never see it arrive. The RSS feed keeps publication
+	// order, which is where podcast clients expect it.
+	sort.SliceStable(views, func(i, j int) bool {
+		return views[i].Rank.After(views[j].Rank)
+	})
 	generations, err := s.dashboardGenerations(r, u)
 	if err != nil {
 		s.fail(w, err)
@@ -903,6 +939,8 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		FeedPage        string
 		CoverURL        string
 		Episodes        []episodeView
+		SharedCount     int
+		Filter          string
 		GenerateEnabled bool
 		Generations     []generationView
 		subscribeBox
@@ -911,6 +949,8 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		FeedPage:        "/f/" + u.FeedToken,
 		CoverURL:        sessionCoverURL(u),
 		Episodes:        views,
+		SharedCount:     shared,
+		Filter:          filter,
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
 		subscribeBox:    s.subscribeBox(r, u),
@@ -933,6 +973,24 @@ type episodeView struct {
 	// NeedsCharacters offers the "save characters" backfill button: a
 	// story episode whose cast was never extracted.
 	NeedsCharacters bool
+
+	// Shared marks an Episode that reached this feed as a Share rather
+	// than being published into it. It decides both the credit line and
+	// which controls the row offers: a Share may be forwarded on or
+	// dropped from the feed, but never deleted, revoked, or edited —
+	// none of it is this user's to change (ADR 0006).
+	Shared bool
+	// SharerID is whoever placed the Episode in this feed, which may
+	// differ from the Owner since any recipient may forward. Equal to
+	// OwnerID when the creator shared it directly, and the credit line
+	// says so once rather than twice.
+	SharerID string
+	// Arrived is when the Share landed, in the same relative words as
+	// Aired. Empty on own Episodes, which arrived by being made.
+	Arrived string
+	// Rank orders the log: when the Episode became news to this user,
+	// which for a Share is its arrival and not its air date.
+	Rank time.Time
 }
 
 // episodeLink is one live Invite to an Episode, as its Owner sees it:

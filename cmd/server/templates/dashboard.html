@@ -57,18 +57,47 @@
   </aside>
 
   <section class="log">
-    <p class="eyebrow">Episodes · {{len .Episodes}}</p>
+    <p class="eyebrow">Episodes · {{len .Episodes}}
+      {{- if .SharedCount}}
+        {{- if eq .SharedCount (len .Episodes)}} · all shared
+        {{- else}} · {{.SharedCount}} shared{{end}}
+      {{- end}}</p>
+
+    {{/* The Feed Variants the API already speaks, as three links: the
+         URL carries the state, so a filtered log is bookmarkable and
+         works with no JavaScript at all (ADR 0005). */}}
+    <nav class="filters" aria-label="Filter episodes">
+      <a href="/me"{{if not .Filter}} aria-current="page"{{end}}>All</a>
+      <a href="/me?filter=mine"{{if eq .Filter "mine"}} aria-current="page"{{end}}>Mine</a>
+      <a href="/me?filter=shared"{{if eq .Filter "shared"}} aria-current="page"{{end}}>Shared with me</a>
+    </nav>
+
     {{if not .Episodes}}
     <div class="card">
-      <p class="muted" style="margin:0">Nothing published yet.
-      {{if .GenerateEnabled}}Generate an episode or point a publishing agent
-      at your feed — it will show up here.{{end}}</p>
+      {{if .Filter}}
+      <p class="muted" style="margin:0">Nothing here yet —
+      <a href="/me">see everything</a>.</p>
+      {{else}}
+      <p class="muted" style="margin:0">Nothing in your feed yet.
+      {{if .GenerateEnabled}}Generate an episode{{else}}Point a publishing agent
+      at your feed{{end}}, or wait for someone to share one with you.</p>
+      {{end}}
     </div>
     {{end}}
     {{range .Episodes}}
-    <div class="episode" data-owner="{{.OwnerID}}" data-slug="{{.Slug}}">
+    <div class="episode{{if .Shared}} shared{{end}}" data-owner="{{.OwnerID}}" data-slug="{{.Slug}}">
       <p class="ep-title"><a href="{{.PageURL}}">{{.Title}}</a></p>
+      {{/* Own episodes lead with the slug, which is how you address
+           them when publishing. On a shared one it names something in
+           another user's namespace that you cannot publish, delete, or
+           refer to — so it goes, and the arrival date takes its place. */}}
+      {{if .Shared}}
+      <p class="ep-meta">{{.Aired}}{{with .Duration}} · {{.}}{{end}}{{with .Arrived}} · shared {{.}}{{end}}</p>
+      <p class="ep-credit">by <strong>@{{.OwnerID}}</strong>
+        {{- if ne .SharerID .OwnerID}} · via <strong>@{{.SharerID}}</strong>{{end}}</p>
+      {{else}}
       <p class="ep-meta">{{.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
+      {{end}}
       {{template "player" .Player}}
       <div class="actions">
         <input class="share-to" list="users-dl" placeholder="usernames, comma-separated…"
@@ -76,6 +105,13 @@
         <button data-share><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-share"/></svg>Share</button>
         <button class="quiet" data-ep-invite
                 title="A link that plays this episode for anyone, and lets one of them join"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-user-plus"/></svg>Send as a link</button>
+        {{if .Shared}}
+        {{/* Forwarding on is allowed, so Share and the link stay; the
+             rest of the console is the Owner's, not yours. What is
+             yours is whether it stays in your feed (ADR 0006). */}}
+        <button class="quiet" data-unshare
+                title="Take this out of your feed. The episode itself is unaffected."><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Remove from my feed</button>
+        {{end}}
         {{if .NeedsCharacters}}
         <form method="post" action="/me/episodes/{{.Slug}}/characters"
               title="Extract this story's characters so a later story can bring them back">
@@ -178,6 +214,15 @@ document.querySelectorAll(".episode").forEach((ep) => {
       wireCopy(row);
       say("Anyone with this link can play the episode, and one of them can join with it. Good for 30 days — revoke it any time.");
     } catch (err) { say("Could not create link: " + err.message); }
+  };
+  // Only shared rows carry this: it drops the reference, never the
+  // episode, which stays exactly where its owner published it.
+  const unshare = ep.querySelector("[data-unshare]");
+  if (unshare) unshare.onclick = async () => {
+    try {
+      await api(`/me/feed/${ep.dataset.owner}/${ep.dataset.slug}`, {method: "DELETE"});
+      ep.remove();
+    } catch (err) { say("Could not remove: " + err.message); }
   };
   ep.querySelectorAll("[data-revoke]").forEach((btn) => {
     btn.onclick = async () => {
