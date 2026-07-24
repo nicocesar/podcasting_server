@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/nicocesar/podcasting_server/internal/coverart"
 	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/httpapi"
 	"github.com/nicocesar/podcasting_server/internal/music"
@@ -105,6 +107,12 @@ func run(log *slog.Logger) error {
 		log.Info("storage: datastore + gcs", "bucket", bucket)
 	default:
 		return fmt.Errorf("unknown STORAGE %q (want fs or gcp)", backend)
+	}
+
+	// One-shot maintenance subcommands run against the configured store
+	// and exit — they never start the HTTP server.
+	if len(os.Args) > 1 && os.Args[1] == "backfill-thumbs" {
+		return backfillThumbs(ctx, log, st)
 	}
 
 	// GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET turn on "Sign in with
@@ -205,4 +213,42 @@ func run(log *slog.Logger) error {
 	addr := ":" + env("PORT", "8080")
 	log.Info("listening", "addr", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+// backfillThumbs regenerates the normalized full image and web thumbnail
+// for every user who already has a cover, so covers uploaded before
+// thumbnails existed get optimized in one pass. It reuses the upload
+// path (coverart.Process + store.SetCover) and is safe to re-run.
+func backfillThumbs(ctx context.Context, log *slog.Logger, st store.Store) error {
+	users, err := st.ListUsers(ctx)
+	if err != nil {
+		return err
+	}
+	var done, skipped int
+	for _, u := range users {
+		if u.CoverType == "" {
+			skipped++
+			continue
+		}
+		rc, ct, err := st.OpenCover(ctx, u.ID)
+		if err != nil {
+			log.Warn("backfill: cannot open cover", "user", u.ID, "err", err)
+			skipped++
+			continue
+		}
+		p, err := coverart.Process(rc, ct)
+		rc.Close()
+		if err != nil {
+			log.Warn("backfill: cannot process cover", "user", u.ID, "err", err)
+			skipped++
+			continue
+		}
+		if err := st.SetCover(ctx, u.ID, p.FullType, bytes.NewReader(p.Full), bytes.NewReader(p.Thumb)); err != nil {
+			return fmt.Errorf("backfill %s: %w", u.ID, err)
+		}
+		done++
+		log.Info("backfill: thumbnail generated", "user", u.ID)
+	}
+	log.Info("backfill complete", "generated", done, "skipped", skipped)
+	return nil
 }

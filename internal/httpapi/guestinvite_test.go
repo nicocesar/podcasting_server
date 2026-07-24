@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -41,7 +42,8 @@ func TestGuestHearsOneEpisode(t *testing.T) {
 		`{"title":"Sleepy Rabbits","description":"A bedtime story.","duration_seconds":402}`,
 		"AUDIOBYTES")
 	resp.Body.Close()
-	resp = do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), strings.NewReader("JPEGBYTES"), "image/jpeg")
+	jpg := smallJPEG(t, 300, 300)
+	resp = do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), bytes.NewReader(jpg), "image/jpeg")
 	resp.Body.Close()
 
 	url := mintEpisodeLink(t, ts, alice, "alice", "2026-07-06-morning")
@@ -79,8 +81,8 @@ func TestGuestHearsOneEpisode(t *testing.T) {
 		t.Errorf("guest audio sends a referrer")
 	}
 	resp, cover := getBody(t, url+"/cover", "")
-	if resp.StatusCode != http.StatusOK || cover != "JPEGBYTES" {
-		t.Fatalf("guest cover: %d %q", resp.StatusCode, cover)
+	if resp.StatusCode != http.StatusOK || cover != string(jpg) {
+		t.Fatalf("guest cover: %d (%d bytes)", resp.StatusCode, len(cover))
 	}
 	// A capability URL must never sit in a shared cache.
 	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "private") {

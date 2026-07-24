@@ -724,7 +724,10 @@ func coverFile(contentType string) string {
 	}
 }
 
-func (s *Store) SetCover(ctx context.Context, userID, contentType string, r io.Reader) error {
+// coverThumbFile is always JPEG regardless of the original's format.
+const coverThumbFile = "cover_thumb.jpg"
+
+func (s *Store) SetCover(ctx context.Context, userID, contentType string, full, thumb io.Reader) error {
 	u, err := s.GetUser(ctx, userID)
 	if err != nil {
 		return err
@@ -732,7 +735,10 @@ func (s *Store) SetCover(ctx context.Context, userID, contentType string, r io.R
 	if u.CoverType != "" && coverFile(u.CoverType) != coverFile(contentType) {
 		os.Remove(filepath.Join(s.userDir(userID), coverFile(u.CoverType)))
 	}
-	if _, err := writeAtomic(filepath.Join(s.userDir(userID), coverFile(contentType)), r); err != nil {
+	if _, err := writeAtomic(filepath.Join(s.userDir(userID), coverFile(contentType)), full); err != nil {
+		return err
+	}
+	if _, err := writeAtomic(filepath.Join(s.userDir(userID), coverThumbFile), thumb); err != nil {
 		return err
 	}
 	u.CoverType = contentType
@@ -755,6 +761,24 @@ func (s *Store) OpenCover(ctx context.Context, userID string) (io.ReadCloser, st
 		return nil, "", err
 	}
 	return f, u.CoverType, nil
+}
+
+func (s *Store) OpenCoverThumb(ctx context.Context, userID string) (io.ReadCloser, string, error) {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if u.CoverType == "" {
+		return nil, "", store.ErrNotFound
+	}
+	f, err := os.Open(filepath.Join(s.userDir(userID), coverThumbFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", store.ErrNotFound
+		}
+		return nil, "", err
+	}
+	return f, "image/jpeg", nil
 }
 
 func readJSON(path string, v any) error {

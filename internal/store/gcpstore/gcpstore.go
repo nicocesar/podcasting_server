@@ -80,6 +80,7 @@ func generationKey(userID, id string) *datastore.Key {
 
 func audioObject(ownerID, slug string) string { return "users/" + ownerID + "/" + slug + ".mp3" }
 func coverObject(ownerID string) string       { return "users/" + ownerID + "/cover" }
+func coverThumbObject(ownerID string) string   { return "users/" + ownerID + "/cover_thumb" }
 
 // --- users ---
 
@@ -596,22 +597,29 @@ func (s *Store) OpenAudio(ctx context.Context, ownerID, slug string) (store.Audi
 	return store.Audio{RedirectURL: u, Size: ep.AudioSize, ContentType: ep.AudioType}, nil
 }
 
-func (s *Store) SetCover(ctx context.Context, userID, contentType string, r io.Reader) error {
+func (s *Store) SetCover(ctx context.Context, userID, contentType string, full, thumb io.Reader) error {
 	u, err := s.GetUser(ctx, userID)
 	if err != nil {
 		return err
 	}
-	w := s.bucket.Object(coverObject(userID)).NewWriter(ctx)
+	if err := s.writeObject(ctx, coverObject(userID), contentType, full); err != nil {
+		return err
+	}
+	if err := s.writeObject(ctx, coverThumbObject(userID), "image/jpeg", thumb); err != nil {
+		return err
+	}
+	u.CoverType = contentType
+	return s.UpsertUser(ctx, u)
+}
+
+func (s *Store) writeObject(ctx context.Context, object, contentType string, r io.Reader) error {
+	w := s.bucket.Object(object).NewWriter(ctx)
 	w.ContentType = contentType
 	if _, err := io.Copy(w, r); err != nil {
 		w.Close()
 		return err
 	}
-	if err := w.Close(); err != nil {
-		return err
-	}
-	u.CoverType = contentType
-	return s.UpsertUser(ctx, u)
+	return w.Close()
 }
 
 func (s *Store) OpenCover(ctx context.Context, userID string) (io.ReadCloser, string, error) {
@@ -630,4 +638,22 @@ func (s *Store) OpenCover(ctx context.Context, userID string) (io.ReadCloser, st
 		return nil, "", err
 	}
 	return r, u.CoverType, nil
+}
+
+func (s *Store) OpenCoverThumb(ctx context.Context, userID string) (io.ReadCloser, string, error) {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return nil, "", err
+	}
+	if u.CoverType == "" {
+		return nil, "", store.ErrNotFound
+	}
+	r, err := s.bucket.Object(coverThumbObject(userID)).NewReader(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, "", store.ErrNotFound
+		}
+		return nil, "", err
+	}
+	return r, "image/jpeg", nil
 }

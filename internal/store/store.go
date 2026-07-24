@@ -496,7 +496,14 @@ type Store interface {
 
 	OpenAudio(ctx context.Context, ownerID, slug string) (Audio, error)
 
-	SetCover(ctx context.Context, userID, contentType string, r io.Reader) error
-	// OpenCover returns the Cover Art bytes and their MIME type.
+	// SetCover persists both the normalized full-size Cover Art and its
+	// web thumbnail (produced by internal/coverart). contentType is the
+	// MIME type of the full image; the thumbnail is always JPEG.
+	SetCover(ctx context.Context, userID, contentType string, full, thumb io.Reader) error
+	// OpenCover returns the full-size Cover Art bytes and their MIME type.
 	OpenCover(ctx context.Context, userID string) (io.ReadCloser, string, error)
+	// OpenCoverThumb returns the web thumbnail (always image/jpeg), or
+	// ErrNotFound when the user has no thumbnail (e.g. a cover uploaded
+	// before thumbnails existed — callers fall back to OpenCover).
+	OpenCoverThumb(ctx context.Context, userID string) (io.ReadCloser, string, error)
 }

@@ -9,7 +9,7 @@
     <p class="eyebrow">Podcast profile</p>
     <div class="actions">
       {{if .CoverURL}}
-      <img class="cover-preview" id="cover-preview" src="{{.CoverURL}}" alt="Current cover art">
+      <img class="cover-preview" id="cover-preview" src="{{.CoverURL}}?s=thumb" alt="Current cover art">
       {{else}}
       <img class="cover-preview" id="cover-preview" alt="Cover art preview" hidden>
       {{end}}

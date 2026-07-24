@@ -23,11 +23,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	qrcode "github.com/skip2/go-qrcode"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/nicocesar/podcasting_server/internal/audio"
+	"github.com/nicocesar/podcasting_server/internal/coverart"
 	"github.com/nicocesar/podcasting_server/internal/feed"
 	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/store"
@@ -704,7 +706,7 @@ func (s *server) handleMyCover(w http.ResponseWriter, r *http.Request, u store.U
 }
 
 func (s *server) cover(w http.ResponseWriter, r *http.Request, u store.User, cacheControl string) {
-	cover, contentType, err := s.store.OpenCover(r.Context(), u.ID)
+	cover, contentType, err := s.openCover(r, u, r.URL.Query().Get("s") == "thumb")
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -713,6 +715,22 @@ func (s *server) cover(w http.ResponseWriter, r *http.Request, u store.User, cac
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", cacheControl)
 	io.Copy(w, cover)
+}
+
+// openCover returns the thumbnail when asked for it, falling back to the
+// full-size image for covers uploaded before thumbnails existed. The
+// full image is the RSS-facing default.
+func (s *server) openCover(r *http.Request, u store.User, thumb bool) (io.ReadCloser, string, error) {
+	if thumb {
+		rc, ct, err := s.store.OpenCoverThumb(r.Context(), u.ID)
+		if err == nil {
+			return rc, ct, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return nil, "", err
+		}
+	}
+	return s.store.OpenCover(r.Context(), u.ID)
 }
 
 // handleQR renders the feed URL as a scannable QR code, so phone
@@ -1189,7 +1207,12 @@ func (s *server) handleSetCover(w http.ResponseWriter, r *http.Request, u store.
 		return
 	}
 	body := http.MaxBytesReader(w, r.Body, 8<<20)
-	if err := s.store.SetCover(r.Context(), u.ID, contentType, body); err != nil {
+	p, err := coverart.Process(body, contentType)
+	if err != nil {
+		http.Error(w, "could not process image: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetCover(r.Context(), u.ID, p.FullType, bytes.NewReader(p.Full), bytes.NewReader(p.Thumb)); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -1303,9 +1326,12 @@ func (s *server) handleDeleteEpisode(w http.ResponseWriter, r *http.Request, u s
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleShare places an episode from the caller's feed into another
-// user's feed. Anyone may share what is in their feed, own or shared —
-// forwarding is allowed (ADR 0006).
+// handleShare places an episode from the caller's feed into one or more
+// other users' feeds. Anyone may share what is in their feed, own or
+// shared — forwarding is allowed (ADR 0006). The "to" field carries one
+// username or several at once ("nico, ldipenti"); a single recipient
+// keeps the plain HTTP-status contract, several recipients get a per-name
+// JSON summary since no one status can describe a mixed result.
 func (s *server) handleShare(w http.ResponseWriter, r *http.Request, u store.User) {
 	ownerID, slug := r.PathValue("owner"), r.PathValue("slug")
 	var req struct {
@@ -1315,36 +1341,114 @@ func (s *server) handleShare(w http.ResponseWriter, r *http.Request, u store.Use
 		http.Error(w, "bad JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if req.To == u.ID {
-		http.Error(w, "cannot share to yourself", http.StatusBadRequest)
+	recipients := parseRecipients(req.To)
+	if len(recipients) == 0 {
+		http.Error(w, "no recipients", http.StatusBadRequest)
 		return
 	}
 
 	// The episode must be in the caller's feed: their own, or shared in.
+	// It is the same episode for every recipient, so check it once.
 	if err := s.inFeed(r, u, ownerID, slug); err != nil {
 		s.fail(w, err)
 		return
 	}
-	recipient, err := s.store.GetUser(r.Context(), req.To)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			http.Error(w, "no such user: "+req.To, http.StatusNotFound)
+
+	// One recipient: answer with the original status codes so a caller
+	// (and the tests) can read the outcome straight off the HTTP status.
+	if len(recipients) == 1 {
+		out, err := s.shareOne(r, u, ownerID, slug, recipients[0])
+		if err != nil {
+			s.fail(w, err)
 			return
 		}
-		s.fail(w, err)
+		if out.code >= 400 {
+			http.Error(w, out.reason, out.code)
+			return
+		}
+		w.WriteHeader(out.code)
 		return
+	}
+
+	// Several recipients: one bad name must not sink the batch, so collect
+	// every outcome and report it. "shared" holds names now in their feed
+	// (freshly placed or already there); "failed" maps the rest to a reason.
+	res := struct {
+		Shared []string          `json:"shared"`
+		Failed map[string]string `json:"failed,omitempty"`
+	}{Failed: map[string]string{}}
+	for _, to := range recipients {
+		out, err := s.shareOne(r, u, ownerID, slug, to)
+		if err != nil {
+			s.log.Error("share failed", "to", to, "owner", ownerID, "slug", slug, "err", err)
+			res.Failed[to] = "could not share"
+			continue
+		}
+		if out.code >= 400 {
+			res.Failed[to] = out.reason
+		} else {
+			res.Shared = append(res.Shared, to)
+		}
+	}
+	if len(res.Failed) == 0 {
+		res.Failed = nil
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(res); err != nil {
+		s.log.Error("encode share result", "err", err)
+	}
+}
+
+// parseRecipients splits a share target into distinct usernames. The box
+// takes several at once, separated however feels natural — "nico,
+// ldipenti", "nico ldipenti", newlines — so any run of commas and
+// whitespace is a separator. Order is kept and duplicates dropped.
+func parseRecipients(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, name := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	}) {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// shareOutcome is what happened placing one episode into one recipient's
+// feed: an HTTP status matching the single-recipient contract (201 freshly
+// shared, 204 already there / their own, 4xx refused) and a short human
+// reason for the outcomes that added nothing.
+type shareOutcome struct {
+	code   int
+	reason string
+}
+
+// shareOne places the episode (ownerID/slug) into recipient `to`'s feed on
+// behalf of sharer u. The episode is assumed already known to be in u's
+// feed. A returned error is an infrastructure failure; otherwise the
+// outcome's code carries the per-recipient result.
+func (s *server) shareOne(r *http.Request, u store.User, ownerID, slug, to string) (shareOutcome, error) {
+	if to == u.ID {
+		return shareOutcome{http.StatusBadRequest, "that's you"}, nil
+	}
+	recipient, err := s.store.GetUser(r.Context(), to)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return shareOutcome{http.StatusNotFound, "no such user"}, nil
+		}
+		return shareOutcome{}, err
 	}
 	if recipient.Blocked(u.ID) {
-		http.Error(w, "recipient has blocked you", http.StatusForbidden)
-		return
+		return shareOutcome{http.StatusForbidden, "has blocked you"}, nil
 	}
 	if recipient.ID == ownerID {
-		w.WriteHeader(http.StatusNoContent) // it is their episode already
-		return
+		return shareOutcome{http.StatusNoContent, "it is their own episode"}, nil
 	}
 	if _, err := s.store.GetShare(r.Context(), recipient.ID, ownerID, slug); err == nil {
-		w.WriteHeader(http.StatusNoContent) // already in their feed
-		return
+		return shareOutcome{http.StatusNoContent, "already in their feed"}, nil
 	}
 	err = s.store.AddShare(r.Context(), store.Share{
 		UserID:   recipient.ID,
@@ -1354,10 +1458,9 @@ func (s *server) handleShare(w http.ResponseWriter, r *http.Request, u store.Use
 		SharedAt: time.Now().UTC(),
 	})
 	if err != nil {
-		s.fail(w, err)
-		return
+		return shareOutcome{}, err
 	}
-	w.WriteHeader(http.StatusCreated)
+	return shareOutcome{http.StatusCreated, ""}, nil
 }
 
 // handleRemoveShare takes a shared episode out of the caller's own feed.

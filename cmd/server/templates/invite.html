@@ -7,7 +7,7 @@
      download — a download would outlive the Owner's delete. */}}
 <article class="card">
   {{if .HasEpisode}}
-  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}" alt="Cover art">{{end}}
+  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}?s=thumb" alt="Cover art">{{end}}
   <h1>{{.EpisodeTitle}}</h1>
   <p class="muted"><strong>{{.Inviter}}</strong> sent you this episode.</p>
 

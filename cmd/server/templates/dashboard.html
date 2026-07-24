@@ -6,7 +6,7 @@
   <aside class="side">
     <section class="card id-block">
       {{if .CoverURL}}
-      <img class="cover" src="{{.CoverURL}}" alt="Cover art for {{.User.Title}}">
+      <img class="cover" src="{{.CoverURL}}?s=thumb" alt="Cover art for {{.User.Title}}">
       {{else}}
       <div class="cover-fallback" aria-hidden="true">{{printf "%.1s" .User.Title}}</div>
       {{end}}
@@ -71,7 +71,7 @@
       <p class="ep-meta">{{.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
       {{template "player" .Player}}
       <div class="actions">
-        <input class="share-to" list="users-dl" placeholder="friend's username…"
+        <input class="share-to" list="users-dl" placeholder="usernames, comma-separated…"
                autocomplete="off" spellcheck="false">
         <button data-share><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-share"/></svg>Share</button>
         <button class="quiet" data-ep-invite
@@ -134,7 +134,9 @@ document.querySelectorAll(".share-to").forEach((input) => {
   input.oninput = () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(async () => {
-      const hits = await api("/me/users?q=" + encodeURIComponent(input.value));
+      // The box may already hold names; suggest against the one being typed.
+      const q = input.value.split(/[,\s]+/).filter(Boolean).pop() || "";
+      const hits = await api("/me/users?q=" + encodeURIComponent(q));
       document.getElementById("users-dl").innerHTML = hits
         .map((h) => `<option value="${h.id}">${h.title}</option>`)
         .join("");
@@ -146,13 +148,24 @@ document.querySelectorAll(".episode").forEach((ep) => {
   const msg = ep.querySelector(".msg");
   const say = (text) => { msg.textContent = text; msg.hidden = false; };
   ep.querySelector("[data-share]").onclick = async () => {
-    const to = ep.querySelector(".share-to").value.trim();
+    const box = ep.querySelector(".share-to");
+    const to = box.value.trim();
     if (!to) return say("Type a username first.");
     try {
-      await api(`/me/feed/${ep.dataset.owner}/${ep.dataset.slug}/share`,
+      const res = await api(`/me/feed/${ep.dataset.owner}/${ep.dataset.slug}/share`,
         {method: "POST", body: JSON.stringify({to})});
-      say(`Shared with ${to} ✓ — it's already in their feed.`);
-      ep.querySelector(".share-to").value = "";
+      if (res && (res.shared || res.failed)) {
+        // Several recipients: a per-name summary came back.
+        const parts = [];
+        if (res.shared && res.shared.length) parts.push(`Shared with ${res.shared.join(", ")} ✓`);
+        for (const [name, why] of Object.entries(res.failed || {})) parts.push(`${name} — ${why}`);
+        say(parts.join(" · "));
+        if (res.shared && res.shared.length) box.value = "";
+      } else {
+        // One recipient: a bare 201/204, it's in their feed.
+        say(`Shared with ${to} ✓ — it's in their feed.`);
+        box.value = "";
+      }
     } catch (err) { say("Could not share: " + err.message); }
   };
   ep.querySelector("[data-ep-invite]").onclick = async () => {

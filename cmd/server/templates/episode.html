@@ -2,7 +2,7 @@
 {{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
 {{define "content"}}
 <article class="card">
-  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}" alt="Cover art for this feed">{{end}}
+  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}?s=thumb" alt="Cover art for this feed">{{end}}
   <h1>{{.Episode.Title}}</h1>
   <p class="ep-meta">{{.Episode.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
 

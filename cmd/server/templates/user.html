@@ -1,7 +1,7 @@
 {{define "title"}}{{.User.Title}}{{end}}
 {{define "content"}}
 <article class="card">
-  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}" alt="Cover art for {{.User.Title}}">{{end}}
+  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}?s=thumb" alt="Cover art for {{.User.Title}}">{{end}}
   <h1>{{.User.Title}}</h1>
   {{with .User.Description}}<p class="description">{{.}}</p>{{end}}
   {{template "subscribe" .}}

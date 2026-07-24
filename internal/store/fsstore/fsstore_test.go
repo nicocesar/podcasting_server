@@ -352,7 +352,10 @@ func TestCover(t *testing.T) {
 	if _, _, err := s.OpenCover(ctx, "alice"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("cover on fresh user: got %v, want ErrNotFound", err)
 	}
-	if err := s.SetCover(ctx, "alice", "image/png", strings.NewReader("PNGBYTES")); err != nil {
+	if _, _, err := s.OpenCoverThumb(ctx, "alice"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("thumb on fresh user: got %v, want ErrNotFound", err)
+	}
+	if err := s.SetCover(ctx, "alice", "image/png", strings.NewReader("PNGBYTES"), strings.NewReader("THUMBJPEG")); err != nil {
 		t.Fatal(err)
 	}
 	rc, ct, err := s.OpenCover(ctx, "alice")
@@ -363,6 +366,16 @@ func TestCover(t *testing.T) {
 	b, _ := io.ReadAll(rc)
 	if ct != "image/png" || string(b) != "PNGBYTES" {
 		t.Fatalf("got %q %q", ct, b)
+	}
+	// The thumbnail round-trips and is always served as JPEG.
+	trc, tct, err := s.OpenCoverThumb(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trc.Close()
+	tb, _ := io.ReadAll(trc)
+	if tct != "image/jpeg" || string(tb) != "THUMBJPEG" {
+		t.Fatalf("thumb: got %q %q", tct, tb)
 	}
 	// The user keeps their cover type on metadata reload.
 	u, _ := s.GetUser(ctx, "alice")

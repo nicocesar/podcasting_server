@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -236,15 +237,28 @@ func TestSessionCoverKeepsTokenOutOfPages(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
 
-	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), strings.NewReader("JPEGBYTES"), "image/jpeg")
+	jpg := smallJPEG(t, 300, 300) // under the ceiling: stored verbatim
+	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), bytes.NewReader(jpg), "image/jpeg")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		t.Fatalf("set cover: %d", resp.StatusCode)
 	}
 
 	resp, body := getBody(t, ts.URL+"/me/image", alice.sessionCreds())
-	if resp.StatusCode != http.StatusOK || body != "JPEGBYTES" {
-		t.Fatalf("GET /me/image: %d %q", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK || body != string(jpg) {
+		t.Fatalf("GET /me/image: %d (%d bytes)", resp.StatusCode, len(body))
+	}
+
+	// ?s=thumb serves the JPEG thumbnail, distinct from the full image.
+	tResp, tBody := getBody(t, ts.URL+"/me/image?s=thumb", alice.sessionCreds())
+	if tResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /me/image?s=thumb: %d", tResp.StatusCode)
+	}
+	if ct := tResp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("thumb Content-Type = %q, want image/jpeg", ct)
+	}
+	if tBody == string(jpg) {
+		t.Errorf("thumb should not be byte-identical to the full image")
 	}
 	// A URL behind a session must never land in a shared cache.
 	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "private") {
@@ -265,8 +279,8 @@ func TestSessionCoverKeepsTokenOutOfPages(t *testing.T) {
 	}
 	raw, _ := io.ReadAll(htmlResp.Body)
 	htmlResp.Body.Close()
-	if !strings.Contains(string(raw), `src="/me/image"`) {
-		t.Errorf("dashboard does not use the session cover URL")
+	if !strings.Contains(string(raw), `src="/me/image?s=thumb"`) {
+		t.Errorf("dashboard does not use the session cover thumbnail URL")
 	}
 	if strings.Contains(string(raw), "/f/"+feedToken(alice)+"/cover") {
 		t.Errorf("dashboard still fetches its cover through the Feed Token")

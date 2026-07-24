@@ -7,7 +7,7 @@
      someone presses play; data-seconds lets the scrubber render at full
      length before then. */}}
 <div class="player" data-key="{{.Key}}" data-seconds="{{.Seconds}}"
-     data-title="{{.Title}}"{{with .CoverURL}} data-cover="{{.}}"{{end}}>
+     data-title="{{.Title}}"{{with .CoverURL}} data-cover="{{.}}?s=thumb"{{end}}>
   <audio controls preload="none" src="{{.AudioURL}}"></audio>
 </div>
 {{end}}

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -275,7 +276,7 @@ func TestAuthBoundaries(t *testing.T) {
 func TestPublicSurface(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), strings.NewReader("JPEG"), "image/jpeg")
+	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), bytes.NewReader(smallJPEG(t, 200, 200)), "image/jpeg")
 	resp.Body.Close()
 	resp = publishEpisode(t, ts, alice, "2026-07-06-morning",
 		`{"title":"Secret Episode Title","description":"Secret summary."}`, "MP3")
@@ -518,6 +519,55 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	}
 	if xml := fetchFeed(t, bob, ""); strings.Contains(xml, "Alice Morning") {
 		t.Errorf("deleted episode still in bob's feed:\n%s", xml)
+	}
+}
+
+// TestShareMultipleRecipients covers the "nico, ldipenti" case: one POST
+// naming several users, with a mix of good names, an unknown one, a self
+// reference and a duplicate, all reported back per name.
+func TestShareMultipleRecipients(t *testing.T) {
+	ts := newTestServer(t)
+	alice := createUser(t, ts, "alice")
+	bob := createUser(t, ts, "bobby")
+	carol := createUser(t, ts, "carol")
+
+	resp := publishEpisode(t, ts, alice, "2026-07-06-morning", `{"title":"Alice Morning"}`, "A")
+	resp.Body.Close()
+
+	// bobby appears twice (deduped), plus an unknown name and alice herself.
+	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bobby, carol nobody, alice, bobby")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("multi-share: got %d, want 200", resp.StatusCode)
+	}
+	var res struct {
+		Shared []string          `json:"shared"`
+		Failed map[string]string `json:"failed"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	got := map[string]bool{}
+	for _, name := range res.Shared {
+		got[name] = true
+	}
+	if len(res.Shared) != 2 || !got["bobby"] || !got["carol"] {
+		t.Errorf("shared = %v, want exactly [bobby carol]", res.Shared)
+	}
+	if _, ok := res.Failed["nobody"]; !ok {
+		t.Errorf("expected 'nobody' in failed, got %v", res.Failed)
+	}
+	if _, ok := res.Failed["alice"]; !ok {
+		t.Errorf("expected 'alice' (self) in failed, got %v", res.Failed)
+	}
+
+	// The share actually landed in both recipients' feeds.
+	if xml := fetchFeed(t, bob, ""); !strings.Contains(xml, "Alice Morning") {
+		t.Errorf("bob's feed missing the shared episode:\n%s", xml)
+	}
+	if xml := fetchFeed(t, carol, ""); !strings.Contains(xml, "Alice Morning") {
+		t.Errorf("carol's feed missing the shared episode:\n%s", xml)
 	}
 }
 
@@ -1092,13 +1142,15 @@ func TestCoverRoundTrip(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
 
-	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), strings.NewReader("JPEGBYTES"), "image/jpeg")
+	jpg := smallJPEG(t, 400, 400) // under the ceiling: stored verbatim
+	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), bytes.NewReader(jpg), "image/jpeg")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("set cover: %d", resp.StatusCode)
 	}
 
-	// The feed advertises the cover inside its capability namespace.
+	// The feed advertises the full-size cover (no ?s=thumb) inside its
+	// capability namespace — Apple wants the large image.
 	coverURL := alice.feedBase() + "/cover"
 	if xml := fetchFeed(t, alice, ""); !strings.Contains(xml, coverURL) {
 		t.Errorf("feed missing itunes:image %s:\n%s", coverURL, xml)
@@ -1107,8 +1159,8 @@ func TestCoverRoundTrip(t *testing.T) {
 	resp = do(t, "GET", coverURL, "", nil, "")
 	img, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 200 || string(img) != "JPEGBYTES" || resp.Header.Get("Content-Type") != "image/jpeg" {
-		t.Fatalf("get cover: %d %q %q", resp.StatusCode, img, resp.Header.Get("Content-Type"))
+	if resp.StatusCode != 200 || string(img) != string(jpg) || resp.Header.Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("get cover: %d (%d bytes) %q", resp.StatusCode, len(img), resp.Header.Get("Content-Type"))
 	}
 
 	// Wrong content type rejected.
@@ -1119,10 +1171,52 @@ func TestCoverRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCoverThumbFallback: a cover with no thumbnail (uploaded before
+// thumbnails existed) must still serve the full image under ?s=thumb
+// rather than 404.
+func TestCoverThumbFallback(t *testing.T) {
+	dataDir := t.TempDir()
+	st, err := fsstore.New(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := New(Config{
+		Store:         st,
+		AdminToken:    adminToken,
+		SessionSecret: "test-session-secret",
+		Assets:        os.DirFS("../../cmd/server"),
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(handler)
+	t.Cleanup(ts.Close)
+	alice := createUser(t, ts, "alice")
+
+	jpg := smallJPEG(t, 300, 300)
+	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), bytes.NewReader(jpg), "image/jpeg")
+	resp.Body.Close()
+
+	// Simulate a pre-thumbnail cover by deleting the thumb file on disk
+	// (fsstore layout: {root}/{id}/cover_thumb.jpg).
+	if err := os.Remove(filepath.Join(dataDir, "alice", "cover_thumb.jpg")); err != nil {
+		t.Fatalf("remove thumb: %v", err)
+	}
+
+	tResp, tBody := getBody(t, ts.URL+"/me/image?s=thumb", alice.sessionCreds())
+	if tResp.StatusCode != http.StatusOK {
+		t.Fatalf("?s=thumb with no thumb: got %d, want 200 (fallback to full)", tResp.StatusCode)
+	}
+	if tBody != string(jpg) {
+		t.Errorf("fallback should serve the full image bytes")
+	}
+}
+
 func TestUpdateMeKeepsCover(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), strings.NewReader("JPEG"), "image/jpeg")
+	resp := do(t, "PUT", ts.URL+"/me/image", alice.publishCreds(), bytes.NewReader(smallJPEG(t, 200, 200)), "image/jpeg")
 	resp.Body.Close()
 
 	// Re-PUT the feed settings; cover must survive.
