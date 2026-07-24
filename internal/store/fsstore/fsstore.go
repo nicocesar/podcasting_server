@@ -535,6 +535,21 @@ func (s *Store) ListInvites(_ context.Context, inviterID string) ([]store.Invite
 	return mine, nil
 }
 
+func (s *Store) ListEpisodeInvites(_ context.Context, ownerID string) ([]store.Invite, error) {
+	invs, err := s.readInvites()
+	if err != nil {
+		return nil, err
+	}
+	mine := []store.Invite{}
+	for _, inv := range invs {
+		if inv.OwnerID == ownerID {
+			mine = append(mine, inv)
+		}
+	}
+	sort.Slice(mine, func(i, j int) bool { return mine[i].CreatedAt.After(mine[j].CreatedAt) })
+	return mine, nil
+}
+
 func (s *Store) DeleteInvite(_ context.Context, token string) error {
 	return s.removeInvites(func(inv store.Invite) bool { return inv.Token == token })
 }

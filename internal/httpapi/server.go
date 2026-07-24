@@ -37,9 +37,12 @@ import (
 // requests at 32 MiB; this is a backstop for local development.
 const maxUploadBytes = 256 << 20
 
-// inviteTTL bounds how long an unredeemed Invite stays a live door into
-// the system (ADR 0007).
-const inviteTTL = 7 * 24 * time.Hour
+// inviteTTL bounds how long an Invite lives: one clock for both of the
+// things it does, playing its Episode and admitting a User. ADR 0007
+// chose 7 days when an Invite was only a door; a link that visibly still
+// plays should still open, so ADR 0014 widened it to 30 and accepted the
+// longer-lived door as the price of one comprehensible rule.
+const inviteTTL = 30 * 24 * time.Hour
 
 type Config struct {
 	Store store.Store
@@ -161,7 +164,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplUser, []string{"templates/layout.html", "templates/user.html", "templates/fragments/*.html"}},
 		{&s.tmplEpisode, []string{"templates/layout.html", "templates/episode.html", "templates/fragments/*.html"}},
 		{&s.tmplLogin, []string{"templates/layout.html", "templates/login.html"}},
-		{&s.tmplInvite, []string{"templates/layout.html", "templates/invite.html"}},
+		{&s.tmplInvite, []string{"templates/layout.html", "templates/invite.html", "templates/fragments/*.html"}},
 		{&s.tmplWelcome, []string{"templates/layout.html", "templates/welcome.html", "templates/fragments/*.html"}},
 		{&s.tmplDashboard, []string{"templates/layout.html", "templates/dashboard.html", "templates/fragments/*.html"}},
 		{&s.tmplNotFound, []string{"templates/layout.html", "templates/notfound.html"}},
@@ -196,8 +199,13 @@ func New(cfg Config) (http.Handler, error) {
 	// The Redemption page: the only way to join (ADR 0007). Invalid,
 	// expired, and redeemed tokens are indistinguishable from any other
 	// 404.
-	mux.HandleFunc("GET /invites/{token}", s.handleInvitePage)
-	mux.HandleFunc("POST /invites/{token}", s.handleRedeem)
+	// An Invite's token is a capability like any other: it plays one
+	// Episode and admits one User (ADR 0014), so its namespace gets the
+	// same no-referrer treatment as /f/.
+	mux.HandleFunc("GET /invites/{token}", s.guest(s.handleInvitePage))
+	mux.HandleFunc("POST /invites/{token}", s.guest(s.handleRedeem))
+	mux.HandleFunc("GET /invites/{token}/audio.mp3", s.guest(s.handleInviteAudio))
+	mux.HandleFunc("GET /invites/{token}/cover", s.guest(s.handleInviteCover))
 	mux.Handle("GET /static/", http.StripPrefix("/static/",
 		cacheControl("public, max-age=86400", http.FileServerFS(static))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -329,6 +337,16 @@ type authedHandler func(w http.ResponseWriter, r *http.Request, u store.User)
 // that need the caller to *be* an admin but do not care which one.
 func ignoreUser(h http.HandlerFunc) authedHandler {
 	return func(w http.ResponseWriter, r *http.Request, _ store.User) { h(w, r) }
+}
+
+// guest wraps the Invite namespace, whose URLs are capabilities held by
+// people with no account. Same reasoning as feed: a link followed out of
+// one of these pages must not carry the token in a Referer header.
+func (s *server) guest(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		h(w, r)
+	}
 }
 
 // feed resolves the {token} path segment to its User. An unknown token
@@ -816,9 +834,30 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
+	// One query covers the whole Dashboard: every live link to anything
+	// this user owns, grouped by Episode below (ADR 0014).
+	invites, err := s.store.ListEpisodeInvites(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	now := time.Now()
+	links := map[string][]episodeLink{}
+	for _, inv := range invites {
+		if !inv.Live(now) {
+			continue
+		}
+		links[inv.Slug] = append(links[inv.Slug], episodeLink{
+			Token:    inv.Token,
+			Minter:   inv.InviterID,
+			Expires:  daysLeft(inv.ExpiresAt),
+			Redeemed: inv.RedeemedBy != "",
+		})
+	}
 	views := make([]episodeView, 0, len(episodes))
 	for _, ep := range episodes {
 		views = append(views, episodeView{
+			Links:           links[ep.Slug],
 			Episode:         ep,
 			Aired:           relativeDate(ep.PublishedAt),
 			Duration:        humanDuration(ep.DurationSec),
@@ -861,9 +900,38 @@ type episodeView struct {
 	// namespace — the Dashboard title links to it.
 	PageURL string
 	Player  playerView
+	// Links are the live Invites carrying this Episode — every way it
+	// can currently be heard outside the membership (ADR 0014).
+	Links []episodeLink
 	// NeedsCharacters offers the "save characters" backfill button: a
 	// story episode whose cast was never extracted.
 	NeedsCharacters bool
+}
+
+// episodeLink is one live Invite to an Episode, as its Owner sees it:
+// who minted it, when it dies, and whether it has already admitted
+// someone. The Owner may revoke any of them.
+type episodeLink struct {
+	Token    string
+	Minter   string
+	Expires  string
+	Redeemed bool
+}
+
+// daysLeft says how long something has, in whole days, for a UI where
+// "12 days left" is the useful precision and a timestamp is not.
+func daysLeft(until time.Time) string {
+	d := time.Until(until)
+	switch days := int(d.Hours() / 24); {
+	case d <= 0:
+		return "expired"
+	case days == 0:
+		return "today"
+	case days == 1:
+		return "1 day left"
+	default:
+		return fmt.Sprintf("%d days left", days)
+	}
 }
 
 // playerView is everything the inline Player needs, and nothing else:
@@ -1551,13 +1619,20 @@ func (s *server) handleListInvites(w http.ResponseWriter, r *http.Request, u sto
 	s.writeJSON(w, http.StatusOK, views)
 }
 
+// handleRevokeInvite kills an Invite. Two people may: whoever minted it,
+// and the Owner of the Episode it carries — the Owner's lever against a
+// link they did not mint, short of deleting the Episode for everyone
+// (ADR 0014).
 func (s *server) handleRevokeInvite(w http.ResponseWriter, r *http.Request, u store.User) {
 	inv, err := s.store.GetInvite(r.Context(), r.PathValue("token"))
-	if err != nil || inv.InviterID != u.ID {
+	if err != nil || (inv.InviterID != u.ID && inv.OwnerID != u.ID) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if inv.RedeemedBy != "" {
+	// A spent Invite that still plays is exactly what an Owner needs to
+	// be able to kill, so redemption no longer blocks revocation — it
+	// only means the door is already closed.
+	if inv.RedeemedBy != "" && inv.OwnerID != u.ID {
 		http.Error(w, "already redeemed", http.StatusConflict)
 		return
 	}
@@ -1568,34 +1643,74 @@ func (s *server) handleRevokeInvite(w http.ResponseWriter, r *http.Request, u st
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// invitePage is the template data for the Redemption page.
+// invitePage is the template data for the invite page: the Episode a
+// Guest may hear, and the Redemption form underneath it.
 type invitePage struct {
-	Inviter       string
-	EpisodeTitle  string
+	Inviter            string
+	EpisodeTitle       string
+	EpisodeDescription string
+	CoverURL           string
+	Player             playerView
+	HasEpisode         bool
+	// Redeemable is false once the Invite has been spent. The Episode
+	// keeps playing for the rest of its term; only the door has closed.
+	Redeemable    bool
 	Username      string
 	Error         string
 	GoogleEnabled bool
 }
 
-// liveInvite loads a redeemable invite or renders the styled 404 — an
-// invalid, expired, or spent token looks like any other missing page.
+// liveInvite loads an invite that still plays, or renders the styled 404
+// — an invalid or expired token looks like any other missing page. A
+// spent invite is still live: Redemption closes the door, not the sound
+// (ADR 0014). Callers that admit users check Redeemable themselves.
 func (s *server) liveInvite(w http.ResponseWriter, r *http.Request) (store.Invite, bool) {
 	inv, err := s.store.GetInvite(r.Context(), r.PathValue("token"))
-	if err != nil || !inv.Redeemable(time.Now()) {
+	if err != nil || !inv.Live(time.Now()) {
 		s.renderNotFound(w)
 		return store.Invite{}, false
 	}
 	return inv, true
 }
 
+// guestEpisode resolves the Episode an Invite carries, for someone with
+// no account. A dead payload (the Owner deleted the Episode) reports
+// missing and the page silently omits it, consistent with share
+// semantics (ADR 0006) — an Owner's delete reaches Guests too.
+func (s *server) guestEpisode(r *http.Request, inv store.Invite) (store.Episode, bool) {
+	if inv.OwnerID == "" {
+		return store.Episode{}, false
+	}
+	ep, err := s.store.GetEpisode(r.Context(), inv.OwnerID, inv.Slug)
+	return ep, err == nil
+}
+
 func (s *server) invitePageData(r *http.Request, inv store.Invite) invitePage {
-	data := invitePage{Inviter: inv.InviterID, GoogleEnabled: s.google != nil}
-	if inv.OwnerID != "" {
-		// A dead payload (owner deleted the episode) hides silently,
-		// consistent with share semantics (ADR 0006).
-		if ep, err := s.store.GetEpisode(r.Context(), inv.OwnerID, inv.Slug); err == nil {
-			data.EpisodeTitle = ep.Title
-		}
+	data := invitePage{
+		Inviter:       inv.InviterID,
+		GoogleEnabled: s.google != nil,
+		Redeemable:    inv.Redeemable(time.Now()),
+	}
+	ep, ok := s.guestEpisode(r, inv)
+	if !ok {
+		return data
+	}
+	// Everything a Guest gets is addressed inside this invite's own
+	// namespace: one Episode, and no way to ask about any other (ADR
+	// 0014). No download link — that would outlive the Owner's delete.
+	base := "/invites/" + inv.Token
+	data.HasEpisode = true
+	data.EpisodeTitle = ep.Title
+	data.EpisodeDescription = ep.Description
+	data.Player = playerView{
+		AudioURL: base + "/audio.mp3",
+		Title:    ep.Title,
+		Seconds:  ep.DurationSec,
+		Key:      "invite/" + inv.Token,
+	}
+	if owner, err := s.store.GetUser(r.Context(), inv.OwnerID); err == nil && owner.CoverType != "" {
+		data.CoverURL = base + "/cover"
+		data.Player.CoverURL = data.CoverURL
 	}
 	return data
 }
@@ -1608,6 +1723,41 @@ func (s *server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, http.StatusOK, s.tmplInvite, s.invitePageData(r, inv))
 }
 
+// handleInviteAudio streams the one Episode an Invite carries. The token
+// is the whole credential and unlocks nothing else.
+func (s *server) handleInviteAudio(w http.ResponseWriter, r *http.Request) {
+	inv, ok := s.liveInvite(w, r)
+	if !ok {
+		return
+	}
+	ep, found := s.guestEpisode(r, inv)
+	if !found {
+		s.renderNotFound(w)
+		return
+	}
+	s.serveAudio(w, r, ep.OwnerID, ep.Slug)
+}
+
+// handleInviteCover serves the Cover Art of the feed the Episode came
+// from, so the Guest page has a face. Private: the URL is a capability.
+func (s *server) handleInviteCover(w http.ResponseWriter, r *http.Request) {
+	inv, ok := s.liveInvite(w, r)
+	if !ok {
+		return
+	}
+	ep, found := s.guestEpisode(r, inv)
+	if !found {
+		s.renderNotFound(w)
+		return
+	}
+	owner, err := s.store.GetUser(r.Context(), ep.OwnerID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.cover(w, r, owner, "private, max-age=3600")
+}
+
 // handleRedeem turns an Invite into a User. The invitee picks their
 // username and their Login: setting a password finishes right here;
 // "Join with Google" detours through the consent screen and finishes in
@@ -1615,6 +1765,12 @@ func (s *server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	inv, ok := s.liveInvite(w, r)
 	if !ok {
+		return
+	}
+	// Live but spent: the page still plays, the door is closed. An
+	// Invite admits exactly one User, however long it keeps playing.
+	if !inv.Redeemable(time.Now()) {
+		s.renderNotFound(w)
 		return
 	}
 	retry := func(status int, msg, username string) {

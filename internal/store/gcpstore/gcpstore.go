@@ -527,6 +527,26 @@ func (s *Store) ListInvites(ctx context.Context, inviterID string) ([]store.Invi
 	return invs, nil
 }
 
+// ListEpisodeInvites finds live links to an Owner's Episodes. owner_id
+// became an indexed property with ADR 0014, so invites written before
+// that deploy are invisible here — they all expire within a week of it.
+func (s *Store) ListEpisodeInvites(ctx context.Context, ownerID string) ([]store.Invite, error) {
+	var invs []store.Invite
+	q := datastore.NewQuery(kindInvite).FilterField("owner_id", "=", ownerID)
+	keys, err := s.ds.GetAll(ctx, q, &invs)
+	if err != nil {
+		return nil, err
+	}
+	for i, k := range keys {
+		invs[i].Token = k.Name
+	}
+	sort.Slice(invs, func(i, j int) bool { return invs[i].CreatedAt.After(invs[j].CreatedAt) })
+	if invs == nil {
+		invs = []store.Invite{}
+	}
+	return invs, nil
+}
+
 func (s *Store) DeleteInvite(ctx context.Context, token string) error {
 	if _, err := s.GetInvite(ctx, token); err != nil {
 		return err

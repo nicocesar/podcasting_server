@@ -75,7 +75,7 @@
                autocomplete="off" spellcheck="false">
         <button data-share><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-share"/></svg>Share</button>
         <button class="quiet" data-ep-invite
-                title="Invite someone new; this episode will be in their feed"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-user-plus"/></svg>Invite with this</button>
+                title="A link that plays this episode for anyone, and lets one of them join"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-user-plus"/></svg>Send as a link</button>
         {{if .NeedsCharacters}}
         <form method="post" action="/me/episodes/{{.Slug}}/characters"
               title="Extract this story's characters so a later story can bring them back">
@@ -87,6 +87,19 @@
         <code class="feed-url"></code>
         <button class="copy" data-copy><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-copy"/></svg><span>Copy</span></button>
       </div>
+      {{/* Every way this episode can be heard outside the membership.
+           It is yours, so you may kill any of them — including links you
+           did not mint (ADR 0014). */}}
+      {{with .Links}}
+      <ul class="links">
+        {{range .}}
+        <li data-token="{{.Token}}">
+          <span>Link from <strong>{{.Minter}}</strong> · {{.Expires}}{{if .Redeemed}} · joined{{end}}</span>
+          <button class="quiet" data-revoke><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Revoke</button>
+        </li>
+        {{end}}
+      </ul>
+      {{end}}
       <p class="msg muted" hidden></p>
     </div>
     {{end}}
@@ -150,9 +163,19 @@ document.querySelectorAll(".episode").forEach((ep) => {
       row.querySelector("code").textContent = inv.url;
       row.hidden = false;
       wireCopy(row);
-      say("Send this link to one person — the episode will be waiting in their new feed. Valid 7 days.");
-    } catch (err) { say("Could not create invite: " + err.message); }
+      say("Anyone with this link can play the episode, and one of them can join with it. Good for 30 days — revoke it any time.");
+    } catch (err) { say("Could not create link: " + err.message); }
   };
+  ep.querySelectorAll("[data-revoke]").forEach((btn) => {
+    btn.onclick = async () => {
+      const row = btn.closest("li");
+      try {
+        await api("/me/invites/" + row.dataset.token, {method: "DELETE"});
+        row.remove();
+        say("Link revoked — it plays for nobody now.");
+      } catch (err) { say("Could not revoke: " + err.message); }
+    };
+  });
 });
 </script>
 {{end}}

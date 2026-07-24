@@ -702,11 +702,19 @@ func TestInviteRedemption(t *testing.T) {
 		t.Fatalf("carol downloads payload audio: got %d, want 200", resp.StatusCode)
 	}
 
-	// Single use: the spent invite is a 404 for both GET and POST.
+	// Single use applies to the door, not the sound (ADR 0014): the
+	// spent invite still plays its Episode, but admits nobody else.
 	resp = do(t, "GET", url, "", nil, "")
+	spent, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 404 {
-		t.Fatalf("spent invite page: got %d, want 404", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		t.Fatalf("spent invite page: got %d, want 200 (it still plays)", resp.StatusCode)
+	}
+	if !strings.Contains(string(spent), "Morning Update") {
+		t.Errorf("spent invite page no longer names its episode:\n%s", spent)
+	}
+	if strings.Contains(string(spent), `name="username"`) {
+		t.Errorf("spent invite page still offers the join form:\n%s", spent)
 	}
 	resp = redeem(t, url, "dave")
 	resp.Body.Close()

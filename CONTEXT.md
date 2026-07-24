@@ -132,11 +132,22 @@ _Avoid_: playback progress, listen state, played marker
 ### Membership
 
 **Invite**:
-A single-use token, minted by a User (or the admin), that admits exactly
-one new User; it expires after a set time and can be revoked by its
-inviter while pending. May carry one Episode from the inviter's feed,
-delivered as a Share (Sharer = inviter) at Redemption.
-_Avoid_: signup link, referral, access code
+A link, minted by a User (or the admin), that for a set time does two
+things: plays the one Episode it carries, and admits one new User. The
+playing is unlimited; the admitting happens once. It can be revoked
+while it lives — by whoever minted it, and by the Owner of the Episode
+it carries. An Invite carrying no Episode is a plain door and nothing
+else. The Episode is delivered as a Share (Sharer = inviter) at
+Redemption.
+_Avoid_: signup link, referral, access code, share link
+
+**Guest**:
+Someone holding a live Invite who has not redeemed it. A Guest can hear
+the one Episode that Invite carries and learn nothing else — not the
+feed it came from, not what else is in it, not that anything else
+exists. Guests are not Users: Blocks and Mutes are user-to-user and do
+not reach them, so revoking the Invite is the only control over a Guest.
+_Avoid_: anonymous user, visitor, listener
 
 **Redemption**:
 The act of turning an Invite into a User on the public invite page: the

@@ -1,25 +1,50 @@
-{{define "title"}}You're invited{{end}}
+{{define "title"}}{{if .HasEpisode}}{{.EpisodeTitle}}{{else}}You're invited{{end}}{{end}}
+{{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
 {{define "content"}}
+{{/* The Episode leads; joining is offered underneath it (ADR 0014). A
+     Guest gets this one Episode and learns nothing about the feed it came
+     from: no other titles, no feed URL, no subscribe box, no QR, and no
+     download — a download would outlive the Owner's delete. */}}
 <article class="card">
+  {{if .HasEpisode}}
+  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}" alt="Cover art">{{end}}
+  <h1>{{.EpisodeTitle}}</h1>
+  <p class="muted"><strong>{{.Inviter}}</strong> sent you this episode.</p>
+
+  {{template "player" .Player}}
+
+  {{with .EpisodeDescription}}<p class="description">{{.}}</p>{{end}}
+  {{else}}
   <h1>You're invited</h1>
   <p><strong>{{.Inviter}}</strong> invited you to join this private podcast
-  server{{if .EpisodeTitle}} and hear <em>{{.EpisodeTitle}}</em>{{end}}.</p>
-  {{with .Error}}<p class="error">{{.}}</p>{{end}}
-  <form method="post" class="join">
-    <label for="username">Pick your username</label>
-    <input id="username" name="username" value="{{.Username}}"
-           pattern="[a-z0-9][a-z0-9._-]*" maxlength="128" required autofocus
-           autocomplete="off" spellcheck="false">
-    <label for="password">Set a password</label>
-    <input id="password" name="password" type="password" minlength="8"
-           required autocomplete="new-password">
-    <button type="submit" name="method" value="password">Join</button>
-    {{if .GoogleEnabled}}
-    <button type="submit" name="method" value="google" formnovalidate class="quiet"
-            title="No password: your Google account becomes your login">Join with Google instead</button>
+  server.</p>
+  {{end}}
+
+  {{if .Redeemable}}
+  <section class="panel">
+    <p class="eyebrow">{{if .HasEpisode}}Want your own feed?{{else}}Join{{end}}</p>
+    {{if .HasEpisode}}
+    <p class="muted" style="font-size:.9rem">Join and this episode is waiting
+    in your own private feed, ready for your podcast app.</p>
     {{end}}
-  </form>
-  <p class="muted">Lowercase letters, digits, dots, dashes, underscores.
-  This is how others will address you — choose once, it does not change.</p>
+    {{with .Error}}<p class="error">{{.}}</p>{{end}}
+    <form method="post" class="join">
+      <label for="username">Pick your username</label>
+      <input id="username" name="username" value="{{.Username}}"
+             pattern="[a-z0-9][a-z0-9._-]*" maxlength="128" required
+             autocomplete="off" spellcheck="false">
+      <label for="password">Set a password</label>
+      <input id="password" name="password" type="password" minlength="8"
+             required autocomplete="new-password">
+      <button type="submit" name="method" value="password">Join</button>
+      {{if .GoogleEnabled}}
+      <button type="submit" name="method" value="google" formnovalidate class="quiet"
+              title="No password: your Google account becomes your login">Join with Google instead</button>
+      {{end}}
+    </form>
+    <p class="muted">Lowercase letters, digits, dots, dashes, underscores.
+    This is how others will address you — choose once, it does not change.</p>
+  </section>
+  {{end}}
 </article>
 {{end}}

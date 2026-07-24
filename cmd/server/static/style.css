@@ -450,6 +450,23 @@ details.subscribe > div {
   margin: 0.2rem 0 0;
   word-break: break-word;
 }
+/* Live links to this episode: who can hear it outside the membership. */
+.links { list-style: none; padding: 0; margin: 0.6rem 0 0; }
+.links li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.6rem;
+  margin-top: 0.35rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.links li button { padding: 0.25rem 0.55rem; font-size: 0.78rem; }
+
 .ep-title a { color: inherit; text-decoration-color: var(--border); }
 .ep-title a:hover { text-decoration-color: var(--accent); }
 .episode .actions { margin-bottom: 0; }

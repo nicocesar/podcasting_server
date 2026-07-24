@@ -178,15 +178,19 @@ type Share struct {
 	SharedAt time.Time `json:"shared_at" datastore:"shared_at,noindex"`
 }
 
-// Invite is a single-use, expiring token that admits one new User at its
-// Redemption; it may carry one Episode from the inviter's feed, delivered
-// as a Share on redemption. See docs/adr/0007.
+// Invite is an expiring token that does two things until it expires: it
+// plays the one Episode it carries, and it admits one new User at its
+// Redemption (delivering that Episode as a Share). The playing is
+// unlimited and outlives the Redemption; the admitting happens once. An
+// Invite carrying no Episode is a plain door. See docs/adr/0007 and 0014.
 type Invite struct {
 	Token     string `json:"token" datastore:"-"` // key; unguessable
 	InviterID string `json:"inviter" datastore:"inviter_id"`
 
-	// Optional payload: an Episode from the inviter's feed.
-	OwnerID string `json:"owner,omitempty" datastore:"owner_id,noindex"`
+	// Optional payload: an Episode from the inviter's feed. OwnerID is
+	// indexed so an Episode's Owner can find every live link to it and
+	// revoke one without deleting the Episode (ADR 0014).
+	OwnerID string `json:"owner,omitempty" datastore:"owner_id"`
 	Slug    string `json:"slug,omitempty" datastore:"slug,noindex"`
 
 	CreatedAt  time.Time `json:"created_at" datastore:"created_at,noindex"`
@@ -194,9 +198,13 @@ type Invite struct {
 	RedeemedBy string    `json:"redeemed_by,omitempty" datastore:"redeemed_by,noindex"`
 }
 
+// Live reports whether the invite still plays its Episode at t. A spent
+// invite is still live: Redemption closes the door, not the sound.
+func (i Invite) Live(t time.Time) bool { return t.Before(i.ExpiresAt) }
+
 // Redeemable reports whether the invite can still admit a user at t.
 func (i Invite) Redeemable(t time.Time) bool {
-	return i.RedeemedBy == "" && t.Before(i.ExpiresAt)
+	return i.RedeemedBy == "" && i.Live(t)
 }
 
 // Generation stages. A Generation is Active until it reaches done or
@@ -399,6 +407,12 @@ type Store interface {
 	GetInvite(ctx context.Context, token string) (Invite, error)
 	// ListInvites returns the invites minted by inviterID, newest-first.
 	ListInvites(ctx context.Context, inviterID string) ([]Invite, error)
+	// ListEpisodeInvites returns every invite carrying an Episode owned
+	// by ownerID, newest-first — whoever minted it. It answers "who has
+	// a live link to something of mine", so the Owner can revoke one
+	// (ADR 0014). One call covers a whole Dashboard; callers group by
+	// Slug themselves.
+	ListEpisodeInvites(ctx context.Context, ownerID string) ([]Invite, error)
 	DeleteInvite(ctx context.Context, token string) error
 	// RedeemInvite atomically claims the invite for userID, enforcing
 	// single use: ErrNotFound if the token does not exist or is already

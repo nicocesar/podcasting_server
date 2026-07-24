@@ -418,10 +418,16 @@ func TestGoogleRedemption(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("dave's session: %d", resp.StatusCode)
 	}
+	// Spent, but this invite carried no Episode, so there is nothing
+	// left for it to do: the page renders without a join form (ADR 0014).
 	resp = do(t, "GET", inviteURL, "", nil, "")
+	spent, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != 404 {
-		t.Fatalf("spent invite: got %d, want 404", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		t.Fatalf("spent invite: got %d, want 200", resp.StatusCode)
+	}
+	if strings.Contains(string(spent), `name="username"`) {
+		t.Errorf("spent invite still offers the join form:\n%s", spent)
 	}
 
 	// dave is Google-only: unlinking his one Login is refused.
