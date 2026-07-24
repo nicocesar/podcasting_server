@@ -69,7 +69,7 @@ func TestAdminEpisodeCostsReconcilesDollars(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts, st := newEpisodeCostServer(t, upstream.URL)
-	admin := createAdmin(t, ts, "root")
+	admin := createAdmin(t, ts, "chief")
 
 	ctx := context.Background()
 	if err := st.UpsertUser(ctx, store.User{ID: "alice", Title: "Alice"}); err != nil {
@@ -136,7 +136,7 @@ func TestAdminEpisodeCostsPendingWhenBillNotPosted(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts, st := newEpisodeCostServer(t, upstream.URL)
-	admin := createAdmin(t, ts, "root")
+	admin := createAdmin(t, ts, "chief")
 
 	ctx := context.Background()
 	if err := st.UpsertUser(ctx, store.User{ID: "alice", Title: "Alice"}); err != nil {

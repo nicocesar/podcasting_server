@@ -455,7 +455,7 @@ func TestGenerateValidation(t *testing.T) {
 func TestGenerationIsOwnerScoped(t *testing.T) {
 	ts := newGeneratingServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 
 	resp := postGenerate(t, ts, alice, url.Values{
 		"topic": {"private"}, "length": {"2"}, "freshness": {"1"}, "language": {"en"}, "voice": {"male"},
@@ -532,7 +532,7 @@ var storyForm = url.Values{
 func TestGenerateStoriesFlow(t *testing.T) {
 	ts := newGeneratingServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 
 	// The stories form: age band and save-characters, no freshness, and no
 	// cast picker while there is nothing to bring back.
@@ -581,7 +581,7 @@ func TestGenerateStoriesFlow(t *testing.T) {
 	// Sharing the episode brings the cast to bob's picker too (characters
 	// live on the canonical episode; ADR 0006).
 	resp = do(t, "POST", ts.URL+"/me/feed/alice/"+ep.Slug+"/share", alice.publishCreds(),
-		strings.NewReader(`{"to":"bob"}`), "application/json")
+		strings.NewReader(`{"to":"bobby"}`), "application/json")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("share: %d", resp.StatusCode)

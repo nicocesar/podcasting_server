@@ -81,10 +81,10 @@ func TestAdminGenerationTraceRequiresAdmin(t *testing.T) {
 // promotes a second admin without reaching for the shared token.
 func TestAdminSessionCanProvision(t *testing.T) {
 	ts, st := newTraceServer(t)
-	admin := createAdmin(t, ts, "root")
-	bob := createUser(t, ts, "bob")
-	seedTracedGeneration(t, st, "bob")
-	tracePath := ts.URL + "/admin/generations/bob/gen1"
+	admin := createAdmin(t, ts, "chief")
+	bob := createUser(t, ts, "bobby")
+	seedTracedGeneration(t, st, "bobby")
+	tracePath := ts.URL + "/admin/generations/bobby/gen1"
 
 	// Before promotion bob cannot even see that the surface exists.
 	resp := do(t, "GET", tracePath, bob.sessionCreds(), nil, "")
@@ -93,7 +93,7 @@ func TestAdminSessionCanProvision(t *testing.T) {
 		t.Fatalf("pre-promotion status = %d, want 404", resp.StatusCode)
 	}
 
-	resp = do(t, "POST", ts.URL+"/admin/users/bob/admin", admin.sessionCreds(), nil, "")
+	resp = do(t, "POST", ts.URL+"/admin/users/bobby/admin", admin.sessionCreds(), nil, "")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -115,7 +115,7 @@ func TestAdminSessionCanProvision(t *testing.T) {
 // in a single call.
 func TestProvisioningBoundaries(t *testing.T) {
 	ts, _ := newTraceServer(t)
-	admin := createAdmin(t, ts, "root")
+	admin := createAdmin(t, ts, "chief")
 	alice := createUser(t, ts, "alice")
 	createUser(t, ts, "victim")
 
@@ -157,10 +157,10 @@ func TestProvisioningBoundaries(t *testing.T) {
 
 func TestAdminGenerationTraceJSON(t *testing.T) {
 	ts, st := newTraceServer(t)
-	admin := createAdmin(t, ts, "root")
-	seedTracedGeneration(t, st, "root")
+	admin := createAdmin(t, ts, "chief")
+	seedTracedGeneration(t, st, "chief")
 
-	resp := do(t, "GET", ts.URL+"/admin/generations/root/gen1", admin.sessionCreds(), nil, "")
+	resp := do(t, "GET", ts.URL+"/admin/generations/chief/gen1", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
@@ -202,10 +202,10 @@ func TestAdminGenerationTraceJSON(t *testing.T) {
 
 func TestAdminGenerationTraceHTML(t *testing.T) {
 	ts, st := newTraceServer(t)
-	admin := createAdmin(t, ts, "root")
-	seedTracedGeneration(t, st, "root")
+	admin := createAdmin(t, ts, "chief")
+	seedTracedGeneration(t, st, "chief")
 
-	req, err := http.NewRequest("GET", ts.URL+"/admin/generations/root/gen1", nil)
+	req, err := http.NewRequest("GET", ts.URL+"/admin/generations/chief/gen1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

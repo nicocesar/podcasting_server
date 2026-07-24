@@ -327,6 +327,15 @@ func New(cfg Config) (http.Handler, error) {
 
 // --- middleware ---
 
+// upperFirst capitalises the first byte, turning a lower-case rule
+// message into a sentence. The messages are ASCII, so a byte is enough.
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
 func hashEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 && a != ""
 }
@@ -1408,8 +1417,8 @@ func (s *server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // exactly once in the response; only the hash is stored (ADR 0005).
 func (s *server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("user")
-	if !store.ValidID(id) {
-		http.Error(w, "invalid user id (want ^[a-z0-9][a-z0-9._-]*$)", http.StatusBadRequest)
+	if err := store.ValidateUsername(id); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if _, err := s.store.GetUser(r.Context(), id); err == nil {
@@ -1780,8 +1789,9 @@ func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	username := r.FormValue("username")
-	if !store.ValidID(username) {
-		retry(http.StatusBadRequest, "That username is not valid: lowercase letters, digits, dots, dashes, underscores.", username)
+	if err := store.ValidateUsername(username); err != nil {
+		// The message names the rule broken, so it can be shown as-is.
+		retry(http.StatusBadRequest, upperFirst(err.Error())+".", username)
 		return
 	}
 	// Availability is checked before the invite is spent, so a taken

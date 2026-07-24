@@ -30,8 +30,11 @@
     {{with .Error}}<p class="error">{{.}}</p>{{end}}
     <form method="post" class="join">
       <label for="username">Pick your username</label>
+      {{/* The pattern mirrors ValidateUsername's charset and length; the
+           reserved-word check a pattern cannot express is enforced on the
+           server, which returns a message this form shows on reload. */}}
       <input id="username" name="username" value="{{.Username}}"
-             pattern="[a-z0-9][a-z0-9._-]*" maxlength="128" required
+             pattern="[a-z0-9]{4,20}" minlength="4" maxlength="20" required
              autocomplete="off" spellcheck="false">
       <label for="password">Set a password</label>
       <input id="password" name="password" type="password" minlength="8"
@@ -42,7 +45,7 @@
               title="No password: your Google account becomes your login">Join with Google instead</button>
       {{end}}
     </form>
-    <p class="muted">Lowercase letters, digits, dots, dashes, underscores.
+    <p class="muted">4 to 20 characters, lowercase letters and digits only.
     This is how others will address you — choose once, it does not change.</p>
   </section>
   {{end}}

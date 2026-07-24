@@ -58,7 +58,7 @@ func TestAdminCostsProxiesTheCostReport(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts := newCostReportingServer(t, upstream.URL)
-	admin := createAdmin(t, ts, "root")
+	admin := createAdmin(t, ts, "chief")
 
 	resp := do(t, "GET", ts.URL+"/admin/costs?days=7", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
@@ -101,7 +101,7 @@ func TestAdminUsageProxiesTheUsageReport(t *testing.T) {
 	}))
 	defer upstream.Close()
 	ts := newCostReportingServer(t, upstream.URL)
-	admin := createAdmin(t, ts, "root")
+	admin := createAdmin(t, ts, "chief")
 
 	resp := do(t, "GET", ts.URL+"/admin/usage", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
@@ -112,7 +112,7 @@ func TestAdminUsageProxiesTheUsageReport(t *testing.T) {
 
 func TestAdminCostsUnconfigured(t *testing.T) {
 	ts := newTestServer(t) // no ANTHROPIC_ADMIN_KEY
-	admin := createAdmin(t, ts, "root")
+	admin := createAdmin(t, ts, "chief")
 	resp := do(t, "GET", ts.URL+"/admin/costs", admin.sessionCreds(), nil, "")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {

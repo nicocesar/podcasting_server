@@ -118,7 +118,7 @@ func sessionFrom(t *testing.T, resp *http.Response) string {
 func TestAPIKeyLifecycle(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 
 	// A key cannot mint or revoke keys — Credential Management is
 	// session-only.
@@ -360,7 +360,7 @@ func TestGoogleLinkLoginUnlink(t *testing.T) {
 	}
 
 	// A second account cannot claim the same Google identity.
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 	req, _ = http.NewRequest("GET", ts.URL+"/auth/google?link=1", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: bob.Session})
 	start, err = noRedirect.Do(req)

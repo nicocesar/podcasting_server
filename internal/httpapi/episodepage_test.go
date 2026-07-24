@@ -86,7 +86,7 @@ func TestEpisodePage(t *testing.T) {
 func TestEpisodePageFollowsSharing(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 
 	resp := publishEpisode(t, ts, alice, "2026-07-06-morning", `{"title":"Alice Morning"}`, "A")
 	resp.Body.Close()
@@ -102,7 +102,7 @@ func TestEpisodePageFollowsSharing(t *testing.T) {
 		t.Errorf("unshared enclosure: got %d, want 404", resp.StatusCode)
 	}
 
-	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bob")
+	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bobby")
 	resp.Body.Close()
 
 	resp, body := getBody(t, inBobsFeed, "")
@@ -171,7 +171,7 @@ func TestDashboardCarriesPlayers(t *testing.T) {
 func TestMyEpisodeIsSessionOnly(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 
 	resp := publishEpisode(t, ts, alice, "2026-07-06-morning",
 		`{"title":"Alice Morning","duration_seconds":402}`, "AUDIOBYTES")
@@ -221,7 +221,7 @@ func TestMyEpisodeIsSessionOnly(t *testing.T) {
 	}
 
 	// Once shared, the same URL works for Bob under his own session.
-	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bob")
+	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bobby")
 	resp.Body.Close()
 	resp, body = getBody(t, page, bob.sessionCreds())
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "Alice Morning") {

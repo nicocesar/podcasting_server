@@ -108,11 +108,11 @@ func TestGuestHearsOneEpisode(t *testing.T) {
 func TestOwnerRevokesAnotherMembersLink(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 
 	resp := publishEpisode(t, ts, alice, "2026-07-06-morning", `{"title":"Sleepy Rabbits"}`, "AUDIO")
 	resp.Body.Close()
-	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bob")
+	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bobby")
 	resp.Body.Close()
 
 	// Bob has it in his feed, so he may pass it on (ADR 0006).
@@ -134,7 +134,7 @@ func TestOwnerRevokesAnotherMembersLink(t *testing.T) {
 	raw, _ := io.ReadAll(htmlResp.Body)
 	htmlResp.Body.Close()
 	if !strings.Contains(string(raw), `data-token="`+token+`"`) ||
-		!strings.Contains(string(raw), "<strong>bob</strong>") {
+		!strings.Contains(string(raw), "<strong>bobby</strong>") {
 		t.Fatalf("alice's dashboard does not show bob's link:\n%s", raw)
 	}
 

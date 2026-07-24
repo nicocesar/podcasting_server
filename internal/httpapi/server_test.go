@@ -413,7 +413,7 @@ func TestPublishFeedAndDownload(t *testing.T) {
 func TestSharingForwardingAndPropagation(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
 
 	resp := publishEpisode(t, ts, alice, "2026-07-06-morning",
@@ -424,14 +424,14 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	resp.Body.Close()
 
 	// Carol cannot share what is not in her feed.
-	resp = share(t, ts, carol, "alice", "2026-07-06-morning", "bob")
+	resp = share(t, ts, carol, "alice", "2026-07-06-morning", "bobby")
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("share from outside own feed: got %d, want 404", resp.StatusCode)
 	}
 
 	// Alice shares to Bob (owner share) → Bob forwards to Carol.
-	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bob")
+	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bobby")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("share: got %d, want 201", resp.StatusCode)
@@ -447,8 +447,8 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	xml := fetchFeed(t, bob, "")
 	for _, want := range []string{
 		"<title>Alice Morning</title>", "<title>Bob Morning</title>",
-		"alice/2026-07-06-morning", "bob/2026-07-06-morning",
-		"<itunes:author>alice</itunes:author>", "<itunes:author>bob</itunes:author>",
+		"alice/2026-07-06-morning", "bobby/2026-07-06-morning",
+		"<itunes:author>alice</itunes:author>", "<itunes:author>bobby</itunes:author>",
 	} {
 		if !strings.Contains(xml, want) {
 			t.Errorf("bob's feed missing %q\n%s", want, xml)
@@ -482,7 +482,7 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	}
 	json.NewDecoder(resp.Body).Decode(&entries)
 	resp.Body.Close()
-	if len(entries) != 1 || entries[0].Owner != "alice" || entries[0].Sharer != "bob" {
+	if len(entries) != 1 || entries[0].Owner != "alice" || entries[0].Sharer != "bobby" {
 		t.Fatalf("carol's provenance wrong: %+v", entries)
 	}
 
@@ -494,7 +494,7 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 	if resp.StatusCode != 200 || string(b) != "ALICE-AUDIO" {
 		t.Fatalf("carol download shared audio: %d %q", resp.StatusCode, b)
 	}
-	resp = do(t, "GET", carol.feedBase()+"/bob/2026-07-06-morning.mp3", "", nil, "")
+	resp = do(t, "GET", carol.feedBase()+"/bobby/2026-07-06-morning.mp3", "", nil, "")
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("carol downloads unshared audio: got %d, want 404", resp.StatusCode)
@@ -524,17 +524,17 @@ func TestSharingForwardingAndPropagation(t *testing.T) {
 func TestBlockAndMute(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
 
 	resp := publishEpisode(t, ts, alice, "2026-07-06-morning", `{"title":"Alice Morning"}`, "A")
 	resp.Body.Close()
-	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bob")
+	resp = share(t, ts, alice, "alice", "2026-07-06-morning", "bobby")
 	resp.Body.Close()
 
 	// Carol blocks Bob: Bob's shares are rejected at share time; Alice
 	// can still reach her (block targets the Sharer, ADR 0006).
-	resp = do(t, "PUT", ts.URL+"/me/blocks/bob", carol.publishCreds(), nil, "")
+	resp = do(t, "PUT", ts.URL+"/me/blocks/bobby", carol.publishCreds(), nil, "")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("block: got %d, want 204", resp.StatusCode)
@@ -566,11 +566,11 @@ func TestBlockAndMute(t *testing.T) {
 	}
 
 	// Unblock Bob and his shares land again.
-	resp = do(t, "DELETE", ts.URL+"/me/blocks/bob", carol.publishCreds(), nil, "")
+	resp = do(t, "DELETE", ts.URL+"/me/blocks/bobby", carol.publishCreds(), nil, "")
 	resp.Body.Close()
 	resp = publishEpisode(t, ts, bob, "2026-07-06-noon", `{"title":"Bob Noon"}`, "B")
 	resp.Body.Close()
-	resp = share(t, ts, bob, "bob", "2026-07-06-noon", "carol")
+	resp = share(t, ts, bob, "bobby", "2026-07-06-noon", "carol")
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("share after unblock: got %d, want 201", resp.StatusCode)
@@ -751,7 +751,7 @@ func TestInviteRevocationAndExpiry(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bob")
+	bob := createUser(t, ts, "bobby")
 
 	// Revocation: only the inviter, only while pending.
 	inv := mintInvite(t, ts, alice, "")
@@ -810,7 +810,7 @@ func TestInviteRevocationAndExpiry(t *testing.T) {
 func TestDashboardAndUserSearch(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
-	createUser(t, ts, "bob")
+	createUser(t, ts, "bobby")
 	createUser(t, ts, "bonnie")
 	resp := publishEpisode(t, ts, alice, "2026-07-08-morning", `{"title":"Morning Update"}`, "AUDIO")
 	resp.Body.Close()
@@ -900,7 +900,7 @@ func TestDashboardAndUserSearch(t *testing.T) {
 	}
 	json.NewDecoder(resp.Body).Decode(&hits)
 	resp.Body.Close()
-	if len(hits) != 2 || hits[0].ID != "bob" || hits[1].ID != "bonnie" {
+	if len(hits) != 2 || hits[0].ID != "bobby" || hits[1].ID != "bonnie" {
 		t.Fatalf("search bo: %+v", hits)
 	}
 	resp = do(t, "GET", ts.URL+"/me/users?q=alice", alice.publishCreds(), nil, "")

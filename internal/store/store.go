@@ -7,6 +7,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"slices"
@@ -23,8 +24,73 @@ var ErrNotFound = errors.New("not found")
 // lowercase alphanumerics, dot, dash, underscore.
 var IDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 
-// ValidID reports whether s is acceptable as a User ID or Slug.
+// ValidID reports whether s is acceptable as a User ID or Slug. It is
+// the loose rule: it gates lookups and login, and it is what every
+// stored ID has always satisfied. Creating a *new* username is stricter
+// (ValidateUsername) — but a name that could never be created must still
+// be recognised as the key of an account made under the old rule.
 func ValidID(s string) bool { return IDPattern.MatchString(s) }
+
+// Username rules. A username is a person's public handle: it addresses
+// them in Shares, appears in feed URLs, and sits one typo away from a
+// route name. It is deliberately narrower than an ID — no dots, dashes,
+// or underscores, a floor and a ceiling on length — and it may not be a
+// Reserved word. These apply at creation only; ValidateUsername implies
+// ValidID, so existing accounts are never invalidated by tightening them.
+const (
+	UsernameMinLen = 4
+	UsernameMaxLen = 20
+)
+
+var usernamePattern = regexp.MustCompile(`^[a-z0-9]+$`)
+
+// reservedUsernames are handles no account may claim. Two kinds live
+// here: path segments the router owns (so a username can never shadow or
+// be mistaken for a route — keep this in step with the mux, which
+// TestReservedCoversRoutes enforces), and roles or system identities a
+// stranger should not be able to impersonate. Add freely; it is only
+// ever consulted at account creation.
+var reservedUsernames = func() map[string]bool {
+	words := []string{
+		// Router-owned top-level path segments.
+		"admin", "api", "auth", "callback", "cover", "episode", "episodes",
+		"f", "feed", "generate", "generations", "google", "healthz", "image",
+		"invite", "invites", "login", "logout", "me", "settings", "share",
+		"static", "usage", "user", "users",
+		// Roles and system identities not to be impersonated.
+		"about", "abuse", "anonymous", "everyone", "guest", "help", "host",
+		"mail", "moderator", "mod", "null", "official", "owner", "postmaster",
+		"root", "security", "staff", "support", "system", "webmaster", "www",
+	}
+	m := make(map[string]bool, len(words))
+	for _, w := range words {
+		m[w] = true
+	}
+	return m
+}()
+
+// Reserved reports whether s is a handle no account may claim. Exported
+// so the router's own coverage test can check that every route segment
+// is accounted for.
+func Reserved(s string) bool { return reservedUsernames[s] }
+
+// ValidateUsername reports why s is unacceptable as a new username, or
+// nil if it is fine. The error text is safe to show a user: it names the
+// rule broken, so the form can explain itself. The order matters — a
+// blank or malformed name is reported as such before "taken" or
+// "reserved", which would otherwise leak nonsense.
+func ValidateUsername(s string) error {
+	if len(s) < UsernameMinLen || len(s) > UsernameMaxLen {
+		return fmt.Errorf("username must be %d to %d characters", UsernameMinLen, UsernameMaxLen)
+	}
+	if !usernamePattern.MatchString(s) {
+		return errors.New("username may use only lowercase letters and digits")
+	}
+	if Reserved(s) {
+		return errors.New("that username is reserved")
+	}
+	return nil
+}
 
 // User is a person with an account: exactly one Personal Feed, a publish
 // token (their Generator), and a Feed Token (their podcast client). See
