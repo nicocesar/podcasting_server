@@ -101,6 +101,34 @@ clients. Served inside the Feed Token namespace, so any client that can
 read the feed can fetch the artwork the same way.
 _Avoid_: artwork, thumbnail, logo
 
+**Episode Page**:
+A single Episode rendered as HTML — Cover Art, title, description,
+duration, Player, download link. It has two addresses for the same
+content: `/me/episodes/{owner}/{slug}` for a signed-in browser, and the
+capability form inside the Feed Token namespace (the audio address
+without the `.mp3`). The Dashboard uses the first, so that a listener's
+address bar never holds the key to their whole feed. The second is a
+place to listen, *not* a share link: passing that URL on passes on the
+whole Personal Feed. Sharing one Episode is still a Share or an Invite
+(ADR 0013).
+_Avoid_: episode permalink, public episode link, show notes page
+
+**Player**:
+The in-browser playback control shown on the Dashboard and the Episode
+Page: play/pause, scrubber, ±15s, speed. A thin layer over the browser's
+own `<audio>` element with no third-party code; without JavaScript the
+native controls remain. A convenience surface — the podcast client is
+still where listening mostly happens.
+_Avoid_: media player, widget, embed
+
+**Resume Position**:
+Where a listener stopped inside an Episode in *this browser*. Deliberately
+not domain state: it lives in browser storage only, is never sent to the
+server, and does not follow the User to another device or into their
+podcast client. Do not promote it to a stored record without revisiting
+ADR 0013.
+_Avoid_: playback progress, listen state, played marker
+
 ### Membership
 
 **Invite**:

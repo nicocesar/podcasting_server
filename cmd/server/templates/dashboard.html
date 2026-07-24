@@ -1,4 +1,5 @@
 {{define "title"}}{{.User.Title}}{{end}}
+{{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
 {{define "content"}}
 <div class="dash">
 
@@ -66,8 +67,9 @@
     {{end}}
     {{range .Episodes}}
     <div class="episode" data-owner="{{.OwnerID}}" data-slug="{{.Slug}}">
-      <p class="ep-title">{{.Title}}</p>
+      <p class="ep-title"><a href="{{.PageURL}}">{{.Title}}</a></p>
       <p class="ep-meta">{{.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
+      {{template "player" .Player}}
       <div class="actions">
         <input class="share-to" list="users-dl" placeholder="friend's username…"
                autocomplete="off" spellcheck="false">

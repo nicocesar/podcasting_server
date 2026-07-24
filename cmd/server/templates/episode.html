@@ -1,0 +1,31 @@
+{{define "title"}}{{.Episode.Title}}{{end}}
+{{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
+{{define "content"}}
+<article class="card">
+  {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}" alt="Cover art for this feed">{{end}}
+  <h1>{{.Episode.Title}}</h1>
+  <p class="ep-meta">{{.Episode.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
+
+  {{template "player" .Player}}
+
+  {{with .Episode.Description}}<p class="description">{{.}}</p>{{end}}
+
+  <p class="actions">
+    <a class="button quiet" href="{{.AudioURL}}" download><svg class="icon" width="16" height="16"><use href="#i-arrow"/></svg>Download MP3</a>
+  </p>
+
+  {{/* Two addresses, two truths. Signed in, this page is behind a session
+       and its URL grants nothing. Under /f/{token} the URL *is* the whole
+       feed, so it gets the warning and never a copy-link button (ADR
+       0013). Sharing one episode is Share-to-username or an Invite. */}}
+  {{if .Session}}
+  <p class="actions"><a class="button quiet" href="/me"><svg class="icon" width="16" height="16"><use href="#i-arrow"/></svg>Back to your dashboard</a></p>
+  {{else}}
+  <p class="muted" style="font-size:.82rem">This address is the key to the
+  whole feed — keep it to yourself. To send someone this one episode, share
+  or invite them from your dashboard.</p>
+
+  {{template "subscribe" .}}
+  {{end}}
+</article>
+{{end}}

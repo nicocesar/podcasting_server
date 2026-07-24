@@ -1,0 +1,13 @@
+{{define "player"}}
+{{/* Progressive enhancement (ADR 0013): what ships is a real, working
+     <audio controls>. player.js strips the controls attribute and builds
+     our UI around this same element, so the audio element stays the one
+     source of truth and a blocked script leaves a usable player behind.
+     preload="none" keeps a long Dashboard at zero audio bytes until
+     someone presses play; data-seconds lets the scrubber render at full
+     length before then. */}}
+<div class="player" data-key="{{.Key}}" data-seconds="{{.Seconds}}"
+     data-title="{{.Title}}"{{with .CoverURL}} data-cover="{{.}}"{{end}}>
+  <audio controls preload="none" src="{{.AudioURL}}"></audio>
+</div>
+{{end}}

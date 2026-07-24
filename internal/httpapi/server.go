@@ -93,6 +93,7 @@ type server struct {
 
 	tmplHome       *template.Template
 	tmplUser       *template.Template
+	tmplEpisode    *template.Template
 	tmplLogin      *template.Template
 	tmplInvite     *template.Template
 	tmplWelcome    *template.Template
@@ -134,12 +135,21 @@ func New(cfg Config) (http.Handler, error) {
 		s.log = slog.Default()
 	}
 
-	// The stylesheet URL carries a content hash so a deploy invalidates
-	// cached CSS immediately, while /static keeps its long max-age.
+	// Asset URLs carry a content hash so a deploy invalidates cached CSS
+	// and JS immediately, while /static keeps its long max-age. One hash
+	// covers both files: a version that changes slightly too often costs
+	// one extra fetch, while a stale player is a bug report.
 	s.assetVersion = "dev"
-	if b, err := fs.ReadFile(cfg.Assets, "static/style.css"); err == nil {
-		sum := sha256.Sum256(b)
-		s.assetVersion = hex.EncodeToString(sum[:4])
+	h := sha256.New()
+	hashed := false
+	for _, name := range []string{"static/style.css", "static/player.js"} {
+		if b, err := fs.ReadFile(cfg.Assets, name); err == nil {
+			h.Write(b)
+			hashed = true
+		}
+	}
+	if hashed {
+		s.assetVersion = hex.EncodeToString(h.Sum(nil)[:4])
 	}
 
 	// Each page is layout + its content template (+ shared fragments).
@@ -149,10 +159,11 @@ func New(cfg Config) (http.Handler, error) {
 	}{
 		{&s.tmplHome, []string{"templates/layout.html", "templates/home.html"}},
 		{&s.tmplUser, []string{"templates/layout.html", "templates/user.html", "templates/fragments/*.html"}},
+		{&s.tmplEpisode, []string{"templates/layout.html", "templates/episode.html", "templates/fragments/*.html"}},
 		{&s.tmplLogin, []string{"templates/layout.html", "templates/login.html"}},
 		{&s.tmplInvite, []string{"templates/layout.html", "templates/invite.html"}},
 		{&s.tmplWelcome, []string{"templates/layout.html", "templates/welcome.html", "templates/fragments/*.html"}},
-		{&s.tmplDashboard, []string{"templates/layout.html", "templates/dashboard.html"}},
+		{&s.tmplDashboard, []string{"templates/layout.html", "templates/dashboard.html", "templates/fragments/*.html"}},
 		{&s.tmplNotFound, []string{"templates/layout.html", "templates/notfound.html"}},
 		{&s.tmplPrograms, []string{"templates/layout.html", "templates/programs.html"}},
 		{&s.tmplGenerate, []string{"templates/layout.html", "templates/generate.html"}},
@@ -212,7 +223,7 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /f/{token}/feed.xml", s.feed(s.handleFeed))
 	mux.HandleFunc("GET /f/{token}/cover", s.feed(s.handleCover))
 	mux.HandleFunc("GET /f/{token}/qr.png", s.feed(s.handleQR))
-	mux.HandleFunc("GET /f/{token}/{owner}/{file}", s.feed(s.handleAudio))
+	mux.HandleFunc("GET /f/{token}/{owner}/{file}", s.feed(s.handleEpisodeFile))
 
 	// Publishing Contract + Management API: a Bearer API Key or a
 	// session cookie (ADR 0010). Everything is scoped to the caller:
@@ -224,8 +235,14 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /me/users", s.auth(s.handleSearchUsers))
 	mux.HandleFunc("PUT /me", s.auth(s.handleUpdateMe))
 	mux.HandleFunc("PUT /me/image", s.auth(s.handleSetCover))
+	// The same Cover Art the feed serves, addressed under the session so
+	// signed-in pages need no capability in their markup.
+	mux.HandleFunc("GET /me/image", s.session(s.handleMyCover))
 	mux.HandleFunc("GET /me/feed", s.auth(s.handleListFeed))
 	mux.HandleFunc("GET /me/episodes", s.auth(s.handleListEpisodes))
+	// The signed-in listening surface: same Episode Page and enclosure as
+	// /f/{token}/{owner}/{file}, without a capability in the URL.
+	mux.HandleFunc("GET /me/episodes/{owner}/{file}", s.session(s.handleMyEpisode))
 	mux.HandleFunc("PUT /me/episodes/{slug}", s.auth(s.handlePublish))
 	mux.HandleFunc("DELETE /me/episodes/{slug}", s.auth(s.handleDeleteEpisode))
 	mux.HandleFunc("POST /me/feed/{owner}/{slug}/share", s.auth(s.handleShare))
@@ -316,8 +333,15 @@ func ignoreUser(h http.HandlerFunc) authedHandler {
 
 // feed resolves the {token} path segment to its User. An unknown token
 // is a plain 404: capability URLs reveal nothing, valid or not.
+//
+// Every response here has the Feed Token in its own URL, so it also
+// carries Referrer-Policy: no-referrer. Without it, any link a user
+// follows out of one of these pages — a link inside an episode
+// description, say — would hand the whole capability to the
+// destination site in the Referer header.
 func (s *server) feed(h authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		u, err := s.store.GetUserByFeedToken(r.Context(), r.PathValue("token"))
 		if err != nil {
 			s.fail(w, err)
@@ -504,9 +528,105 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 	w.Write(body)
 }
 
-// handleAudio serves an enclosure inside the feed's capability
-// namespace. The feed's owner may fetch their own episodes and any
+// handleEpisodeFile splits one address into two representations of the
+// same Episode: `{slug}.mp3` is the enclosure a podcast client fetches,
+// and the bare `{slug}` is the Episode Page a browser reads (ADR 0013).
+// The suffix is the only thing separating them, so it stays strict.
+func (s *server) handleEpisodeFile(w http.ResponseWriter, r *http.Request, u store.User) {
+	if strings.HasSuffix(r.PathValue("file"), ".mp3") {
+		s.handleAudio(w, r, u)
+		return
+	}
+	s.handleEpisodePage(w, r, u)
+}
+
+// visibleEpisode resolves an Episode inside the feed's capability
+// namespace: the feed's owner may reach their own Episodes and any
 // shared into their feed; everything else does not exist.
+func (s *server) visibleEpisode(r *http.Request, u store.User, ownerID, slug string) (store.Episode, error) {
+	if u.ID != ownerID {
+		if _, err := s.store.GetShare(r.Context(), u.ID, ownerID, slug); err != nil {
+			return store.Episode{}, err
+		}
+	}
+	return s.store.GetEpisode(r.Context(), ownerID, slug)
+}
+
+// handleEpisodePage renders one Episode as HTML: cover, description, and
+// an inline Player. Its URL contains the Feed Token, so it is a place to
+// listen and deliberately not a share link — passing it on would pass on
+// the whole feed. Sharing stays Share-to-username or Invite (ADR 0013).
+func (s *server) handleEpisodePage(w http.ResponseWriter, r *http.Request, u store.User) {
+	s.episodePage(w, r, u, r.PathValue("owner"), r.PathValue("file"), false)
+}
+
+// episodePage renders the Episode Page on either of its two addresses.
+// session picks which one: a signed-in browser gets URLs under /me,
+// which keeps the Feed Token out of the address bar entirely, while a
+// token holder gets capability URLs under /f/{token}.
+func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.User, ownerID, slug string, session bool) {
+	if !store.ValidID(ownerID) || !store.ValidID(slug) {
+		http.NotFound(w, r)
+		return
+	}
+	ep, err := s.visibleEpisode(r, u, ownerID, slug)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	// The cover is the feed's, not the Episode owner's: the RSS channel
+	// already presents shared Episodes under this feed's art, and no
+	// route exposes another user's cover inside this token anyway.
+	cover := coverURL(u)
+	if session {
+		cover = sessionCoverURL(u)
+	}
+	data := struct {
+		Episode  store.Episode
+		Aired    string
+		Duration string
+		CoverURL string
+		AudioURL string
+		Session  bool
+		Player   playerView
+		subscribeBox
+	}{
+		Episode:      ep,
+		Aired:        relativeDate(ep.PublishedAt),
+		Duration:     humanDuration(ep.DurationSec),
+		CoverURL:     cover,
+		AudioURL:     audioURL(u, ep, session),
+		Session:      session,
+		Player:       playerFor(u, ep, session),
+		subscribeBox: s.subscribeBox(r, u),
+	}
+	s.render(w, http.StatusOK, s.tmplEpisode, data)
+}
+
+// handleMyEpisode is the signed-in twin of the capability routes: the
+// same Episode Page and the same enclosure, addressed under /me and
+// authorised by the session cookie the browser already has. A logged-in
+// listener therefore never has the Feed Token in their address bar, so
+// there is no full-feed capability to leak by copying the URL.
+func (s *server) handleMyEpisode(w http.ResponseWriter, r *http.Request, u store.User) {
+	ownerID := r.PathValue("owner")
+	if slug, ok := strings.CutSuffix(r.PathValue("file"), ".mp3"); ok {
+		if !store.ValidID(ownerID) || !store.ValidID(slug) {
+			http.NotFound(w, r)
+			return
+		}
+		if _, err := s.visibleEpisode(r, u, ownerID, slug); err != nil {
+			s.fail(w, err)
+			return
+		}
+		s.serveAudio(w, r, ownerID, slug)
+		return
+	}
+	s.episodePage(w, r, u, ownerID, r.PathValue("file"), true)
+}
+
+// handleAudio serves an enclosure inside the feed's capability
+// namespace, under the same visibility rule as the Episode Page.
 func (s *server) handleAudio(w http.ResponseWriter, r *http.Request, u store.User) {
 	ownerID := r.PathValue("owner")
 	slug, ok := strings.CutSuffix(r.PathValue("file"), ".mp3")
@@ -520,6 +640,13 @@ func (s *server) handleAudio(w http.ResponseWriter, r *http.Request, u store.Use
 			return
 		}
 	}
+	s.serveAudio(w, r, ownerID, slug)
+}
+
+// serveAudio streams one enclosure. Callers do their own authorisation
+// first; by the time it runs, the Episode has been established as
+// visible to whoever is asking.
+func (s *server) serveAudio(w http.ResponseWriter, r *http.Request, ownerID, slug string) {
 	audio, err := s.store.OpenAudio(r.Context(), ownerID, slug)
 	if err != nil {
 		s.fail(w, err)
@@ -534,7 +661,22 @@ func (s *server) handleAudio(w http.ResponseWriter, r *http.Request, u store.Use
 	http.ServeContent(w, r, slug+".mp3", audio.ModTime, audio.Content)
 }
 
+// handleCover serves Cover Art inside the feed's capability namespace,
+// where podcast clients and any shared cache may keep it.
 func (s *server) handleCover(w http.ResponseWriter, r *http.Request, u store.User) {
+	// Cacheable: a replaced cover may take up to an hour to reach
+	// clients (ADR 0003).
+	s.cover(w, r, u, "public, max-age=3600")
+}
+
+// handleMyCover serves the same image to a signed-in browser. It is
+// private: the URL carries no capability, so only this session's browser
+// may keep a copy — never a shared proxy.
+func (s *server) handleMyCover(w http.ResponseWriter, r *http.Request, u store.User) {
+	s.cover(w, r, u, "private, max-age=3600")
+}
+
+func (s *server) cover(w http.ResponseWriter, r *http.Request, u store.User, cacheControl string) {
 	cover, contentType, err := s.store.OpenCover(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, err)
@@ -542,9 +684,7 @@ func (s *server) handleCover(w http.ResponseWriter, r *http.Request, u store.Use
 	}
 	defer cover.Close()
 	w.Header().Set("Content-Type", contentType)
-	// Cacheable: a replaced cover may take up to an hour to reach
-	// clients (ADR 0003).
-	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Cache-Control", cacheControl)
 	io.Copy(w, cover)
 }
 
@@ -682,6 +822,8 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			Episode:         ep,
 			Aired:           relativeDate(ep.PublishedAt),
 			Duration:        humanDuration(ep.DurationSec),
+			PageURL:         episodeBase(u, ep, true),
+			Player:          playerFor(u, ep, true),
 			NeedsCharacters: s.generator != nil && ep.Template == "stories" && len(ep.Characters) == 0,
 		})
 	}
@@ -701,7 +843,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 	}{
 		User:            u,
 		FeedPage:        "/f/" + u.FeedToken,
-		CoverURL:        coverURL(u),
+		CoverURL:        sessionCoverURL(u),
 		Episodes:        views,
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
@@ -715,9 +857,61 @@ type episodeView struct {
 	store.Episode
 	Aired    string
 	Duration string
+	// PageURL is this Episode's own page, inside the Feed Token
+	// namespace — the Dashboard title links to it.
+	PageURL string
+	Player  playerView
 	// NeedsCharacters offers the "save characters" backfill button: a
 	// story episode whose cast was never extracted.
 	NeedsCharacters bool
+}
+
+// playerView is everything the inline Player needs, and nothing else:
+// the enclosure to play, a duration known before a byte is fetched (so
+// the scrubber does not resize on loadedmetadata), and the labels Media
+// Session shows on a lock screen. Key names this Episode's Resume
+// Position in browser storage — it never reaches the server (ADR 0013).
+type playerView struct {
+	AudioURL string
+	Title    string
+	Seconds  int
+	Key      string
+	CoverURL string
+}
+
+// episodeBase is where one Episode's two representations live. A signed-in
+// browser is addressed under /me, authorised by its session; everyone else
+// gets the capability namespace, where the URL is the credential.
+//
+// Which one matters for privacy, not just tidiness: a URL under /f/ IS the
+// whole feed, so anything a browser might copy out of its address bar —
+// or hand to a site in a Referer header — is best kept free of it (ADR
+// 0008, 0013).
+func episodeBase(u store.User, ep store.Episode, session bool) string {
+	if session {
+		return "/me/episodes/" + ep.OwnerID + "/" + ep.Slug
+	}
+	return "/f/" + u.FeedToken + "/" + ep.OwnerID + "/" + ep.Slug
+}
+
+// audioURL is the enclosure address; under /f/ it matches the URL the RSS
+// feed hands podcast clients.
+func audioURL(u store.User, ep store.Episode, session bool) string {
+	return episodeBase(u, ep, session) + ".mp3"
+}
+
+func playerFor(u store.User, ep store.Episode, session bool) playerView {
+	cover := coverURL(u)
+	if session {
+		cover = sessionCoverURL(u)
+	}
+	return playerView{
+		AudioURL: audioURL(u, ep, session),
+		Title:    ep.Title,
+		Seconds:  ep.DurationSec,
+		Key:      ep.OwnerID + "/" + ep.Slug,
+		CoverURL: cover,
+	}
 }
 
 // coverURL is where the owner's Cover Art is served, or "" without one.
@@ -726,6 +920,15 @@ func coverURL(u store.User) string {
 		return ""
 	}
 	return "/f/" + u.FeedToken + "/cover"
+}
+
+// sessionCoverURL is the same image for a signed-in page, which has no
+// business carrying a capability it does not need.
+func sessionCoverURL(u store.User) string {
+	if u.CoverType == "" {
+		return ""
+	}
+	return "/me/image"
 }
 
 // relativeDate renders a publish time the way a program log would:
