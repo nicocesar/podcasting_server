@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
@@ -58,6 +59,21 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// hostname reduces a base URL to the bare domain spoken in episode credits
+// ("https://radio.example.com/" → "radio.example.com"). An empty or
+// unparseable value yields "", which drops the host from the credit.
+func hostname(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return ""
+	}
+	if u, err := url.Parse(base); err == nil && u.Host != "" {
+		return u.Host
+	}
+	// No scheme: url.Parse files everything under Path — take the authority.
+	return strings.TrimSuffix(strings.SplitN(base, "/", 2)[0], "/")
 }
 
 func run(log *slog.Logger) error {
@@ -164,7 +180,10 @@ func run(log *slog.Logger) error {
 			Engines: engines,
 			Music:   composer,
 			Model:   env("GENERATION_MODEL", "claude-sonnet-5"),
-			Logger:  log,
+			// Spoken in the episode credit ("...on radio.example.com...");
+			// the same BASE_URL the feed links use, reduced to a bare domain.
+			Host:   hostname(os.Getenv("BASE_URL")),
+			Logger: log,
 			// Sessions are kept after publishing (inspectable in the
 			// Anthropic Console for prompt work); flip this env var to
 			// "true" to go back to deleting them.

@@ -40,7 +40,10 @@ type Config struct {
 	// off the chooser (Templates) rather than letting them fail late.
 	Music Composer
 	// Model powers the agent, e.g. "claude-sonnet-5".
-	Model  string
+	Model string
+	// Host is the bare public domain ("radio.example.com") spoken in the
+	// episode's credit. Empty falls the credit back to voice-and-provider.
+	Host   string
 	Logger *slog.Logger
 	// PollInterval overrides how often the agent session is polled
 	// (default 5s; tests shorten it).
@@ -73,6 +76,7 @@ type Runner struct {
 	engines []tts.Engine
 	music   Composer
 	model   string
+	host    string
 	log     *slog.Logger
 
 	poll           time.Duration
@@ -104,6 +108,7 @@ func NewRunner(cfg Config) *Runner {
 		engines:        cfg.Engines,
 		music:          cfg.Music,
 		model:          cfg.Model,
+		host:           cfg.Host,
 		log:            log,
 		poll:           poll,
 		composeBackoff: backoff,
@@ -601,7 +606,7 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 	// so the credit is in the same voice as the episode. Non-fatal: the
 	// script is already synthesized and paid for, and losing the credit is
 	// not worth losing the episode.
-	if credit := tts.Credit(engine, voice); credit != "" {
+	if credit := tts.Credit(engine, voice, g.UserID, r.host); credit != "" {
 		if e := tts.ByName(r.engines, engine); e != nil {
 			outro, err := e.Synthesize(ctx, credit, voice)
 			switch {
