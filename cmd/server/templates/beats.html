@@ -1,0 +1,57 @@
+{{define "title"}}Beats — {{.User.Title}}{{end}}
+{{define "content"}}
+<article class="card shell-wide">
+  <a class="backlink" href="/me">← Back to your podcast</a>
+  <h1>Beats</h1>
+  <p class="muted">Topics the station keeps covering for you. Each one makes a
+  new episode on its own, straight into your feed.</p>
+
+  {{if not .Beats}}
+  <section class="panel">
+    <p class="muted">No beats yet. Start an episode from
+    <a href="/me/generate">the programs</a> and tick <em>keep covering this</em>
+    to turn it into one.</p>
+  </section>
+  {{else}}
+
+  {{range .Beats}}
+  <section class="panel beat">
+    <p class="eyebrow">{{.ProgramName}}</p>
+    <p class="beat-topic">{{.Topic}}</p>
+    <p class="muted beat-meta">
+      {{.Cadence}} · {{.Status}} ·
+      {{if eq .EpisodeCount 1}}1 episode{{else}}{{.EpisodeCount}} episodes{{end}}
+      so far
+    </p>
+    {{if .Failing}}<p class="error">Last run failed: {{.LastError}}</p>{{end}}
+
+    <p class="actions">
+      <a class="button quiet" href="{{.EditURL}}">Edit</a>
+      {{if .Paused}}
+      <form method="post" action="/me/beats/{{.ID}}/resume">
+        <button class="quiet" type="submit">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-power"/></svg>Resume</button>
+      </form>
+      {{else}}
+      <form method="post" action="/me/beats/{{.ID}}/pause">
+        <button class="quiet" type="submit">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-power"/></svg>Pause</button>
+      </form>
+      {{end}}
+      <form method="post" action="/me/beats/{{.ID}}/cancel">
+        <button class="danger" type="submit">
+          <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-x"/></svg>Cancel</button>
+      </form>
+    </p>
+  </section>
+  {{end}}
+
+  <section class="panel">
+    <p class="muted" style="font-size:.85rem">
+      {{len .Beats}} of {{.Max}} beats. Cancelling one leaves the episodes it
+      already made in your feed — they're ordinary episodes now.
+    </p>
+  </section>
+  {{end}}
+</article>
+{{end}}

@@ -58,17 +58,48 @@ type castOption struct {
 	Label string // episode title + character names
 }
 
-// generatePage is the template data for a per-template form.
+// generatePage is the template data for a per-template form. The same
+// page serves three jobs: a fresh form, a form redisplayed with an error,
+// and the edit form of an existing Beat.
 type generatePage struct {
 	Template    generation.Template
 	Lengths     []int
 	Freshness   []generation.FreshnessOption
+	Intervals   []generation.IntervalOption
 	AgeRanges   []generation.AgeRangeOption
 	CastOptions []castOption
 	Languages   []tts.Voice // one entry per language
 	Providers   []string    // engine names, chain order; "" (Auto) is added in the template
 	Error       string
-	Topic       string
+
+	// Values prefills every control. Zero values select nothing, which
+	// leaves the browser on each list's first option — the behaviour the
+	// form had before it could be prefilled at all.
+	Values generationRequest
+	// Beat is set only when editing one: it redirects the form at the
+	// Beat's own URL and changes what the button says.
+	Beat *store.Beat
+}
+
+// generationRequest is the set of fields /me/generate collects, parsed
+// and validated in one place. A Generation is built from it, and so is
+// the Beat that repeats it.
+type generationRequest struct {
+	Topic          string
+	LengthMinutes  int
+	FreshnessDays  int
+	AgeRange       string
+	SaveCharacters bool
+	Cast           []store.Character
+	CastRef        string // "owner/slug" the Cast came from; trace only
+	Language       string
+	Voice          string
+	Provider       string
+
+	// Recur asks for a Beat, and IntervalDays is its cadence — equal to
+	// FreshnessDays for a template that derives it.
+	Recur        bool
+	IntervalDays int
 }
 
 // pageTemplate resolves the {template} path segment ("" → news, the
@@ -115,6 +146,7 @@ func (s *server) generatePage(r *http.Request, u store.User, tpl generation.Temp
 		Template:  tpl,
 		Lengths:   generation.Lengths,
 		Freshness: generation.FreshnessOptions,
+		Intervals: generation.IntervalOptions,
 		AgeRanges: generation.AgeRanges,
 		Languages: tts.Languages(),
 		Providers: s.generator.EngineNames(),
@@ -144,140 +176,186 @@ func (s *server) handleGeneratePage(w http.ResponseWriter, r *http.Request, u st
 
 const maxTopicLen = 2000
 
+// parseGenerationForm validates the submitted form against the template's
+// field flags. It returns the parsed request, or a message to show the
+// user with the form redisplayed — the caller decides how to render it,
+// because the same parse serves both starting a Generation and editing a
+// Beat.
+func (s *server) parseGenerationForm(r *http.Request, u store.User, tpl generation.Template) (generationRequest, string) {
+	var req generationRequest
+
+	req.Topic = strings.TrimSpace(r.FormValue("topic"))
+	if req.Topic == "" || len(req.Topic) > maxTopicLen {
+		return req, "The " + strings.ToLower(tpl.TopicLabel) + " is required, up to 2000 characters."
+	}
+	length, err := strconv.Atoi(r.FormValue("length"))
+	if err != nil || !generation.ValidLength(length) {
+		return req, "Pick a length from the list."
+	}
+	req.LengthMinutes = length
+	if tpl.HasFreshness {
+		freshness, err := strconv.Atoi(r.FormValue("freshness"))
+		if err != nil || !generation.ValidFreshness(freshness) {
+			return req, "Pick a freshness window from the list."
+		}
+		req.FreshnessDays = freshness
+	}
+	if tpl.HasAgeRange {
+		req.AgeRange = r.FormValue("age")
+		if !generation.ValidAgeRange(req.AgeRange) {
+			return req, "Pick an age range from the list."
+		}
+	}
+	req.Language = r.FormValue("language")
+	if _, ok := tts.VoiceFor(req.Language, ""); !ok {
+		return req, "Pick a language from the list."
+	}
+	// A composed piece has no narrator, so the form does not offer these
+	// and they stay empty on the Generation — nothing downstream resolves
+	// a Voice for it.
+	if !tpl.IsMusic {
+		req.Voice = r.FormValue("voice")
+		if _, ok := tts.VoiceFor(req.Language, req.Voice); req.Voice == "" || !ok {
+			return req, "Pick a voice from the list."
+		}
+		req.Provider = r.FormValue("provider")
+		if req.Provider != "" && !slices.Contains(s.generator.EngineNames(), req.Provider) {
+			return req, "Pick a voice provider from the list."
+		}
+	}
+	req.SaveCharacters = tpl.HasSaveCharacters && r.FormValue("save_characters") != ""
+
+	if tpl.HasCast {
+		if ref := r.FormValue("cast"); ref != "" {
+			req.CastRef = ref
+			owner, slug, ok := strings.Cut(ref, "/")
+			if !ok || s.inFeed(r, u, owner, slug) != nil {
+				return req, "Pick a returning cast from the list."
+			}
+			ep, err := s.store.GetEpisode(r.Context(), owner, slug)
+			if err != nil || ep.Template != "stories" || len(ep.Characters) == 0 {
+				return req, "Pick a returning cast from the list."
+			}
+			req.Cast = ep.Characters
+		}
+	}
+
+	// The Beat half. The checkbox is hidden client-side for a Timeless
+	// briefing, but that is a convenience; this is the rule.
+	req.Recur = r.FormValue("recur") != ""
+	if req.Recur {
+		switch {
+		case tpl.DerivesInterval && req.FreshnessDays == 0:
+			return req, "A timeless topic isn't tied to the news, so there's nothing " +
+				"to keep covering. Pick a freshness window, or uncheck the box."
+		case tpl.DerivesInterval:
+			req.IntervalDays = req.FreshnessDays
+		default:
+			interval, err := strconv.Atoi(r.FormValue("interval"))
+			if err != nil || !generation.ValidInterval(interval) {
+				return req, "Pick how often it should repeat."
+			}
+			req.IntervalDays = interval
+		}
+	}
+	return req, ""
+}
+
+// newGeneration builds the Generation a request asks for. beatID is empty
+// for one a User started by hand.
+func newGeneration(u store.User, tpl generation.Template, req generationRequest, id, beatID string, now time.Time) store.Generation {
+	g := store.Generation{
+		UserID:         u.ID,
+		ID:             id,
+		BeatID:         beatID,
+		Template:       tpl.ID,
+		Topic:          req.Topic,
+		LengthMinutes:  req.LengthMinutes,
+		FreshnessDays:  req.FreshnessDays,
+		AgeRange:       req.AgeRange,
+		SaveCharacters: req.SaveCharacters,
+		Cast:           req.Cast,
+		Language:       req.Language,
+		Voice:          req.Voice,
+		Provider:       req.Provider,
+		Stage:          store.GenResearching,
+		Active:         true,
+		CreatedAt:      now,
+	}
+	// Traced here rather than in the runner because it happens exactly
+	// once, at creation: a resumed run would re-emit it on every restart.
+	// CastRef is the source episode, which the frozen Cast itself loses.
+	if len(req.Cast) > 0 {
+		g.AppendTrace(store.TraceEntry{
+			At: now, Level: store.LevelInfo, Stage: g.Stage,
+			Event: "cast.reused", Message: "reusing a returning cast",
+			Detail: castDetail(req.CastRef, req.Cast),
+		})
+	}
+	return g
+}
+
+// castDetail renders the trace detail for a reused cast: the source
+// episode ref, which the frozen Cast on the Generation itself does not
+// keep, plus who came back.
+func castDetail(ref string, chars []store.Character) string {
+	names := make([]string, len(chars))
+	for i, c := range chars {
+		names[i] = c.Name
+	}
+	b, err := json.Marshal(map[string]any{
+		"source": ref, "count": len(chars), "names": strings.Join(names, ", "),
+	})
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u store.User) {
 	tpl, ok := s.pageTemplate(w, r)
 	if !ok {
 		return
 	}
-	retry := func(msg string) {
-		page, err := s.generatePage(r, u, tpl)
-		if err != nil {
-			s.fail(w, err)
-			return
-		}
-		page.Error = msg
-		page.Topic = r.FormValue("topic")
-		s.render(w, http.StatusBadRequest, s.tmplGenerate, page)
+	req, msg := s.parseGenerationForm(r, u, tpl)
+	if msg == "" && req.Recur {
+		// Checked before anything is created, so the cap is reported on the
+		// form rather than after an Episode already exists.
+		msg = s.beatCapError(r, u)
 	}
-
-	topic := strings.TrimSpace(r.FormValue("topic"))
-	if topic == "" || len(topic) > maxTopicLen {
-		retry("The " + strings.ToLower(tpl.TopicLabel) + " is required, up to 2000 characters.")
+	if msg != "" {
+		s.retryGenerate(w, r, u, tpl, req, msg)
 		return
 	}
-	length, err := strconv.Atoi(r.FormValue("length"))
-	if err != nil || !generation.ValidLength(length) {
-		retry("Pick a length from the list.")
-		return
-	}
-	freshness := 0
-	if tpl.HasFreshness {
-		freshness, err = strconv.Atoi(r.FormValue("freshness"))
-		if err != nil || !generation.ValidFreshness(freshness) {
-			retry("Pick a freshness window from the list.")
-			return
-		}
-	}
-	ageRange := ""
-	if tpl.HasAgeRange {
-		ageRange = r.FormValue("age")
-		if !generation.ValidAgeRange(ageRange) {
-			retry("Pick an age range from the list.")
-			return
-		}
-	}
-	language := r.FormValue("language")
-	if _, ok := tts.VoiceFor(language, ""); !ok {
-		retry("Pick a language from the list.")
-		return
-	}
-	// A composed piece has no narrator, so the form does not offer these
-	// and they stay empty on the Generation — nothing downstream resolves
-	// a Voice for it.
-	voice, provider := "", ""
-	if !tpl.IsMusic {
-		voice = r.FormValue("voice")
-		if _, ok := tts.VoiceFor(language, voice); voice == "" || !ok {
-			retry("Pick a voice from the list.")
-			return
-		}
-		provider = r.FormValue("provider")
-		if provider != "" && !slices.Contains(s.generator.EngineNames(), provider) {
-			retry("Pick a voice provider from the list.")
-			return
-		}
-	}
-	// castDetail renders the trace detail for a reused cast: the source
-	// episode ref, which the frozen Cast on the Generation itself does not
-	// keep, plus who came back.
-	castDetail := func(ref string, chars []store.Character) string {
-		names := make([]string, len(chars))
-		for i, c := range chars {
-			names[i] = c.Name
-		}
-		b, err := json.Marshal(map[string]any{
-			"source": ref, "count": len(chars), "names": strings.Join(names, ", "),
-		})
-		if err != nil {
-			return ""
-		}
-		return string(b)
-	}
 
-	var cast []store.Character
-	var castRef string
-	if tpl.HasCast {
-		if ref := r.FormValue("cast"); ref != "" {
-			castRef = ref
-			owner, slug, ok := strings.Cut(ref, "/")
-			if !ok || s.inFeed(r, u, owner, slug) != nil {
-				retry("Pick a returning cast from the list.")
-				return
-			}
-			ep, err := s.store.GetEpisode(r.Context(), owner, slug)
-			if err != nil || ep.Template != "stories" || len(ep.Characters) == 0 {
-				retry("Pick a returning cast from the list.")
-				return
-			}
-			cast = ep.Characters
-		}
-	}
-
+	now := time.Now().UTC()
 	id, err := randomHex(8)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	g := store.Generation{
-		UserID:         u.ID,
-		ID:             id,
-		Template:       tpl.ID,
-		Topic:          topic,
-		LengthMinutes:  length,
-		FreshnessDays:  freshness,
-		AgeRange:       ageRange,
-		SaveCharacters: tpl.HasSaveCharacters && r.FormValue("save_characters") != "",
-		Cast:           cast,
-		Language:       language,
-		Voice:          voice,
-		Provider:       provider,
-		Stage:          store.GenResearching,
-		Active:         true,
-		CreatedAt:      time.Now().UTC(),
+	var beatID string
+	if req.Recur {
+		beatID, err = randomHex(8)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
 	}
-	// Traced here rather than in the runner because it happens exactly
-	// once, at creation: a resumed run would re-emit it on every restart.
-	// castRef is the source episode, which the frozen Cast itself loses.
-	if len(cast) > 0 {
-		g.AppendTrace(store.TraceEntry{
-			At: g.CreatedAt, Level: store.LevelInfo, Stage: g.Stage,
-			Event: "cast.reused", Message: "reusing a returning cast",
-			Detail: castDetail(castRef, cast),
-		})
-	}
+	g := newGeneration(u, tpl, req, id, beatID, now)
 	if err := s.store.PutGeneration(r.Context(), g); err != nil {
 		s.fail(w, err)
 		return
+	}
+	if req.Recur {
+		// The clock starts now: this Generation is the Beat's first
+		// Episode, so the next one is due a full interval from here.
+		b := newBeat(u, tpl, req, beatID, now)
+		b.LastFiredAt = now
+		if err := s.store.PutBeat(r.Context(), b); err != nil {
+			s.fail(w, err)
+			return
+		}
 	}
 	s.generator.Kick(g)
 
@@ -286,6 +364,19 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	s.writeJSON(w, http.StatusCreated, g)
+}
+
+// retryGenerate redisplays the form with an error, keeping what was
+// filled in so a rejected submission never costs the user their typing.
+func (s *server) retryGenerate(w http.ResponseWriter, r *http.Request, u store.User, tpl generation.Template, req generationRequest, msg string) {
+	page, err := s.generatePage(r, u, tpl)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	page.Error = msg
+	page.Values = req
+	s.render(w, http.StatusBadRequest, s.tmplGenerate, page)
 }
 
 // handleEpisodeCharacters backfills the cast of one of the caller's own

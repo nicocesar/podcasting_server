@@ -188,10 +188,28 @@ failed Generation can be retried from the last completed stage without
 redoing finished work.
 _Avoid_: job, task, run
 
+**Generation Template**:
+One of the programs the station can produce — The Briefing, Story Time,
+The Long Room — each with its own voice, its own form fields, and its own
+idea of what a good episode is. A User picks one before anything else;
+everything downstream of the Script is the same whichever they picked.
+_Avoid_: program type, genre, mode
+
 **Topic**:
 The free-text subject a User submits to start a Generation — the only
 creative input; everything else is chosen from fixed options.
 _Avoid_: prompt, query
+
+**Beat**:
+A Topic a User has the station cover on an ongoing basis: a standing
+request that produces a new Episode into their Personal Feed at a fixed
+cadence, until they pause or cancel it. A Beat holds a frozen copy of
+everything a Generation needs, so every Episode it makes is the same
+request asked again. It is dormant between Episodes — it comes round when
+the User's Personal Feed is polled or their Dashboard opened, so a Beat
+nobody is listening to falls quiet, and one that has been quiet a while
+covers the whole gap when it wakes.
+_Avoid_: schedule, cron job, recurrence, series, subscription
 
 **Freshness Window**:
 The trailing time span (one day to one year) a Generation is anchored in:

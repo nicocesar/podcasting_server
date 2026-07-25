@@ -91,6 +91,28 @@ func TestValidators(t *testing.T) {
 	if !ValidFreshness(30) || !ValidFreshness(0) || ValidFreshness(2) {
 		t.Fatal("ValidFreshness wrong")
 	}
+	if !ValidInterval(7) || ValidInterval(0) || ValidInterval(2) {
+		t.Fatal("ValidInterval wrong")
+	}
+	// The cadences are a subset of the Freshness Windows: one vocabulary
+	// of durations, so "every week" and "last week" mean the same span.
+	for _, o := range IntervalOptions {
+		if !ValidFreshness(o.Days) {
+			t.Errorf("interval %d days is not also a freshness window", o.Days)
+		}
+	}
+}
+
+// TestUserMessageStretchedWindow: a catching-up Beat asks for a window
+// that is not on the form's menu — the gap since its last Episode. The
+// task message has to render that number as it would any other, since
+// dropping back to a menu value would silently lose the days the Beat
+// was quiet for.
+func TestUserMessageStretchedWindow(t *testing.T) {
+	msg := userMessage("volcanoes", 5, 10, "en", time.Now())
+	if !strings.Contains(msg, "the last 10 days") {
+		t.Fatalf("stretched window not rendered: %q", msg)
+	}
 }
 
 func TestUserMessageFreshness(t *testing.T) {

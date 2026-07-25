@@ -5,8 +5,11 @@
 // Datastore layout: kind "User" keyed by user ID with an indexed
 // cover_secret; kind "Episode" keyed by "{ownerID}/{slug}" with an indexed
 // owner_id; kind "Share" keyed by "{userID}/{ownerID}/{slug}" with indexed
-// user_id, owner_id, and slug. All queries are equality-only, so no
-// composite indexes are required; sorting happens in memory.
+// user_id, owner_id, and slug; kind "Beat" keyed by "{userID}/{id}" with
+// an indexed user_id. All queries are equality-only, so no composite
+// indexes are required; sorting happens in memory. Beats deliberately
+// have no indexed due date: they are examined per owner on that owner's
+// own traffic, never swept globally (ADR 0016).
 //
 // GCS layout: users/{ownerID}/{slug}.mp3 and users/{ownerID}/cover.
 package gcpstore
@@ -34,6 +37,7 @@ const (
 	kindShare      = "Share"
 	kindInvite     = "Invite"
 	kindGeneration = "Generation"
+	kindBeat       = "Beat"
 	kindAPIKey     = "APIKey"
 	signedURLTTL   = 15 * time.Minute
 )
@@ -78,9 +82,13 @@ func generationKey(userID, id string) *datastore.Key {
 	return datastore.NameKey(kindGeneration, userID+"/"+id, nil)
 }
 
+func beatKey(userID, id string) *datastore.Key {
+	return datastore.NameKey(kindBeat, userID+"/"+id, nil)
+}
+
 func audioObject(ownerID, slug string) string { return "users/" + ownerID + "/" + slug + ".mp3" }
 func coverObject(ownerID string) string       { return "users/" + ownerID + "/cover" }
-func coverThumbObject(ownerID string) string   { return "users/" + ownerID + "/cover_thumb" }
+func coverThumbObject(ownerID string) string  { return "users/" + ownerID + "/cover_thumb" }
 
 // --- users ---
 
@@ -178,6 +186,7 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 		datastore.NewQuery(kindShare).FilterField("owner_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindInvite).FilterField("inviter_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindGeneration).FilterField("user_id", "=", id).KeysOnly(),
+		datastore.NewQuery(kindBeat).FilterField("user_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindAPIKey).FilterField("user_id", "=", id).KeysOnly(),
 	} {
 		keys, err := s.ds.GetAll(ctx, q, nil)
@@ -331,6 +340,58 @@ func (s *Store) ListActiveGenerations(ctx context.Context) ([]store.Generation, 
 		gens = []store.Generation{}
 	}
 	return gens, nil
+}
+
+// --- beats ---
+
+func (s *Store) PutBeat(ctx context.Context, b store.Beat) error {
+	if _, err := s.GetUser(ctx, b.UserID); err != nil {
+		return err
+	}
+	b.UpdatedAt = time.Now().UTC()
+	_, err := s.ds.Put(ctx, beatKey(b.UserID, b.ID), &b)
+	return err
+}
+
+func (s *Store) GetBeat(ctx context.Context, userID, id string) (store.Beat, error) {
+	var b store.Beat
+	if err := s.ds.Get(ctx, beatKey(userID, id), &b); err != nil {
+		if errors.Is(err, datastore.ErrNoSuchEntity) {
+			return store.Beat{}, store.ErrNotFound
+		}
+		return store.Beat{}, err
+	}
+	b.UserID, b.ID = userID, id
+	return b, nil
+}
+
+func (s *Store) ListBeats(ctx context.Context, userID string) ([]store.Beat, error) {
+	if _, err := s.GetUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	var beats []store.Beat
+	q := datastore.NewQuery(kindBeat).FilterField("user_id", "=", userID)
+	keys, err := s.ds.GetAll(ctx, q, &beats)
+	if err != nil {
+		return nil, err
+	}
+	for i, k := range keys {
+		if user, id, ok := strings.Cut(k.Name, "/"); ok {
+			beats[i].UserID, beats[i].ID = user, id
+		}
+	}
+	sort.Slice(beats, func(i, j int) bool { return beats[i].CreatedAt.After(beats[j].CreatedAt) })
+	if beats == nil {
+		beats = []store.Beat{}
+	}
+	return beats, nil
+}
+
+func (s *Store) DeleteBeat(ctx context.Context, userID, id string) error {
+	if _, err := s.GetBeat(ctx, userID, id); err != nil {
+		return err
+	}
+	return s.ds.Delete(ctx, beatKey(userID, id))
 }
 
 // --- episodes ---

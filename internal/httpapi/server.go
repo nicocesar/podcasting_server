@@ -107,6 +107,7 @@ type server struct {
 	tmplPrograms   *template.Template
 	tmplGenerate   *template.Template
 	tmplGeneration *template.Template
+	tmplBeats      *template.Template
 	tmplSettings   *template.Template
 
 	tmplAdminGeneration *template.Template
@@ -147,7 +148,7 @@ func New(cfg Config) (http.Handler, error) {
 	s.assetVersion = "dev"
 	h := sha256.New()
 	hashed := false
-	for _, name := range []string{"static/style.css", "static/player.js"} {
+	for _, name := range []string{"static/style.css", "static/player.js", "static/beat.js"} {
 		if b, err := fs.ReadFile(cfg.Assets, name); err == nil {
 			h.Write(b)
 			hashed = true
@@ -173,6 +174,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplPrograms, []string{"templates/layout.html", "templates/programs.html"}},
 		{&s.tmplGenerate, []string{"templates/layout.html", "templates/generate.html"}},
 		{&s.tmplGeneration, []string{"templates/layout.html", "templates/generation.html"}},
+		{&s.tmplBeats, []string{"templates/layout.html", "templates/beats.html"}},
 		{&s.tmplSettings, []string{"templates/layout.html", "templates/settings.html"}},
 		{&s.tmplAdminGeneration, []string{"templates/layout.html", "templates/admin_generation.html"}},
 	} {
@@ -290,6 +292,16 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("POST /me/generations/{id}/retry", s.auth(s.generating(s.handleGenerationRetry)))
 	// Cast extraction backfill for a story episode the checkbox missed.
 	mux.HandleFunc("POST /me/episodes/{slug}/characters", s.auth(s.generating(s.handleEpisodeCharacters)))
+
+	// Beats (ADR 0016): the Generations a User asked to keep happening.
+	// Session-only — a Beat spends money unattended, so a leaked API Key
+	// must not be able to leave one running.
+	mux.HandleFunc("GET /me/beats", s.session(s.generating(s.handleBeats)))
+	mux.HandleFunc("GET /me/beats/{id}/edit", s.session(s.generating(s.handleBeatEdit)))
+	mux.HandleFunc("POST /me/beats/{id}", s.session(s.generating(s.handleBeatUpdate)))
+	mux.HandleFunc("POST /me/beats/{id}/pause", s.session(s.generating(s.handleBeatPause)))
+	mux.HandleFunc("POST /me/beats/{id}/resume", s.session(s.generating(s.handleBeatResume)))
+	mux.HandleFunc("POST /me/beats/{id}/cancel", s.session(s.generating(s.handleBeatCancel)))
 
 	// Admin, on two credentials by design.
 	//
@@ -555,6 +567,13 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 	}
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	w.Write(body)
+
+	// The heartbeat that matters (ADR 0016): a podcast client polling for
+	// new audio is the one sign of life that arrives while its owner is
+	// asleep. Fired after the response, so the feed is never held up —
+	// which also means this poll gets yesterday's Episodes and the next
+	// one gets what this heartbeat starts.
+	s.heartbeat(u)
 }
 
 // handleEpisodeFile splits one address into two representations of the
@@ -934,6 +953,16 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
+	// The Beats card is a summary, not the page: enough to see that
+	// something is running and to go look at it.
+	var beats []beatView
+	if s.generator != nil {
+		beats, err = s.beatViews(r, u)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
 	s.render(w, http.StatusOK, s.tmplDashboard, struct {
 		User            store.User
 		FeedPage        string
@@ -943,6 +972,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		Filter          string
 		GenerateEnabled bool
 		Generations     []generationView
+		Beats           []beatView
 		subscribeBox
 	}{
 		User:            u,
@@ -953,8 +983,12 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		Filter:          filter,
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
+		Beats:           beats,
 		subscribeBox:    s.subscribeBox(r, u),
 	})
+	// Opening the Dashboard catches your Beats up, so a feed you are
+	// looking at is never quietly overdue.
+	s.heartbeat(u)
 }
 
 // episodeView is an Episode plus the display strings the Dashboard

@@ -53,7 +53,7 @@ var usernamePattern = regexp.MustCompile(`^[a-z0-9]+$`)
 var reservedUsernames = func() map[string]bool {
 	words := []string{
 		// Router-owned top-level path segments.
-		"admin", "api", "auth", "callback", "cover", "episode", "episodes",
+		"admin", "api", "auth", "beats", "callback", "cover", "episode", "episodes",
 		"f", "feed", "generate", "generations", "google", "healthz", "image",
 		"invite", "invites", "login", "logout", "me", "settings", "share",
 		"static", "usage", "user", "users",
@@ -318,6 +318,12 @@ type Generation struct {
 	// TTSEngine below records which engine actually voiced the episode.
 	Provider string `json:"provider,omitempty" datastore:"provider,noindex"`
 
+	// BeatID names the Beat that fired this Generation; empty for one a
+	// User started by hand. Provenance only — the request fields above are
+	// still frozen copies, so editing or cancelling the Beat never
+	// disturbs a run already in flight.
+	BeatID string `json:"beat_id,omitempty" datastore:"beat_id,noindex"`
+
 	Stage string `json:"stage" datastore:"stage,noindex"`
 	// Active indexes the resume scan: true until done or failed.
 	Active bool   `json:"-" datastore:"active"`
@@ -410,6 +416,98 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
+// MaxBeatGapDays caps the Freshness Window a catching-up Beat may ask
+// for. It is the largest window the form offers, so a stretched window
+// never asks the agent for something a User could not have asked for by
+// hand.
+const MaxBeatGapDays = 365
+
+// BeatFailureLimit is how many consecutive failed firings pause a Beat.
+// Above one because TTS fallbacks and agent hiccups are transient (ADR
+// 0012); low enough that a genuinely broken Beat stops spending money
+// within a few cycles.
+const BeatFailureLimit = 3
+
+// Beat is a Topic a User has the station cover on an ongoing basis: a
+// saved Generation request re-run on a cadence, publishing a new Episode
+// into their Personal Feed each time.
+//
+// The request fields are a frozen copy, not a pointer to the Generation
+// that created it — same checkpoint philosophy as Generation.Cast (ADR
+// 0011). A Beat rebuilds an identical request every firing, and pruning
+// old Generations can never orphan one.
+//
+// A Beat has no clock of its own. Nothing in this server fires on a
+// timer; a Beat is examined when its owner's feed is polled or their
+// Dashboard opened (ADR 0016), so a Beat nobody listens to falls quiet.
+type Beat struct {
+	UserID string `json:"user" datastore:"user_id"`
+	ID     string `json:"id" datastore:"-"` // unguessable; key is "{UserID}/{ID}"
+
+	// The frozen request: the same fields /me/generate collects.
+	Template       string      `json:"template,omitempty" datastore:"template,noindex"`
+	Topic          string      `json:"topic" datastore:"topic,noindex"`
+	LengthMinutes  int         `json:"length_minutes" datastore:"length_minutes,noindex"`
+	FreshnessDays  int         `json:"freshness_days" datastore:"freshness_days,noindex"`
+	AgeRange       string      `json:"age_range,omitempty" datastore:"age_range,noindex"`
+	SaveCharacters bool        `json:"save_characters,omitempty" datastore:"save_characters,noindex"`
+	Cast           []Character `json:"-" datastore:"cast,noindex"`
+	Language       string      `json:"language" datastore:"language,noindex"`
+	Voice          string      `json:"voice,omitempty" datastore:"voice,noindex"`
+	Provider       string      `json:"provider,omitempty" datastore:"provider,noindex"`
+
+	// IntervalDays is the cadence. For the news template it equals
+	// FreshnessDays, so consecutive Episodes neither re-cover nor skip
+	// ground; the other templates choose it from the offered options.
+	IntervalDays int `json:"interval_days" datastore:"interval_days,noindex"`
+	// Paused stops firing without losing the setup. Set by the User, or
+	// by the runner after BeatFailureLimit consecutive failures.
+	Paused bool `json:"paused,omitempty" datastore:"paused,noindex"`
+
+	// LastFiredAt is the clock: it advances on every firing, successful or
+	// not, so a failing Beat retries on cadence instead of hammering.
+	// LastSucceededAt is what the Freshness Window stretches from, so the
+	// Episode after a run of failures still covers the ground they missed.
+	LastFiredAt         time.Time `json:"last_fired_at" datastore:"last_fired_at,noindex"`
+	LastSucceededAt     time.Time `json:"last_succeeded_at" datastore:"last_succeeded_at,noindex"`
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty" datastore:"consecutive_failures,noindex"`
+	LastError           string    `json:"last_error,omitempty" datastore:"last_error,noindex"`
+	EpisodeCount        int       `json:"episode_count" datastore:"episode_count,noindex"`
+
+	CreatedAt time.Time `json:"created_at" datastore:"created_at,noindex"`
+	UpdatedAt time.Time `json:"updated_at" datastore:"updated_at,noindex"`
+}
+
+// DueAt is when the Beat next wants to fire. A Beat with no firing yet
+// is anchored to its creation: the form that created it already produced
+// the first Episode.
+func (b Beat) DueAt() time.Time {
+	from := b.LastFiredAt
+	if from.IsZero() {
+		from = b.CreatedAt
+	}
+	return from.AddDate(0, 0, b.IntervalDays)
+}
+
+// Due reports whether the Beat should fire at t.
+func (b Beat) Due(t time.Time) bool {
+	return !b.Paused && b.IntervalDays > 0 && !t.Before(b.DueAt())
+}
+
+// GapDays is the Freshness Window the next firing should use: the ground
+// actually uncovered since the last Episode this Beat published, never
+// narrower than the cadence and never wider than the widest window the
+// form offers. A Beat whose owner stopped polling for ten days comes
+// back with one Episode covering the ten days, not one covering today.
+func (b Beat) GapDays(t time.Time) int {
+	from := b.LastSucceededAt
+	if from.IsZero() {
+		from = b.CreatedAt
+	}
+	days := int(t.Sub(from) / (24 * time.Hour))
+	return min(max(days, b.IntervalDays), MaxBeatGapDays)
+}
+
 // Audio is how a backend hands episode audio to the HTTP layer. Exactly
 // one of RedirectURL or Content is set: production redirects the client to
 // a short-lived signed URL, local development serves the file directly.
@@ -493,6 +591,15 @@ type Store interface {
 	// ListActiveGenerations returns every unfinished generation across
 	// all users — the resume scan after a restart (ADR 0009).
 	ListActiveGenerations(ctx context.Context) ([]Generation, error)
+
+	// PutBeat stores or replaces a Beat.
+	PutBeat(ctx context.Context, b Beat) error
+	GetBeat(ctx context.Context, userID, id string) (Beat, error)
+	// ListBeats returns the user's beats newest-first. There is
+	// deliberately no all-users variant: Beats are examined per owner on
+	// that owner's traffic, never swept globally (ADR 0016).
+	ListBeats(ctx context.Context, userID string) ([]Beat, error)
+	DeleteBeat(ctx context.Context, userID, id string) error
 
 	OpenAudio(ctx context.Context, ownerID, slug string) (Audio, error)
 

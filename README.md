@@ -32,6 +32,10 @@ the Publishing Contract below.
   (edge-tts, Google Cloud TTS fallback) and publishes it. Enabled by
   setting `ANTHROPIC_API_KEY` (SETUP.md §11); progress is checkpointed
   and resumes across restarts.
+- **Beats** (ADR 0016): a generation you asked to keep happening, on a
+  cadence, managed at `/me/beats`. There is no scheduler — a Beat comes
+  round when the owner's feed is polled or their dashboard opened, so the
+  podcast client's hourly fetch is what makes the morning briefing.
 - HTML pages are `html/template` files under `cmd/server/templates`
   (layout + pages + `fragments/`), shipped in the binary via `go:embed` —
   editing them means rebuild + redeploy.

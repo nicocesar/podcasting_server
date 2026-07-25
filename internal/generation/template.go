@@ -44,6 +44,13 @@ type Template struct {
 	HasCast           bool // returning-characters picker
 	HasSaveCharacters bool // "save the characters" checkbox
 
+	// DerivesInterval marks a template whose Beat cadence comes from the
+	// Freshness Window instead of its own select: firing exactly as often
+	// as the window is wide means consecutive Episodes neither re-cover
+	// nor skip ground. It implies HasFreshness, and it is why a Timeless
+	// briefing cannot become a Beat at all — no window, no cadence.
+	DerivesInterval bool
+
 	// TopicLabel and TopicPlaceholder brand the shared textarea.
 	TopicLabel       string
 	TopicPlaceholder string
@@ -70,18 +77,19 @@ var TemplateIDs = []string{"news", "stories", "ambient"}
 
 var templates = map[string]Template{
 	"news": {
-		ID:             "news",
-		Name:           "The Briefing",
-		Tagline:        "An agent researches your topic on the web and reads you the news.",
-		AgentName:      agentName,
-		SystemPrompt:   systemPrompt,
-		Tools:          append(agentTools[:len(agentTools):len(agentTools)], submitTool),
-		SubmitToolName: submitToolName,
-		HasFreshness:   true,
-		TopicLabel:     "Topic",
-		ProgressTitle:  "Generating an episode",
-		PlanStage:      "Researching & writing the script",
-		AudioStage:     "Voicing",
+		ID:              "news",
+		Name:            "The Briefing",
+		Tagline:         "An agent researches your topic on the web and reads you the news.",
+		AgentName:       agentName,
+		SystemPrompt:    systemPrompt,
+		Tools:           append(agentTools[:len(agentTools):len(agentTools)], submitTool),
+		SubmitToolName:  submitToolName,
+		HasFreshness:    true,
+		DerivesInterval: true,
+		TopicLabel:      "Topic",
+		ProgressTitle:   "Generating an episode",
+		PlanStage:       "Researching & writing the script",
+		AudioStage:      "Voicing",
 		TopicPlaceholder: "e.g. developments in fusion energy — or a whole brief: " +
 			"angle, things to include, tone…",
 		TaskMessage: func(g store.Generation, now time.Time) string {

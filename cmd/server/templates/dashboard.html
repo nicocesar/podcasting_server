@@ -53,6 +53,22 @@
       </div>
       {{end}}
     </section>
+
+    {{/* Beats: what's running without being asked. Shown only once there
+         is one — an empty card would advertise a feature the generate
+         form already offers in context. */}}
+    {{if .Beats}}
+    <section class="card">
+      <p class="eyebrow">Beats · {{len .Beats}}</p>
+      {{range .Beats}}
+      <div class="gen-row">
+        <span class="topic">{{.Topic}}</span>
+        <span class="muted">{{.Cadence}} · {{.Status}}</span>
+      </div>
+      {{end}}
+      <p class="actions"><a class="button quiet" href="/me/beats"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-arrow"/></svg>Manage beats</a></p>
+    </section>
+    {{end}}
     {{end}}
   </aside>
 

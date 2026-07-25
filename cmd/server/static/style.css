@@ -426,6 +426,29 @@ details.subscribe > div {
   margin: 0.5rem 0;
 }
 .gen-row .topic { flex: 1 1 10rem; font-weight: 600; }
+.gen-row .muted { font-size: 0.82rem; }
+
+/* ── Beats: the standing orders ────────────────────────────────────── */
+.beat-box {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.75rem 0.85rem;
+  margin-top: 1rem;
+}
+.beat-box .check { margin: 0; }
+.beat-note { margin: 0.4rem 0 0; font-size: 0.82rem; }
+
+.beat-topic {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-weight: 560;
+  font-size: 1.05rem;
+  line-height: 1.3;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.beat-meta { font-family: var(--font-mono); font-size: 0.8rem; margin: 0.3rem 0 0; }
+.beat .actions form { margin: 0; }
 
 /* ── Episodes: the program log ─────────────────────────────────────── */
 .episode {

@@ -42,6 +42,34 @@ var FreshnessOptions = []FreshnessOption{
 	{0, "Timeless — not tied to the news"},
 }
 
+// IntervalOption is one Beat cadence. The day values deliberately match
+// FreshnessOptions': the domain keeps one vocabulary of durations, so
+// "every week" and "last week" mean the same span. The news template
+// never shows this list — it derives its cadence from the Freshness
+// Window (Template.DerivesInterval).
+type IntervalOption struct {
+	Days  int
+	Label string
+}
+
+var IntervalOptions = []IntervalOption{
+	{1, "Every day"},
+	{3, "Every 3 days"},
+	{7, "Every week"},
+	{14, "Every 2 weeks"},
+	{30, "Every month"},
+}
+
+// ValidInterval reports whether days is one of the offered cadences.
+func ValidInterval(days int) bool {
+	for _, o := range IntervalOptions {
+		if o.Days == days {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidLength reports whether minutes is one of the offered options.
 func ValidLength(minutes int) bool { return slices.Contains(Lengths, minutes) }
 

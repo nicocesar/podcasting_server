@@ -85,6 +85,7 @@ type Runner struct {
 
 	mu       sync.Mutex
 	running  map[string]bool   // "{user}/{id}" → a goroutine owns it
+	firing   map[string]bool   // "{user}/{beat}" → a heartbeat is firing it
 	agentIDs map[string]string // agent name → ID, cached after provision
 	envID    string
 }
@@ -114,6 +115,7 @@ func NewRunner(cfg Config) *Runner {
 		composeBackoff: backoff,
 		deleteSessions: cfg.DeleteSessions,
 		running:        make(map[string]bool),
+		firing:         make(map[string]bool),
 		agentIDs:       make(map[string]string),
 	}
 }
@@ -296,6 +298,9 @@ func (r *Runner) fail(g store.Generation, cause error) {
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		r.log.Error("generation: could not record failure", "user", g.UserID, "id", g.ID, "err", err)
 	}
+	// Nobody is watching a Beat's progress page to hit Retry, so the Beat
+	// itself has to notice: a streak of these pauses it.
+	r.recordBeatOutcome(ctx, g, cause)
 }
 
 // recordSessionUsage folds the session's aggregate token consumption into
@@ -812,7 +817,14 @@ func (r *Runner) finish(ctx context.Context, g store.Generation, slug string) (s
 	g.EpisodeSlug = slug
 	g.Stage = store.GenDone
 	g.Active = false
-	return g, r.store.PutGeneration(ctx, g)
+	if err := r.store.PutGeneration(ctx, g); err != nil {
+		return g, err
+	}
+	// After the Episode is safe: this moves the Beat's window anchor
+	// forward, so the next firing covers from here rather than re-covering
+	// ground this Episode already did.
+	r.recordBeatOutcome(ctx, g, nil)
+	return g, nil
 }
 
 // ExtractCharacters distills a story script's cast for the HTTP layer's

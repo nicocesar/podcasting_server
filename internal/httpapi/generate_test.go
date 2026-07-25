@@ -85,6 +85,15 @@ func newGeneratingServer(t *testing.T) *httptest.Server {
 // being absent.
 func newGeneratingServerWith(t *testing.T, composer generation.Composer) *httptest.Server {
 	t.Helper()
+	ts, _ := newGeneratingServerStore(t, composer)
+	return ts
+}
+
+// newGeneratingServerStore also hands back the store, for tests that need
+// to look at — or reach behind and age — a record the HTTP surface does
+// not expose, such as a Beat's clock.
+func newGeneratingServerStore(t *testing.T, composer generation.Composer) (*httptest.Server, *fsstore.Store) {
+	t.Helper()
 	st, err := fsstore.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +119,7 @@ func newGeneratingServerWith(t *testing.T, composer generation.Composer) *httpte
 	}
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
-	return ts
+	return ts, st
 }
 
 // TestAmbientHiddenWithoutMusicClient: with no music client the ambient

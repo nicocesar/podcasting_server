@@ -692,6 +692,78 @@ func (s *Store) ListActiveGenerations(ctx context.Context) ([]store.Generation, 
 	return active, nil
 }
 
+// --- beats ---
+
+// Beats live in a "beats/" subdirectory of the user, one JSON file each,
+// alongside "generations/" — ListEpisodes skips directories, so neither
+// looks like an episode sidecar.
+func (s *Store) beatPath(userID, id string) string {
+	return filepath.Join(s.userDir(userID), "beats", id+".json")
+}
+
+// beatRecord persists the fields Beat hides from API JSON.
+type beatRecord struct {
+	store.Beat
+	Cast []store.Character `json:"cast,omitempty"`
+}
+
+func (s *Store) PutBeat(ctx context.Context, b store.Beat) error {
+	if _, err := s.GetUser(ctx, b.UserID); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.beatPath(b.UserID, b.ID)), 0o755); err != nil {
+		return err
+	}
+	b.UpdatedAt = time.Now().UTC()
+	return writeJSON(s.beatPath(b.UserID, b.ID), beatRecord{Beat: b, Cast: b.Cast})
+}
+
+func (s *Store) GetBeat(_ context.Context, userID, id string) (store.Beat, error) {
+	var r beatRecord
+	if err := readJSON(s.beatPath(userID, id), &r); err != nil {
+		return store.Beat{}, err
+	}
+	b := r.Beat
+	b.UserID, b.ID = userID, id // file name is canonical
+	b.Cast = r.Cast
+	return b, nil
+}
+
+func (s *Store) ListBeats(ctx context.Context, userID string) ([]store.Beat, error) {
+	if _, err := s.GetUser(ctx, userID); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(filepath.Join(s.userDir(userID), "beats"))
+	if os.IsNotExist(err) {
+		return []store.Beat{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	beats := []store.Beat{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		b, err := s.GetBeat(ctx, userID, strings.TrimSuffix(name, ".json"))
+		if err != nil {
+			continue
+		}
+		beats = append(beats, b)
+	}
+	sort.Slice(beats, func(i, j int) bool { return beats[i].CreatedAt.After(beats[j].CreatedAt) })
+	return beats, nil
+}
+
+func (s *Store) DeleteBeat(_ context.Context, userID, id string) error {
+	err := os.Remove(s.beatPath(userID, id))
+	if os.IsNotExist(err) {
+		return store.ErrNotFound
+	}
+	return err
+}
+
 // --- audio & cover ---
 
 func (s *Store) OpenAudio(_ context.Context, ownerID, slug string) (store.Audio, error) {
