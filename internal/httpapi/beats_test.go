@@ -459,6 +459,35 @@ func TestBeatsPageShowsTheBeat(t *testing.T) {
 	waitAllSettled(t, st, "alice")
 }
 
+// TestDashboardLinksToBeatsWhenEmpty: the checkbox that makes a Beat is
+// at the bottom of a form you have to already be filling in, so without a
+// standing link on the Dashboard the whole feature is invisible to anyone
+// who has never made one.
+func TestDashboardLinksToBeatsWhenEmpty(t *testing.T) {
+	ts, _ := newGeneratingServerStore(t, nil)
+	alice := createUser(t, ts, "alice")
+
+	// The Dashboard is the HTML face of /me; without the Accept header the
+	// same route answers JSON.
+	req, _ := http.NewRequest("GET", ts.URL+"/me", nil)
+	req.AddCookie(&http.Cookie{Name: "session", Value: alice.Session})
+	req.Header.Set("Accept", "text/html")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	for _, want := range []string{`href="/me/beats"`, "Nothing on a beat yet"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("dashboard with no beats is missing %q", want)
+		}
+	}
+}
+
 // TestStoriesBeatPicksItsOwnCadence: Story Time has no Freshness Window,
 // so it chooses an interval instead — and an invalid one is rejected.
 func TestStoriesBeatPicksItsOwnCadence(t *testing.T) {

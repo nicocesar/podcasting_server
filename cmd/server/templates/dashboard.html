@@ -54,10 +54,10 @@
       {{end}}
     </section>
 
-    {{/* Beats: what's running without being asked. Shown only once there
-         is one — an empty card would advertise a feature the generate
-         form already offers in context. */}}
-    {{if .Beats}}
+    {{/* Beats: what's running without being asked. Always present, empty
+         or not — the only other way in is a checkbox at the bottom of a
+         form you have to already be filling in, which makes the whole
+         feature invisible to anyone who has never made one. */}}
     <section class="card">
       <p class="eyebrow">Beats · {{len .Beats}}</p>
       {{range .Beats}}
@@ -65,10 +65,13 @@
         <span class="topic">{{.Topic}}</span>
         <span class="muted">{{.Cadence}} · {{.Status}}</span>
       </div>
+      {{else}}
+      <p class="muted" style="font-size:.85rem;margin:0">Nothing on a beat yet.
+      Tick <em>keep covering this</em> when you generate an episode, and it
+      comes back on its own.</p>
       {{end}}
       <p class="actions"><a class="button quiet" href="/me/beats"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-arrow"/></svg>Manage beats</a></p>
     </section>
-    {{end}}
     {{end}}
   </aside>
 
