@@ -73,6 +73,26 @@
       <p class="actions"><a class="button quiet" href="/me/beats"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-arrow"/></svg>Manage beats</a></p>
     </section>
     {{end}}
+
+    {{/* Admin-only, and deliberately outside the Studio block above:
+         these are the operator's tools, not the listener's, and they
+         exist whether or not generation is switched on. Everything
+         linked here is already guarded server-side — the card is a door,
+         not the lock. */}}
+    {{if .User.Admin}}
+    <section class="card">
+      <p class="eyebrow">Station · admin</p>
+      <p class="actions"><a class="button quiet" href="/admin/strands"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-image"/></svg>The canon</a></p>
+      <p class="muted" style="font-size:.85rem;margin:0">The strands episodes
+      can be aired on. A new one stays dormant until it has cover art.</p>
+      <p class="actions">
+        <a class="button quiet" href="/admin/costs"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-external"/></svg>Costs</a>
+        <a class="button quiet" href="/admin/usage"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-external"/></svg>Usage</a>
+      </p>
+      <p class="muted" style="font-size:.82rem;margin:0">Those two answer raw
+      JSON from Anthropic's Cost API, not a page.</p>
+    </section>
+    {{end}}
   </aside>
 
   <section class="log">
