@@ -263,6 +263,16 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("DELETE /me/blocks/{user}", s.auth(s.handleSetList))
 	mux.HandleFunc("PUT /me/mutes/{user}", s.auth(s.handleSetList))
 	mux.HandleFunc("DELETE /me/mutes/{user}", s.auth(s.handleSetList))
+	// The public side. Session-only: going public, and putting your name
+	// to someone else's episode, are decisions a person makes in a
+	// browser — never something a leaked API Key can do (ADR 0018).
+	mux.HandleFunc("POST /me/episodes/{slug}/air", s.session(s.handleAir))
+	mux.HandleFunc("POST /me/episodes/{slug}/unair", s.session(s.handleUnair))
+	mux.HandleFunc("POST /me/vouches/{airing}", s.session(s.handleVouch))
+	mux.HandleFunc("DELETE /me/vouches/{airing}", s.session(s.handleUnvouch))
+	mux.HandleFunc("PUT /me/follows/{strand}", s.session(s.handleFollow))
+	mux.HandleFunc("POST /me/follows/{strand}", s.session(s.handleFollow))
+	mux.HandleFunc("DELETE /me/follows/{strand}", s.session(s.handleUnfollow))
 	mux.HandleFunc("POST /me/invites", s.auth(s.handleCreateInvite))
 	mux.HandleFunc("GET /me/invites", s.auth(s.handleListInvites))
 	mux.HandleFunc("DELETE /me/invites/{token}", s.auth(s.handleRevokeInvite))
@@ -335,6 +345,9 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /admin/costs/episodes", s.adminUser(ignoreUser(s.handleAdminEpisodeCosts)))
 	mux.HandleFunc("GET /admin/usage", s.adminUser(ignoreUser(s.handleAdminUsage)))
 	mux.HandleFunc("GET /admin/generations/{user}/{id}", s.adminUser(s.handleAdminGeneration))
+	// The takedown (ADR 0018): the smallest power that works — the
+	// Episode survives in its Owner's feed, only the publicness stops.
+	mux.HandleFunc("POST /admin/airings/{airing}/unair", s.adminUser(s.handleAdminUnair))
 
 	return s.logged(mux), nil
 }
