@@ -3,6 +3,10 @@
   <p class="mark">🎙</p>
   <h1>podcasting_server</h1>
   <p class="muted">A private podcast server.</p>
+  {{/* The one thing this page lists. ADR 0018 narrowed ADR 0003's "the
+       root page enumerates nothing": Strands are enumerable and are
+       meant to be, while Users and their feeds still are not. */}}
+  <p class="actions center"><a class="button quiet" href="/strands">What's on the air</a></p>
 </section>
 
 {{if .LoggedIn}}

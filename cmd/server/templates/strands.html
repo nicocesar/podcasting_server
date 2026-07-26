@@ -1,0 +1,29 @@
+{{define "title"}}Strands{{end}}
+{{define "content"}}
+<article class="card shell-wide">
+  <h1>Strands</h1>
+  <p class="muted">What the station puts out in public. Each strand is its own
+  podcast feed — subscribe to one and new episodes arrive on their own.</p>
+
+  {{if not .Strands}}
+  <section class="panel">
+    <p class="muted">Nothing on the air yet.</p>
+  </section>
+  {{else}}
+  <div class="strand-grid">
+    {{range .Strands}}
+    <a class="panel strand-card" href="/strands/{{.ID}}">
+      <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="" width="120" height="120" loading="lazy">
+      <div>
+        <h2>{{.Title}}</h2>
+        {{if .Description}}<p class="muted">{{.Description}}</p>{{end}}
+        <p class="eyebrow">
+          {{if eq .Episodes 1}}1 episode{{else}}{{.Episodes}} episodes{{end}}
+        </p>
+      </div>
+    </a>
+    {{end}}
+  </div>
+  {{end}}
+</article>
+{{end}}

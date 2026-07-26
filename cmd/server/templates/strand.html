@@ -1,0 +1,80 @@
+{{define "title"}}{{.Strand.Title}} — Strands{{end}}
+{{define "content"}}
+<article class="card shell-wide">
+  <a class="backlink" href="/strands">← All strands</a>
+
+  <header class="strand-head">
+    <img class="strand-art" src="/strands/{{.Strand.ID}}/cover?s=thumb" alt="" width="160" height="160">
+    <div>
+      <h1>{{.Strand.Title}}</h1>
+      {{if .Strand.Description}}<p class="muted">{{.Strand.Description}}</p>{{end}}
+      {{if .Strand.Retired}}
+      <p class="eyebrow">Retired — no new episodes, but the feed keeps working.</p>
+      {{end}}
+    </div>
+  </header>
+
+  <section class="panel">
+    <p class="eyebrow">Subscribe</p>
+    <p class="muted" style="font-size:.9rem">Paste this into any podcast app.
+    New episodes arrive on their own.</p>
+    <p><code class="feed-url">{{.FeedURL}}</code></p>
+
+    {{if .SignedIn}}
+      {{if .Following}}
+      <p class="muted" style="font-size:.9rem">You follow this strand at a bar of
+      {{if eq .Bar 0}}zero — everything aired lands in your feed{{else}}{{.Bar}}{{end}}.</p>
+      <form method="post" action="/me/follows/{{.Strand.ID}}" class="bar-form">
+        <label for="bar">Only deliver episodes with at least</label>
+        <input id="bar" name="bar" type="number" min="0" max="10" value="{{.Bar}}" size="2">
+        <span>vouches</span>
+        <button class="quiet" type="submit">Save</button>
+      </form>
+      <form method="post" action="/me/follows/{{.Strand.ID}}/unfollow">
+        <button class="quiet" type="submit">Unfollow</button>
+      </form>
+      {{else if not .Strand.Retired}}
+      <form method="post" action="/me/follows/{{.Strand.ID}}">
+        <button type="submit">Follow — into my own feed</button>
+      </form>
+      {{end}}
+    {{end}}
+  </section>
+
+  {{if not .Episodes}}
+  <section class="panel">
+    <p class="muted">Nothing on this strand yet.</p>
+  </section>
+  {{else}}
+  {{range .Episodes}}
+  <section class="panel aired">
+    <h2>{{.Episode.Title}}</h2>
+    <p class="eyebrow">{{.Author}} · {{.Episode.PublishedAt.Format "2 Jan 2006"}}</p>
+    {{template "player" .Player}}
+    {{if .Episode.Description}}<p class="muted">{{.Episode.Description}}</p>{{end}}
+
+    <p class="actions">
+      {{if .Vouches}}
+      <span class="muted">Vouched for by
+        {{range $i, $v := .Vouches}}{{if $i}}, {{end}}{{$v.UserID}}{{end}}</span>
+      {{else}}
+      <span class="muted">No vouches yet</span>
+      {{end}}
+
+      {{if and $.SignedIn (not .Mine)}}
+        {{if .Vouched}}
+        <button class="quiet" type="submit" form="unvouch-{{.Airing.ID}}">Take back my vouch</button>
+        {{else}}
+        <button class="quiet" type="submit" form="vouch-{{.Airing.ID}}">Vouch for this</button>
+        {{end}}
+      {{end}}
+    </p>
+    {{if and $.SignedIn (not .Mine)}}
+    <form id="vouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}" hidden></form>
+    <form id="unvouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}/remove" hidden></form>
+    {{end}}
+  </section>
+  {{end}}
+  {{end}}
+</article>
+{{end}}

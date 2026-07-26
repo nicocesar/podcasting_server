@@ -1,0 +1,84 @@
+{{define "title"}}Strands — admin{{end}}
+{{define "content"}}
+<article class="card shell-wide">
+  <a class="backlink" href="/me">← Back to your podcast</a>
+  <h1>The canon</h1>
+  <p class="muted">The subjects this station sorts episodes into. The station
+  chooses from this list and may not invent anything outside it, so what is
+  here is what the public side can ever be about.</p>
+
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+
+  {{range .Strands}}
+  <section class="panel">
+    <p class="eyebrow">
+      <code>{{.ID}}</code>
+      {{if .Retired}} · retired{{else if not .CoverType}} · dormant, waiting for cover art{{end}}
+      · {{if eq .Airings 1}}1 episode aired{{else}}{{.Airings}} episodes aired{{end}}
+    </p>
+
+    <form method="post" action="/admin/strands/{{.ID}}">
+      <label>Title
+        <input name="title" value="{{.Title}}" maxlength="60" required>
+      </label>
+      <label>Description
+        <textarea name="description" rows="2" maxlength="600">{{.Description}}</textarea>
+      </label>
+      <button class="quiet" type="submit">Save wording</button>
+    </form>
+
+    <form method="post" action="/admin/strands/{{.ID}}/cover" enctype="multipart/form-data">
+      {{if .CoverType}}
+      <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="" width="96" height="96">
+      {{end}}
+      <label>Cover art (JPEG or PNG)
+        <input type="file" name="cover" accept="image/jpeg,image/png" required>
+      </label>
+      <button class="quiet" type="submit">
+        {{if .CoverType}}Replace art{{else}}Upload art to wake it up{{end}}
+      </button>
+    </form>
+
+    <p class="actions">
+      {{if .Retired}}
+      <form method="post" action="/admin/strands/{{.ID}}/unretire">
+        <button class="quiet" type="submit">Bring it back</button>
+      </form>
+      {{else}}
+      <form method="post" action="/admin/strands/{{.ID}}/retire">
+        <button class="quiet" type="submit">Retire</button>
+      </form>
+      {{end}}
+      {{if .Deletable}}
+      <form method="post" action="/admin/strands/{{.ID}}/delete">
+        <button class="quiet danger" type="submit">Delete</button>
+      </form>
+      {{else}}
+      <span class="muted">Episodes have aired here, so it can only be retired.</span>
+      {{end}}
+    </p>
+  </section>
+  {{end}}
+
+  <section class="panel">
+    <h2>Add a strand</h2>
+    <p class="muted">The id is permanent: it addresses the public feed, and
+    renaming it would kill every subscription. A new strand stays dormant
+    until it has cover art.</p>
+    <form method="post" action="/admin/strands">
+      <label>Id
+        <input name="id" placeholder="tech-news" pattern="[a-z0-9]+(-[a-z0-9]+)*"
+               minlength="3" maxlength="32" required>
+      </label>
+      <label>Title
+        <input name="title" placeholder="Tech News" maxlength="60" required>
+      </label>
+      <label>Description
+        <textarea name="description" rows="2" maxlength="600"
+                  placeholder="What happened in technology, briefly."></textarea>
+      </label>
+      <button type="submit">Add it</button>
+    </form>
+  </section>
+</article>
+{{end}}

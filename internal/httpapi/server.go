@@ -110,7 +110,11 @@ type server struct {
 	tmplBeats      *template.Template
 	tmplSettings   *template.Template
 
+	tmplStrands *template.Template
+	tmplStrand  *template.Template
+
 	tmplAdminGeneration *template.Template
+	tmplAdminStrands    *template.Template
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -176,7 +180,10 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplGeneration, []string{"templates/layout.html", "templates/generation.html"}},
 		{&s.tmplBeats, []string{"templates/layout.html", "templates/beats.html"}},
 		{&s.tmplSettings, []string{"templates/layout.html", "templates/settings.html"}},
+		{&s.tmplStrands, []string{"templates/layout.html", "templates/strands.html"}},
+		{&s.tmplStrand, []string{"templates/layout.html", "templates/strand.html", "templates/fragments/*.html"}},
 		{&s.tmplAdminGeneration, []string{"templates/layout.html", "templates/admin_generation.html"}},
+		{&s.tmplAdminStrands, []string{"templates/layout.html", "templates/admin_strands.html"}},
 	} {
 		t, err := template.New("page").Funcs(template.FuncMap{
 			"assetv": func() string { return s.assetVersion },
@@ -210,6 +217,17 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("POST /invites/{token}", s.guest(s.handleRedeem))
 	mux.HandleFunc("GET /invites/{token}/audio.mp3", s.guest(s.handleInviteAudio))
 	mux.HandleFunc("GET /invites/{token}/cover", s.guest(s.handleInviteCover))
+	// The public side (ADR 0018): no capability at all. Literal segments
+	// beat the wildcard, so feed.xml and cover never reach the audio
+	// handler.
+	mux.HandleFunc("GET /strands", s.handleStrandsIndex)
+	mux.HandleFunc("GET /strands/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/strands", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /strands/{strand}", s.handleStrandPage)
+	mux.HandleFunc("GET /strands/{strand}/feed.xml", s.handleStrandFeed)
+	mux.HandleFunc("GET /strands/{strand}/cover", s.handleStrandCover)
+	mux.HandleFunc("GET /strands/{strand}/{file}", s.handleStrandAudio)
 	mux.Handle("GET /static/", http.StripPrefix("/static/",
 		cacheControl("public, max-age=86400", http.FileServerFS(static))))
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
@@ -270,6 +288,10 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("POST /me/episodes/{slug}/unair", s.session(s.handleUnair))
 	mux.HandleFunc("POST /me/vouches/{airing}", s.session(s.handleVouch))
 	mux.HandleFunc("DELETE /me/vouches/{airing}", s.session(s.handleUnvouch))
+	// Browsers cannot send DELETE from a form, and these controls live on
+	// a page, so each removal has a POST spelling too.
+	mux.HandleFunc("POST /me/vouches/{airing}/remove", s.session(s.handleUnvouch))
+	mux.HandleFunc("POST /me/follows/{strand}/unfollow", s.session(s.handleUnfollow))
 	mux.HandleFunc("PUT /me/follows/{strand}", s.session(s.handleFollow))
 	mux.HandleFunc("POST /me/follows/{strand}", s.session(s.handleFollow))
 	mux.HandleFunc("DELETE /me/follows/{strand}", s.session(s.handleUnfollow))
@@ -348,6 +370,11 @@ func New(cfg Config) (http.Handler, error) {
 	// The takedown (ADR 0018): the smallest power that works — the
 	// Episode survives in its Owner's feed, only the publicness stops.
 	mux.HandleFunc("POST /admin/airings/{airing}/unair", s.adminUser(s.handleAdminUnair))
+	mux.HandleFunc("GET /admin/strands", s.adminUser(s.handleAdminStrands))
+	mux.HandleFunc("POST /admin/strands", s.adminUser(s.handleAdminStrandCreate))
+	mux.HandleFunc("POST /admin/strands/{strand}", s.adminUser(s.handleAdminStrandUpdate))
+	mux.HandleFunc("POST /admin/strands/{strand}/cover", s.adminUser(s.handleAdminStrandCover))
+	mux.HandleFunc("POST /admin/strands/{strand}/{action}", s.adminUser(s.handleAdminStrandAction))
 
 	return s.logged(mux), nil
 }

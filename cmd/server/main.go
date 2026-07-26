@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/nicocesar/podcasting_server/internal/coverart"
 	"github.com/nicocesar/podcasting_server/internal/generation"
@@ -131,6 +132,10 @@ func run(log *slog.Logger) error {
 		return backfillThumbs(ctx, log, st)
 	}
 
+	if err := seedCanon(ctx, log, st); err != nil {
+		return err
+	}
+
 	// GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET turn on "Sign in with
 	// Google"; without them the webapp is password-only. Trimmed: a
 	// stray space in the env value reaches Google verbatim inside the
@@ -238,6 +243,32 @@ func run(log *slog.Logger) error {
 // for every user who already has a cover, so covers uploaded before
 // thumbnails existed get optimized in one pass. It reuses the upload
 // path (coverart.Process + store.SetCover) and is safe to re-run.
+// seedCanon gives a fresh install something to sort episodes into, so a
+// new deployment is not dead on arrival (ADR 0017). It runs only when
+// the canon is completely empty — an operator who has retired every
+// strand meant it, and must not find them back after a restart. The
+// four arrive Dormant: nothing may be aired into a strand until an
+// admin has given it cover art on /admin/strands.
+func seedCanon(ctx context.Context, log *slog.Logger, st store.Store) error {
+	canon, err := st.ListStrands(ctx)
+	if err != nil {
+		return fmt.Errorf("read the strand canon: %w", err)
+	}
+	if len(canon) > 0 {
+		return nil
+	}
+	seeds := store.SeedStrands()
+	for _, s := range seeds {
+		s.CreatedAt = time.Now().UTC()
+		if err := st.PutStrand(ctx, s); err != nil {
+			return fmt.Errorf("seed strand %q: %w", s.ID, err)
+		}
+	}
+	log.Info("seeded an empty strand canon; upload cover art on /admin/strands to wake them",
+		"strands", len(seeds))
+	return nil
+}
+
 func backfillThumbs(ctx context.Context, log *slog.Logger, st store.Store) error {
 	users, err := st.ListUsers(ctx)
 	if err != nil {
