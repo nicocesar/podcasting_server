@@ -188,6 +188,10 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 		datastore.NewQuery(kindGeneration).FilterField("user_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindBeat).FilterField("user_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindAPIKey).FilterField("user_id", "=", id).KeysOnly(),
+		// The vouches they gave stop counting toward anyone's Bar, and
+		// the strands they followed stop delivering (ADR 0019).
+		datastore.NewQuery(kindVouch).FilterField("user_id", "=", id).KeysOnly(),
+		datastore.NewQuery(kindFollow).FilterField("user_id", "=", id).KeysOnly(),
 	} {
 		keys, err := s.ds.GetAll(ctx, q, nil)
 		if err != nil {
@@ -196,6 +200,10 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 		if err := s.deleteKeys(ctx, keys); err != nil {
 			return err
 		}
+	}
+	// Everything they had on the air comes off it, vouches included.
+	if err := s.removeOwnerAirings(ctx, id, func(store.Airing) bool { return true }); err != nil {
+		return err
 	}
 	if err := s.ds.Delete(ctx, userKey(id)); err != nil {
 		return err
@@ -486,9 +494,31 @@ func (s *Store) DeleteEpisode(ctx context.Context, ownerID, slug string) error {
 	if err := s.deleteKeys(ctx, keys); err != nil {
 		return err
 	}
+	// The public surface is one of those places too (ADR 0018).
+	if err := s.removeOwnerAirings(ctx, ownerID, func(a store.Airing) bool { return a.Slug == slug }); err != nil {
+		return err
+	}
 	err = s.bucket.Object(audioObject(ownerID, slug)).Delete(ctx)
 	if err != nil && !errors.Is(err, storage.ErrObjectNotExist) {
 		return err
+	}
+	return nil
+}
+
+// removeOwnerAirings un-Airs every one of the owner's airings that drop
+// accepts, taking each one's vouches with it.
+func (s *Store) removeOwnerAirings(ctx context.Context, ownerID string, drop func(store.Airing) bool) error {
+	airings, err := s.ListAiringsByOwner(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	for _, a := range airings {
+		if !drop(a) {
+			continue
+		}
+		if err := s.DeleteAiring(ctx, a.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
 	}
 	return nil
 }

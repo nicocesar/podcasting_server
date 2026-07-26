@@ -168,6 +168,14 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	if err := s.removeAPIKeys(func(k store.APIKey) bool { return k.UserID == id }); err != nil && err != store.ErrNotFound {
 		return err
 	}
+	// Everything they had on the air comes off it, and the vouches they
+	// gave stop counting toward anyone else's Bar.
+	if err := s.removeAirings(func(a store.Airing) bool { return a.OwnerID == id }); err != nil {
+		return err
+	}
+	if err := s.removeVouches(func(v store.Vouch) bool { return v.UserID == id }); err != nil {
+		return err
+	}
 	return os.RemoveAll(s.userDir(id))
 }
 
@@ -373,9 +381,15 @@ func (s *Store) DeleteEpisode(ctx context.Context, ownerID, slug string) error {
 			return err
 		}
 	}
-	// The owner's delete propagates to every referencing feed (ADR 0006).
-	return s.removeShares(ctx, func(sh store.Share) bool {
+	// The owner's delete propagates to every referencing feed (ADR 0006),
+	// and the public surface is now one of those places (ADR 0018).
+	if err := s.removeShares(ctx, func(sh store.Share) bool {
 		return sh.OwnerID == ownerID && sh.Slug == slug
+	}); err != nil {
+		return err
+	}
+	return s.removeAirings(func(a store.Airing) bool {
+		return a.OwnerID == ownerID && a.Slug == slug
 	})
 }
 

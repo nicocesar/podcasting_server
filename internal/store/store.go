@@ -56,7 +56,7 @@ var reservedUsernames = func() map[string]bool {
 		"admin", "api", "auth", "beats", "callback", "cover", "episode", "episodes",
 		"f", "feed", "generate", "generations", "google", "healthz", "image",
 		"invite", "invites", "login", "logout", "me", "settings", "share",
-		"static", "usage", "user", "users",
+		"static", "strand", "strands", "usage", "user", "users",
 		// Roles and system identities not to be impersonated.
 		"about", "abuse", "anonymous", "everyone", "guest", "help", "host",
 		"mail", "moderator", "mod", "null", "official", "owner", "postmaster",
@@ -231,6 +231,19 @@ type Episode struct {
 	// Characters is the extracted cast of a story episode; empty until
 	// the owner runs extraction (checkbox at generation, or backfill).
 	Characters []Character `json:"characters,omitempty" datastore:"characters,noindex"`
+
+	// Strand is the subject the station placed this Episode in (ADR
+	// 0017), or empty for a Strandless one — an Episode that fits
+	// nothing in the canon, or arrived through the Publishing Contract
+	// with nothing to read. Set on private Episodes too, so no public
+	// endpoint may marshal this struct directly; public responses need
+	// their own shape.
+	Strand string `json:"strand,omitempty" datastore:"strand,noindex"`
+
+	// AirBarred is set when an admin un-Airs the Episode (ADR 0018) and
+	// cleared only by an admin. Without it a takedown is decorative:
+	// the Owner would simply Air it again.
+	AirBarred bool `json:"air_barred,omitempty" datastore:"air_barred,noindex"`
 }
 
 // Share is a reference placing one Episode into one User's Personal
@@ -600,6 +613,65 @@ type Store interface {
 	// that owner's traffic, never swept globally (ADR 0016).
 	ListBeats(ctx context.Context, userID string) ([]Beat, error)
 	DeleteBeat(ctx context.Context, userID, id string) error
+
+	// --- the public side: strands, airings, vouches, follows ---
+
+	// PutStrand stores or replaces a canon entry. The ID is immutable
+	// by convention, not by this call: it addresses the public feed, so
+	// the admin layer never offers a rename (ADR 0017).
+	PutStrand(ctx context.Context, s Strand) error
+	GetStrand(ctx context.Context, id string) (Strand, error)
+	// ListStrands returns the whole canon ordered by ID, retired
+	// entries included; callers filter. Retirement is a flag, never a
+	// deletion, once anything has aired.
+	ListStrands(ctx context.Context) ([]Strand, error)
+	// DeleteStrand removes a canon entry outright. Only ever called for
+	// a Strand that has never been Aired into — a mistake made five
+	// minutes ago; the caller checks.
+	DeleteStrand(ctx context.Context, id string) error
+	// SetStrandCover persists the normalized full-size art and its web
+	// thumbnail, the same pair internal/coverart produces for a feed.
+	SetStrandCover(ctx context.Context, id, contentType string, full, thumb io.Reader) error
+	OpenStrandCover(ctx context.Context, id string) (io.ReadCloser, string, error)
+	OpenStrandCoverThumb(ctx context.Context, id string) (io.ReadCloser, string, error)
+
+	// PutAiring stores or replaces an Airing, which is also how a
+	// settled Vouch count is frozen onto one.
+	PutAiring(ctx context.Context, a Airing) error
+	// GetAiring resolves the public identifier. This is the only way
+	// the public surface reaches an Episode: no Airing, no bytes.
+	GetAiring(ctx context.Context, id string) (Airing, error)
+	// GetAiringByEpisode finds the live Airing of one Episode, so the
+	// Owner's Dashboard can say whether it is on the air. ErrNotFound
+	// when it is private.
+	GetAiringByEpisode(ctx context.Context, ownerID, slug string) (Airing, error)
+	// DeleteAiring un-Airs, removing the Vouches along with it. A
+	// re-Air mints a new identifier, so links killed by an un-Air stay
+	// dead.
+	DeleteAiring(ctx context.Context, id string) error
+	// ListAirings returns one Strand's Airings newest-first — the
+	// Strand Page, the Strand Feed, and the delivery query all read
+	// this and nothing else.
+	ListAirings(ctx context.Context, strand string) ([]Airing, error)
+	// ListAiringsByOwner returns an Owner's Airings newest-first, for
+	// their own view of what they have on the air.
+	ListAiringsByOwner(ctx context.Context, ownerID string) ([]Airing, error)
+
+	// AddVouch records one User putting their name to one Aired
+	// Episode. Vouching twice is idempotent, not an error.
+	AddVouch(ctx context.Context, v Vouch) error
+	RemoveVouch(ctx context.Context, airingID, userID string) error
+	// ListVouches returns who vouched for an Airing, oldest first. A
+	// Vouch is public and attributed, so this drives display as well as
+	// the count frozen at settling.
+	ListVouches(ctx context.Context, airingID string) ([]Vouch, error)
+
+	// PutFollow stores or replaces a User's Follow of a Strand, which
+	// is also how the Bar is changed.
+	PutFollow(ctx context.Context, f Follow) error
+	DeleteFollow(ctx context.Context, userID, strand string) error
+	// ListFollows returns the User's Follows ordered by Strand.
+	ListFollows(ctx context.Context, userID string) ([]Follow, error)
 
 	OpenAudio(ctx context.Context, ownerID, slug string) (Audio, error)
 
