@@ -58,7 +58,8 @@ _Avoid_: account settings (broader), security page
 
 **Personal Feed**:
 A User's single private RSS feed: a view over Episode references — their
-own plus those shared with them — never a container holding copies.
+own, those shared with them, and those a Follow delivers — never a
+container holding copies.
 _Avoid_: show, channel, subscription
 
 **Feed Token**:
@@ -231,14 +232,48 @@ remains the Owner's, and the Owner's replace or delete propagates to every
 feed referencing it.
 _Avoid_: send, forward, repost
 
+**Vouch**:
+One signed-in User putting their name to one Aired Episode: public,
+attributed by feed title, and never for one's own Episode. Not a vote —
+there is no ranking, no score and no ordering by it. At the size of this
+station a Vouch says "this one is worth your time", and one of them is
+worth more than a tally would be.
+_Avoid_: vote, like, upvote, rating
+
+**Follow**:
+A User's standing choice to have a Strand's Aired Episodes delivered into
+their Personal Feed. The third kind of reference a Personal Feed holds,
+after the User's own Episodes and their Shares — and unlike a Share it
+has no Sharer, because nobody chose to send it. Unfollowing is the
+control; Block and Mute are not overloaded to do this job.
+_Avoid_: subscribe (that's a podcast client and a feed URL), watch
+
+**Bar**:
+The number of Vouches an Episode must carry before a Follow delivers it:
+zero for everything Aired, one — the default — for whatever somebody
+vouched for, higher for a Strand that has become noisy. Set per Follow,
+so the same Strand can be a firehose for one listener and a trickle for
+another.
+_Avoid_: threshold, score, filter
+
+**Settling**:
+The day between Airing and eligibility, during which Vouches accumulate.
+When it ends the Vouch count is frozen onto the Airing and the delivery
+question is answered once and for all: above the Bar it goes out, below
+it never does. Later Vouches still show, but they no longer deliver —
+because nothing may be inserted into a listener's past, and re-dating an
+Episode would misdate the news inside it.
+_Avoid_: cooldown, delay, embargo
+
 **Block**:
 A recipient control: Shares from a Blocked User never enter my Personal
 Feed again. Targets the Sharer, not the content.
 _Avoid_: ban, unfollow
 
 **Mute**:
-A recipient control: Episodes owned by a Muted User never appear in my
-Personal Feed, regardless of who Shares them. Targets the Owner.
+A recipient control: Episodes owned by a Muted User never appear
+anywhere I look — not in my Personal Feed however they got there, and
+not on a Strand Page I browse while signed in. Targets the Owner.
 _Avoid_: hide, filter out
 
 ### Generation
