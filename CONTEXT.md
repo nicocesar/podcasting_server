@@ -95,6 +95,70 @@ only shared with me, only from one User). Same credentials, same Episodes,
 narrower view.
 _Avoid_: sub-feed, playlist, smart feed
 
+**Strand**:
+The one subject an Episode belongs to, chosen from a fixed canon the
+station defines — not free text, and never coined by a User or by the
+machine. An Episode has exactly one Strand or none; "none" is a
+deliberate outcome, and the pile of Strandless Episodes is the evidence
+for which Strand to add to the canon next. Assigned by the station, not
+declared by the Owner (see Stranding). The canon is kept by the admin,
+who names a Strand and gives it cover art; its id then never changes,
+because that id is its public address. A Strand that has been Aired into
+is never deleted, only Retired.
+_Avoid_: tag, topic (that's the generation input), category, genre,
+channel, sequence
+
+**Retired Strand**:
+A Strand that has left the canon without leaving the internet: it accepts
+no new Airings and appears in no discovery, while its page and feed keep
+serving whoever already subscribed. The only way a Strand ends, once
+anything has Aired on it.
+_Avoid_: archived, deleted, disabled
+
+**Stranding**:
+The station reading a finished Episode and placing it in a Strand: one
+schema-constrained model call over the script, or over the Topic and
+title where there is no script. The schema admits only the existing
+canon, so a Strand cannot be invented by inference. Episodes arriving
+through the Publishing Contract from an external Generator are not
+Stranded — there is nothing to read but a title. The station proposes;
+the Owner disposes, and may set or change the Strand when Airing.
+_Avoid_: tagging, classification, auto-tagging
+
+**Airing**:
+The Owner's act of putting one of their Episodes on its Strand, where
+anyone may hear it with no capability at all — the only way anything
+leaves the private side of the station. Deliberately per-Episode and by
+hand: the Owner has heard it before strangers can. An Episode with no
+Strand cannot be Aired, because there would be nowhere for it to go. A
+record of its own, not a flag: it carries the public identifier, and
+un-Airing deletes it. Re-Airing mints a new identifier, so links killed
+by an un-Air stay dead.
+_Avoid_: publish (that's the Publishing Contract), post, go live
+
+**Aired Episode**:
+An Episode with a live Airing. Its audio and its page are reachable
+without a Feed Token, it is attributed to its Owner by their feed title,
+and it appears in its Strand's page and feed. The Owner's delete removes
+it from the public surface as it does from every other feed; the Owner's
+republish silently changes what the public hears, since an Airing refers
+to the Episode, not to a snapshot of it.
+_Avoid_: public episode, published episode
+
+**Strand Page**:
+A Strand rendered for a browser with no credentials: its cover art,
+its description, its Aired Episodes newest first, and the subscribe URL
+and QR for its Strand Feed. Where a link to an Aired Episode lands.
+_Avoid_: strand home, category page
+
+**Strand Feed**:
+A Strand as an RSS feed anyone may subscribe to in a podcast client — no
+token, no dialog, the one place in the station where audio is served
+without a capability. Multi-author: the channel is the station, each item
+is attributed to its Owner. Carries `itunes:block`, so it is reachable by
+URL but listed in no directory.
+_Avoid_: public feed, show, channel
+
 **Cover Art**:
 The single image associated with a Personal Feed, displayed by podcast
 clients. Served inside the Feed Token namespace, so any client that can
@@ -263,8 +327,10 @@ _Avoid_: admin panel, backoffice
 
 **Public Surface**:
 The endpoints reachable with no secret at all: the landing page, static
-assets, the login page, and the Redemption page for a valid Invite token.
-Everything else requires a capability (Feed Token, Invite), a Session, or
-an API Key. The landing page lists nothing, so neither Users nor feeds
-are enumerable.
+assets, the login page, the Redemption page for a valid Invite token,
+and — since Airing — the Strand Pages, the Strand Feeds, and the audio
+of Aired Episodes. Everything else requires a capability (Feed Token,
+Invite), a Session, or an API Key. Strands are enumerable and are meant
+to be; Users and Personal Feeds are not, which is why an Aired Episode
+is addressed by an opaque Airing id and never by its Owner's username.
 _Avoid_: public site, anonymous access
