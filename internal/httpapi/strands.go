@@ -19,6 +19,38 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
+// awakeStrands is the canon an Episode may actually be aired into:
+// everything neither Retired nor still waiting for its cover art. The
+// Dashboard offers exactly these, so the picker can never present a
+// choice the air handler would refuse.
+func (s *server) awakeStrands(r *http.Request) ([]store.Strand, error) {
+	canon, err := s.store.ListStrands(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	awake := make([]store.Strand, 0, len(canon))
+	for _, st := range canon {
+		if !st.Dormant() {
+			awake = append(awake, st)
+		}
+	}
+	return awake, nil
+}
+
+// airingsBySlug indexes the User's live Airings, so a Dashboard of
+// thirty episodes costs one query rather than thirty.
+func (s *server) airingsBySlug(r *http.Request, u store.User) (map[string]store.Airing, error) {
+	airings, err := s.store.ListAiringsByOwner(r.Context(), u.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]store.Airing, len(airings))
+	for _, a := range airings {
+		out[a.Slug] = a
+	}
+	return out, nil
+}
+
 // handleAir puts one of the caller's own Episodes on a Strand. The
 // Strand comes from the form when the Owner overrides what the station
 // chose, and from the Episode otherwise — the station proposes, the

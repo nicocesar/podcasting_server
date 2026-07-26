@@ -474,6 +474,43 @@ details.subscribe > div {
   word-break: break-word;
 }
 
+/* Airing controls. The one action on this page that hands audio to
+   people outside the membership, so it sits on its own line under the
+   rest rather than competing with Share for the same row. */
+.air-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border);
+}
+.air-row form { margin: 0; }
+.air-form { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.air-row .muted { font-size: 0.85rem; margin: 0; }
+
+/* Live and public. This is the one state the ON AIR red is for — a
+   listener outside the station can hear this, and nothing else on the
+   dashboard is true of. */
+.on-air {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--live);
+  margin: 0;
+}
+.on-air .dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 3px var(--live-glow);
+  flex: none;
+}
+.on-air a { color: inherit; }
+
 /* An episode that arrived rather than being made here. It is set apart
    by material, not by a new ink: the card sinks to the page ground
    instead of standing on it, and a rail in the ordinary accent marks

@@ -670,17 +670,19 @@ func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.Use
 		cover = sessionCoverURL(u)
 	}
 	data := struct {
-		Episode  store.Episode
-		Aired    string
-		Duration string
-		CoverURL string
-		AudioURL string
-		Session  bool
-		Player   playerView
+		Episode store.Episode
+		// Published, not Aired: since ADR 0018 airing means going
+		// public, and this is only when the episode was made.
+		Published string
+		Duration  string
+		CoverURL  string
+		AudioURL  string
+		Session   bool
+		Player    playerView
 		subscribeBox
 	}{
 		Episode:      ep,
-		Aired:        relativeDate(ep.PublishedAt),
+		Published:    relativeDate(ep.PublishedAt),
 		Duration:     humanDuration(ep.DurationSec),
 		CoverURL:     cover,
 		AudioURL:     audioURL(u, ep, session),
@@ -956,10 +958,10 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 	shared := 0
 	for _, e := range entries {
 		v := episodeView{
-			Episode:  e.Episode,
-			Aired:    relativeDate(e.PublishedAt),
-			Duration: humanDuration(e.DurationSec),
-			PageURL:  episodeBase(u, e.Episode, true),
+			Episode:   e.Episode,
+			Published: relativeDate(e.PublishedAt),
+			Duration:  humanDuration(e.DurationSec),
+			PageURL:   episodeBase(u, e.Episode, true),
 			// The cover art stays this feed's, for the reason
 			// episodePage gives: a shared Episode is presented under
 			// the art of the feed it arrived in. The credit line
@@ -1003,6 +1005,32 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			return
 		}
 	}
+	// What is already on the air, and where anything else could go
+	// (ADR 0018). One pair of reads for the whole page rather than two
+	// per row.
+	airStrands, err := s.awakeStrands(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	onAir, err := s.airingsBySlug(r, u)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	for i, v := range views {
+		// Only the Owner's own rows: a Sharer may forward an Episode
+		// onward but never put it in front of strangers (ADR 0006 vs
+		// ADR 0018).
+		if v.Shared {
+			continue
+		}
+		if a, ok := onAir[v.Slug]; ok {
+			airing := a
+			views[i].OnAir = &airing
+		}
+		views[i].SuggestedStrand = v.Strand
+	}
 	s.render(w, http.StatusOK, s.tmplDashboard, struct {
 		User            store.User
 		FeedPage        string
@@ -1013,6 +1041,10 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		GenerateEnabled bool
 		Generations     []generationView
 		Beats           []beatView
+		// AirStrands is the canon a row may be aired into: awake
+		// strands only, since a dormant or retired one takes nothing.
+		// Empty means the airing controls do not appear at all.
+		AirStrands []store.Strand
 		subscribeBox
 	}{
 		User:            u,
@@ -1024,6 +1056,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
 		Beats:           beats,
+		AirStrands:      airStrands,
 		subscribeBox:    s.subscribeBox(r, u),
 	})
 	// Opening the Dashboard catches your Beats up, so a feed you are
@@ -1035,8 +1068,11 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 // shows for it, precomputed like inviteView/generationView.
 type episodeView struct {
 	store.Episode
-	Aired    string
-	Duration string
+	// Published is when the Episode was made, in relative words. Not
+	// "Aired": since ADR 0018 that word means going public, and this
+	// field predates it by months.
+	Published string
+	Duration  string
 	// PageURL is this Episode's own page, inside the Feed Token
 	// namespace — the Dashboard title links to it.
 	PageURL string
@@ -1047,6 +1083,15 @@ type episodeView struct {
 	// NeedsCharacters offers the "save characters" backfill button: a
 	// story episode whose cast was never extracted.
 	NeedsCharacters bool
+
+	// OnAir is this Episode's live Airing, or nil when it is private.
+	// Only ever set on the Owner's own rows: a Sharer may forward an
+	// Episode but never air it (ADR 0018).
+	OnAir *store.Airing
+	// SuggestedStrand is where the strand picker starts — what the
+	// station chose at generation time, when it chose anything. The
+	// station proposes, the Owner disposes (ADR 0017).
+	SuggestedStrand string
 
 	// Shared marks an Episode that reached this feed as a Share rather
 	// than being published into it. It decides both the credit line and

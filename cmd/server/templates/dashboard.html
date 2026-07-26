@@ -131,11 +131,11 @@
            another user's namespace that you cannot publish, delete, or
            refer to — so it goes, and the arrival date takes its place. */}}
       {{if .Shared}}
-      <p class="ep-meta">{{.Aired}}{{with .Duration}} · {{.}}{{end}}{{with .Arrived}} · shared {{.}}{{end}}</p>
+      <p class="ep-meta">{{.Published}}{{with .Duration}} · {{.}}{{end}}{{with .Arrived}} · shared {{.}}{{end}}</p>
       <p class="ep-credit">by <strong>@{{.OwnerID}}</strong>
         {{- if ne .SharerID .OwnerID}} · via <strong>@{{.SharerID}}</strong>{{end}}</p>
       {{else}}
-      <p class="ep-meta">{{.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
+      <p class="ep-meta">{{.Slug}}{{with .Published}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
       {{end}}
       {{template "player" .Player}}
       <div class="actions">
@@ -158,6 +158,41 @@
         </form>
         {{end}}
       </div>
+
+      {{/* Airing: the one control here that hands audio to strangers, so
+           it says so in words rather than relying on an icon. Own
+           episodes only — a Sharer may forward but never air (ADR 0018).
+           A plain form, no JavaScript: the whole thing degrades to a
+           select and a button. */}}
+      {{if not .Shared}}
+      <div class="air-row">
+        {{if .AirBarred}}
+        <p class="muted">The station took this off the air. Only an admin can put it back.</p>
+        {{else if .OnAir}}
+        <p class="on-air">
+          <span class="dot" aria-hidden="true"></span>
+          On air in <a href="/strands/{{.OnAir.Strand}}">{{.OnAir.Strand}}</a> —
+          anyone can hear it.
+        </p>
+        <form method="post" action="/me/episodes/{{.Slug}}/unair">
+          <button class="quiet" type="submit"
+                  title="Take it off the public strand. Anything already downloaded stays downloaded."><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Take off the air</button>
+        </form>
+        {{else if $.AirStrands}}
+        <form method="post" action="/me/episodes/{{.Slug}}/air" class="air-form">
+          <label class="sr-only" for="air-{{.Slug}}">Strand to air this on</label>
+          <select id="air-{{.Slug}}" name="strand">
+            {{$suggested := .SuggestedStrand}}
+            {{range $.AirStrands}}
+            <option value="{{.ID}}"{{if eq .ID $suggested}} selected{{end}}>{{.Title}}</option>
+            {{end}}
+          </select>
+          <button class="quiet" type="submit"
+                  title="Publish this on a strand, where anyone at all can hear it"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rss"/></svg>Put on the air</button>
+        </form>
+        {{end}}
+      </div>
+      {{end}}
       <div class="invite-row ep-invite" hidden>
         <code class="feed-url"></code>
         <button class="copy" data-copy><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-copy"/></svg><span>Copy</span></button>

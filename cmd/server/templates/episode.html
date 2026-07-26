@@ -4,7 +4,7 @@
 <article class="card">
   {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}?s=thumb" alt="Cover art for this feed">{{end}}
   <h1>{{.Episode.Title}}</h1>
-  <p class="ep-meta">{{.Episode.Slug}}{{with .Aired}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
+  <p class="ep-meta">{{.Episode.Slug}}{{with .Published}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
 
   {{template "player" .Player}}
 
