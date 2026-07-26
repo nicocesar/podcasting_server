@@ -628,7 +628,7 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 		}
 	}
 
-	g, ep, err := r.publishAudio(ctx, g, script.Title, script.Description(), mp3)
+	g, ep, err := r.publishAudio(ctx, g, script.Title, script.Description(), script.Script, mp3)
 	if err != nil {
 		return g, err
 	}
@@ -721,7 +721,7 @@ func (r *Runner) composeAndPublish(ctx context.Context, g store.Generation) (sto
 	// No credit outro: tts.Credit names the engine and voice that read the
 	// episode, and nothing here was read. A spoken sign-off would also be
 	// the one voice in a track that is meant to have none.
-	g, ep, err := r.publishAudio(ctx, g, comp.Title, comp.Description(), mp3)
+	g, ep, err := r.publishAudio(ctx, g, comp.Title, comp.Description(), "", mp3)
 	if err != nil {
 		return g, err
 	}
@@ -759,7 +759,10 @@ func (r *Runner) composeMovement(ctx context.Context, g *store.Generation, i int
 // produced the bytes — a voiced script or a composed piece — from here on
 // an episode is an episode. Returns the stored Episode, whose Slug is the
 // one that survived collision resolution.
-func (r *Runner) publishAudio(ctx context.Context, g store.Generation, title, description string, mp3 []byte) (store.Generation, store.Episode, error) {
+// script is the spoken text where there is one, for Stranding to read;
+// the composed templates pass "" and are sorted on their title and topic
+// alone.
+func (r *Runner) publishAudio(ctx context.Context, g store.Generation, title, description, script string, mp3 []byte) (store.Generation, store.Episode, error) {
 	// The blob was assembled by concatenating the MP3s of its parts. That
 	// leaves each part's ID3 tag and Info/Xing duration header buried
 	// inside the file, and players trust the first one and stop early —
@@ -796,6 +799,20 @@ func (r *Runner) publishAudio(ctx context.Context, g store.Generation, title, de
 	if d, err := audio.MP3Duration(bytes.NewReader(mp3)); err == nil {
 		ep.DurationSec = int(d.Round(time.Second).Seconds())
 	}
+	// Sort it into a Strand before the episode is written, so the
+	// subject lands in the same put as everything else (ADR 0017).
+	// Every Episode is stranded, private or not: the classification is
+	// one small call against a bill that already includes an agent
+	// session and full TTS, and classifying only what someone wants to
+	// air would bias the Strandless pile that tells us what the canon is
+	// missing.
+	ep.Strand = r.strandOf(ctx, &g, StrandRequest{
+		Title:       title,
+		Description: description,
+		Topic:       g.Topic,
+		Template:    tpl.Name,
+		Script:      script,
+	})
 	ep, err = r.store.UpsertEpisode(ctx, ep, bytes.NewReader(mp3))
 	if err != nil {
 		return g, store.Episode{}, fmt.Errorf("publish: %w", err)
@@ -825,6 +842,51 @@ func (r *Runner) finish(ctx context.Context, g store.Generation, slug string) (s
 	// ground this Episode already did.
 	r.recordBeatOutcome(ctx, g, nil)
 	return g, nil
+}
+
+// strandOf sorts the Episode about to be published into one of the
+// station's Strands, returning "" when nothing fits, when the canon is
+// empty, or when the classification fails. Never fatal: a Strandless
+// Episode is a normal outcome, and the Owner can set the Strand by hand
+// when they Air it (ADR 0017). Retired Strands are left out — they
+// accept no new Airings, so classifying into one would place an Episode
+// somewhere it can never go.
+func (r *Runner) strandOf(ctx context.Context, g *store.Generation, req StrandRequest) string {
+	canon, err := r.store.ListStrands(ctx)
+	if err != nil {
+		r.trace(g, store.LevelWarn, "strand.canon_unavailable", "could not read the strand canon", "err", err)
+		return ""
+	}
+	live := canon[:0]
+	for _, s := range canon {
+		if !s.Retired {
+			live = append(live, s)
+		}
+	}
+	if len(live) == 0 {
+		return ""
+	}
+
+	strand, u, err := ClassifyStrand(ctx, r.api, live, req)
+	// Classification burned real tokens either way; fold them into the
+	// meters without touching SessionsCount, which statsLabel keys off.
+	g.InputTokens += u.InputTokens
+	g.OutputTokens += u.OutputTokens
+	g.CacheReadTokens += u.CacheReadTokens
+	if err != nil {
+		r.trace(g, store.LevelWarn, "strand.failed", "could not sort the episode into a strand", "err", err)
+		return ""
+	}
+	if strand == "" {
+		// Not a failure: the Strandless pile is the evidence for what
+		// the canon is missing, so it is worth saying out loud.
+		r.trace(g, store.LevelNotice, "strand.none", "no strand fits this episode",
+			"candidates", len(live))
+		return ""
+	}
+	r.trace(g, store.LevelInfo, "strand.classified", "episode sorted into a strand",
+		"strand", strand, "candidates", len(live))
+	return strand
 }
 
 // ExtractCharacters distills a story script's cast for the HTTP layer's
