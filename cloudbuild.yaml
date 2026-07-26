@@ -4,6 +4,12 @@ options:
   # Manual `gcloud builds submit` (make deploy) has no SHORT_SHA; let it
   # resolve to "" instead of rejecting the build.
   substitution_option: ALLOW_LOOSE
+  # _IMAGE and _CACHE_IMAGE are built out of ${PROJECT_ID} in the
+  # substitutions block below. Trigger builds expand that nesting for
+  # free; a manual submit does not unless this is set, and the tag then
+  # reaches docker with a literal "${PROJECT_ID}" in it and is rejected
+  # as an invalid reference.
+  dynamic_substitutions: true
 
 substitutions:
   # The image lives where Cloud Run's original source-deploy trigger put
