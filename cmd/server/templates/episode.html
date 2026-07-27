@@ -10,6 +10,12 @@
 
   {{with .Episode.Description}}<p class="description">{{.}}</p>{{end}}
 
+  {{/* The same control the Dashboard offers, from the same fragment.
+       Present only for the Owner on the signed-in address — the handler
+       builds it nowhere else — so a capability URL is still purely a
+       place to listen. */}}
+  {{with .AirRow}}{{template "airrow" .}}{{end}}
+
   <p class="actions">
     <a class="button quiet" href="{{.AudioURL}}" download><svg class="icon" width="16" height="16"><use href="#i-arrow"/></svg>Download MP3</a>
   </p>

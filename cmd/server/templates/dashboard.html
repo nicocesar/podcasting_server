@@ -178,41 +178,10 @@
       </div>
       {{end}}
 
-      {{/* Airing: the one control here that hands audio to strangers, so
-           it says so in words rather than relying on an icon. Own
-           episodes only — a Sharer may forward but never air (ADR 0018).
-           A plain form, no JavaScript: the whole thing degrades to a
-           select and a button. */}}
+      {{/* Airing lives in a fragment the Episode Page renders too, so
+           the two surfaces cannot drift (ADR 0018). */}}
       {{if and (not .Shared) (not .Followed)}}
-      <div class="air-row">
-        {{if .AirBarred}}
-        <p class="muted">The station took this off the air. Only an admin can put it back.</p>
-        {{else if .OnAir}}
-        <p class="on-air">
-          <span class="dot" aria-hidden="true"></span>
-          On air in <a href="/strands/{{.OnAir.Strand}}">{{.OnAir.Strand}}</a> —
-          anyone can hear it.
-        </p>
-        <form method="post" action="/me/episodes/{{.Slug}}/unair">
-          <input type="hidden" name="return" value="{{$.ReturnTo}}#ep-{{.Slug}}">
-          <button class="quiet" type="submit"
-                  title="Take it off the public strand. Anything already downloaded stays downloaded."><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Take off the air</button>
-        </form>
-        {{else if $.AirStrands}}
-        <form method="post" action="/me/episodes/{{.Slug}}/air" class="air-form">
-          <input type="hidden" name="return" value="{{$.ReturnTo}}#ep-{{.Slug}}">
-          <label class="sr-only" for="air-{{.Slug}}">Strand to air this on</label>
-          <select id="air-{{.Slug}}" name="strand">
-            {{$suggested := .SuggestedStrand}}
-            {{range $.AirStrands}}
-            <option value="{{.ID}}"{{if eq .ID $suggested}} selected{{end}}>{{.Title}}</option>
-            {{end}}
-          </select>
-          <button class="quiet" type="submit"
-                  title="Publish this on a strand, where anyone at all can hear it"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rss"/></svg>Put on the air</button>
-        </form>
-        {{end}}
-      </div>
+      {{template "airrow" .AirRow}}
       {{end}}
       <div class="invite-row ep-invite" hidden>
         <code class="feed-url"></code>

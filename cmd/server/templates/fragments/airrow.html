@@ -1,0 +1,46 @@
+{{/* The airing control: the one thing in this app that hands audio to
+     strangers, so it says so in words rather than trusting an icon.
+
+     Rendered in two places — the Dashboard row and the Episode Page —
+     from one self-contained view, so the two can never drift into
+     disagreeing about what airing means. The handler does not know
+     which one it was pressed from; the form carries a return address
+     and the handler honours it (ADR 0022).
+
+     Own episodes only. A Sharer may forward an Episode onward but never
+     put it in front of strangers (ADR 0006 vs ADR 0018), and the server
+     enforces that regardless of what is rendered here.
+
+     A plain form, no JavaScript: the whole thing degrades to a select
+     and a button. */}}
+{{define "airrow"}}
+<div class="air-row">
+  {{if .AirBarred}}
+  <p class="muted">The station took this off the air. Only an admin can put it back.</p>
+  {{else if .OnAir}}
+  <p class="on-air">
+    <span class="dot" aria-hidden="true"></span>
+    On air in <a href="/strands/{{.OnAir.Strand}}">{{.OnAir.Strand}}</a> —
+    anyone can hear it.
+  </p>
+  <form method="post" action="/me/episodes/{{.Slug}}/unair">
+    <input type="hidden" name="return" value="{{.ReturnTo}}">
+    <button class="quiet" type="submit"
+            title="Take it off the public strand. Anything already downloaded stays downloaded."><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Take off the air</button>
+  </form>
+  {{else if .Strands}}
+  <form method="post" action="/me/episodes/{{.Slug}}/air" class="air-form">
+    <input type="hidden" name="return" value="{{.ReturnTo}}">
+    <label class="sr-only" for="air-{{.Slug}}">Strand to air this on</label>
+    <select id="air-{{.Slug}}" name="strand">
+      {{$suggested := .SuggestedStrand}}
+      {{range .Strands}}
+      <option value="{{.ID}}"{{if eq .ID $suggested}} selected{{end}}>{{.Title}}</option>
+      {{end}}
+    </select>
+    <button class="quiet" type="submit"
+            title="Publish this on a strand, where anyone at all can hear it"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rss"/></svg>Put on the air</button>
+  </form>
+  {{end}}
+</div>
+{{end}}

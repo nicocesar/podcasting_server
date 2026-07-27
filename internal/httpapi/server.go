@@ -738,6 +738,34 @@ func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.Use
 	if session {
 		cover = sessionCoverURL(u)
 	}
+	// The airing control, but only where it can honestly be offered:
+	// signed in (a capability URL is a place to listen, and its holder
+	// may not be the Owner at all) and on the Owner's own Episode (a
+	// Sharer may forward but never air — ADR 0018). Everywhere else this
+	// stays nil and the page renders exactly what it did before.
+	var airRow *airRowView
+	if session && ownerID == u.ID {
+		strands, err := s.awakeStrands(r)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		row := airRowView{
+			Slug:            ep.Slug,
+			AirBarred:       ep.AirBarred,
+			SuggestedStrand: ep.Strand,
+			Strands:         strands,
+			ReturnTo:        r.URL.RequestURI(),
+		}
+		if a, err := s.store.GetAiringByEpisode(r.Context(), u.ID, ep.Slug); err == nil {
+			row.OnAir = &a
+		} else if !errors.Is(err, store.ErrNotFound) {
+			s.fail(w, err)
+			return
+		}
+		airRow = &row
+	}
+
 	data := struct {
 		Episode store.Episode
 		// Published, not Aired: since ADR 0018 airing means going
@@ -748,6 +776,9 @@ func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.Use
 		AudioURL  string
 		Session   bool
 		Player    playerView
+		// AirRow is nil unless this is the Owner reading their own
+		// Episode on the signed-in address.
+		AirRow *airRowView
 		subscribeBox
 	}{
 		Episode:      ep,
@@ -757,6 +788,7 @@ func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.Use
 		AudioURL:     audioURL(u, ep, session),
 		Session:      session,
 		Player:       playerFor(u, ep, session),
+		AirRow:       airRow,
 		subscribeBox: s.subscribeBox(r, u),
 	}
 	s.render(w, r, http.StatusOK, s.tmplEpisode, data)
@@ -1114,6 +1146,14 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			views[i].OnAir = &airing
 		}
 		views[i].SuggestedStrand = v.Strand
+		views[i].AirRow = airRowView{
+			Slug:            v.Slug,
+			AirBarred:       v.AirBarred,
+			OnAir:           views[i].OnAir,
+			SuggestedStrand: v.Strand,
+			Strands:         airStrands,
+			ReturnTo:        r.URL.RequestURI() + "#ep-" + v.Slug,
+		}
 	}
 	s.render(w, r, http.StatusOK, s.tmplDashboard, struct {
 		User            store.User
@@ -1125,10 +1165,6 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		GenerateEnabled bool
 		Generations     []generationView
 		Beats           []beatView
-		// AirStrands is the canon a row may be aired into: awake
-		// strands only, since a dormant or retired one takes nothing.
-		// Empty means the airing controls do not appear at all.
-		AirStrands []store.Strand
 		// ReturnTo is this page as the reader reached it, filter and
 		// all, so an action lands them back where they were rather than
 		// at the top of an unfiltered log (ADR 0022).
@@ -1145,7 +1181,6 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
 		Beats:           beats,
-		AirStrands:      airStrands,
 		subscribeBox:    s.subscribeBox(r, u),
 	})
 	// Opening the Dashboard catches your Beats up, so a feed you are
@@ -1181,6 +1216,10 @@ type episodeView struct {
 	// station chose at generation time, when it chose anything. The
 	// station proposes, the Owner disposes (ADR 0017).
 	SuggestedStrand string
+	// AirRow is what the shared airing fragment renders from. Built only
+	// for the Owner's own rows; zero on everything else, where the
+	// template never reaches it.
+	AirRow airRowView
 
 	// Shared marks an Episode that reached this feed as a Share rather
 	// than being published into it. It decides both the credit line and

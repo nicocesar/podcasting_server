@@ -87,6 +87,30 @@ func (s *server) navFor(r *http.Request) navView {
 	}
 }
 
+// airRowView is everything the airing control needs, and nothing else.
+// It is self-contained on purpose: the Dashboard and the Episode Page
+// both render the same fragment from one of these, so the two surfaces
+// cannot drift into disagreeing about what airing means or who may do
+// it. Built only for an Episode its viewer owns.
+type airRowView struct {
+	Slug      string
+	AirBarred bool
+	// OnAir is the live Airing, or nil when the Episode is private.
+	OnAir *store.Airing
+	// SuggestedStrand is where the picker starts — what the station
+	// chose at generation time, when it chose anything. The station
+	// proposes, the Owner disposes (ADR 0017).
+	SuggestedStrand string
+	// Strands is the canon this Episode may be aired into: awake ones
+	// only, since a dormant or retired Strand takes nothing. Empty means
+	// the control does not appear at all.
+	Strands []store.Strand
+	// ReturnTo is where pressing the button lands, anchor and all. The
+	// two surfaces pass different values; the handler honours whichever
+	// it is given (ADR 0022).
+	ReturnTo string
+}
+
 // pageView is what every HTML response executes against: the bar, and
 // the page's own data untouched underneath it. Keeping the page data
 // whole under .Page is what lets every content template go on using the
