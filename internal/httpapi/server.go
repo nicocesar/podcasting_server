@@ -116,6 +116,7 @@ type server struct {
 	tmplAdminGeneration *template.Template
 	tmplAdminStrands    *template.Template
 	tmplAdmin           *template.Template
+	tmplAdminSpend      *template.Template
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -186,6 +187,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplAdminGeneration, []string{"templates/layout.html", "templates/admin_generation.html"}},
 		{&s.tmplAdminStrands, []string{"templates/layout.html", "templates/admin_strands.html"}},
 		{&s.tmplAdmin, []string{"templates/layout.html", "templates/admin.html"}},
+		{&s.tmplAdminSpend, []string{"templates/layout.html", "templates/admin_spend.html"}},
 	} {
 		t, err := template.New("page").Funcs(template.FuncMap{
 			"assetv": func() string { return s.assetVersion },
@@ -371,7 +373,7 @@ func New(cfg Config) (http.Handler, error) {
 		http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
 	})
 	mux.HandleFunc("GET /admin/users", s.adminOrToken(s.handleListUsers))
-	mux.HandleFunc("GET /admin/costs", s.adminUser(ignoreUser(s.handleAdminCosts)))
+	mux.HandleFunc("GET /admin/costs", s.adminUser(ignoreUser(s.handleAdminSpend)))
 	mux.HandleFunc("GET /admin/costs/episodes", s.adminUser(ignoreUser(s.handleAdminEpisodeCosts)))
 	mux.HandleFunc("GET /admin/usage", s.adminUser(ignoreUser(s.handleAdminUsage)))
 	mux.HandleFunc("GET /admin/generations/{user}/{id}", s.adminUser(s.handleAdminGeneration))

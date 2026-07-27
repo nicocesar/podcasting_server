@@ -1,0 +1,109 @@
+{{define "title"}}Spend — admin{{end}}
+{{define "content"}}
+<article class="card shell-wide">
+  <h1>Spend</h1>
+  <p class="muted">What Anthropic actually charged — no price table in
+  between, so introductory pricing, price changes and model switches are
+  already reflected. TTS is a different vendor's bill and stays in
+  characters.</p>
+
+  <nav class="filters" aria-label="Range">
+    <a href="/admin/costs?days=7"{{if eq .Days 7}} aria-current="page"{{end}}>7 days</a>
+    <a href="/admin/costs?days=14"{{if eq .Days 14}} aria-current="page"{{end}}>14 days</a>
+    <a href="/admin/costs?days=30"{{if eq .Days 30}} aria-current="page"{{end}}>30 days</a>
+  </nav>
+
+  {{with .Error}}<p class="error">{{.}}</p>{{end}}
+
+  <p class="spend-total">
+    <span class="spend-figure">${{printf "%.2f" .TotalUSD}}</span>
+    <span class="muted">over {{.Days}} days</span>
+  </p>
+
+  <section class="panel">
+    <p class="eyebrow">By day</p>
+    {{if not .ByDay}}
+    <p class="muted">Nothing billed in this range.</p>
+    {{else}}
+    <table class="spend-table">
+      <tbody>
+        {{range .ByDay}}
+        <tr>
+          <th scope="row">{{.Day}}</th>
+          <td class="spend-bar-cell">
+            <span class="spend-bar" style="width:{{.Percent}}%"></span>
+          </td>
+          <td class="spend-amount">${{printf "%.2f" .USD}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+    {{end}}
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">By episode</p>
+    {{if .Pending}}
+    <p class="muted" style="font-size:.85rem">{{.Pending}} not priced yet —
+    the cost report lags a few hours behind. They are not free, just not
+    posted; look again later.</p>
+    {{end}}
+    {{if not .Episodes}}
+    <p class="muted">Nothing generated in this range.</p>
+    {{else}}
+    <div class="table-scroll">
+      <table class="spend-table">
+        <thead>
+          <tr><th>Topic</th><th>Who</th><th>When</th><th class="spend-amount">Cost</th></tr>
+        </thead>
+        <tbody>
+          {{range .Episodes}}
+          <tr>
+            <td>{{.Topic}}{{if eq .Stage "failed"}} <span class="muted">· failed</span>{{end}}</td>
+            <td class="muted">@{{.User}}</td>
+            <td class="muted">{{.CreatedAt.Format "2 Jan"}}</td>
+            <td class="spend-amount">
+              {{if .CostUSD}}${{printf "%.4f" .CostUSD}}{{else}}<span class="muted">pending</span>{{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">Tokens by model</p>
+    {{if not .Models}}
+    <p class="muted">No token usage in this range.</p>
+    {{else}}
+    <div class="table-scroll">
+      <table class="spend-table">
+        <thead>
+          <tr><th>Model</th><th class="spend-amount">In</th><th class="spend-amount">Out</th></tr>
+        </thead>
+        <tbody>
+          {{range .Models}}
+          <tr>
+            <td><code>{{.Model}}</code></td>
+            <td class="spend-amount">{{.Input}}</td>
+            <td class="spend-amount">{{.Output}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+    <p class="muted" style="font-size:.82rem">Everything sent counts as in,
+    cache reads and cache writes included — they are all context the model
+    was given. Which of them cost what is the pricing question, and the
+    dollars above already answer it.</p>
+  </section>
+
+  <p class="muted" style="font-size:.82rem">The same three reports are still
+  served as JSON from <code>/admin/costs</code>,
+  <code>/admin/costs/episodes</code> and <code>/admin/usage</code> to
+  anything that does not ask for HTML.</p>
+</article>
+{{end}}

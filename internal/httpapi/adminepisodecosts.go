@@ -102,18 +102,31 @@ func (s *server) handleAdminEpisodeCosts(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	users, err := s.store.ListUsers(r.Context())
+	episodes, err := s.pricedEpisodes(r.Context(), ledger, start)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"days":     days,
+		"episodes": episodes,
+	})
+}
+
+// pricedEpisodes prices every Generation since start at its day's
+// effective rates. Shared by the JSON endpoint and the Spend page, so
+// the page can never quote a different number than the API does.
+func (s *server) pricedEpisodes(ctx context.Context, ledger map[string]*dayLedger, start time.Time) ([]*episodeCost, error) {
+	users, err := s.store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var episodes []*episodeCost
 	byDay := map[string][]*episodeCost{}
 	for _, u := range users {
-		gens, err := s.store.ListGenerations(r.Context(), u.ID)
+		gens, err := s.store.ListGenerations(ctx, u.ID)
 		if err != nil {
-			s.fail(w, err)
-			return
+			return nil, err
 		}
 		for _, g := range gens {
 			if g.CreatedAt.Before(start) {
@@ -132,10 +145,7 @@ func (s *server) handleAdminEpisodeCosts(w http.ResponseWriter, r *http.Request)
 	sort.Slice(episodes, func(i, j int) bool {
 		return episodes[i].CreatedAt.After(episodes[j].CreatedAt)
 	})
-	s.writeJSON(w, http.StatusOK, map[string]any{
-		"days":     days,
-		"episodes": episodes,
-	})
+	return episodes, nil
 }
 
 // priceGeneration prices one Generation's meters at its creation day's
