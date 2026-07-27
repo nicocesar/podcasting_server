@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/nicocesar/podcasting_server/internal/elevenlabs"
 )
 
 // ElevenLabs synthesizes through the official ElevenLabs REST API. The
@@ -76,8 +78,8 @@ func (e *ElevenLabs) Synthesize(ctx context.Context, text string, v Voice) ([]by
 		// Errors come back as JSON, and the message is the useful part
 		// (quota exhausted, free plan, unknown voice). Capped: a stray
 		// HTML error page should not land whole in the logs.
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("elevenlabs: http %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, elevenlabs.HTTPError("text-to-speech", resp.StatusCode, msg)
 	}
 	return io.ReadAll(resp.Body)
 }

@@ -17,6 +17,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/nicocesar/podcasting_server/internal/elevenlabs"
 )
 
 // Duration bounds from the /v1/music contract. A single call cannot
@@ -99,9 +101,11 @@ func (c *Client) Compose(ctx context.Context, prompt string, durationMS int) ([]
 	if resp.StatusCode != http.StatusOK {
 		// Errors come back as JSON and the message is the useful part
 		// (quota, plan, validation). Capped so a stray HTML error page
-		// does not land whole in the logs.
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("music: http %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
+		// does not land whole in the logs. The vendor's name goes in
+		// the error: a 429 here reads identically to one from the
+		// voice engine or the agent API otherwise.
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, elevenlabs.HTTPError("music", resp.StatusCode, msg)
 	}
 	audio, err := io.ReadAll(resp.Body)
 	if err != nil {
