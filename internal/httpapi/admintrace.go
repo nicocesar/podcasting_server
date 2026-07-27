@@ -79,7 +79,7 @@ func (s *server) handleAdminGeneration(w http.ResponseWriter, r *http.Request, _
 	}
 
 	if wantsHTML(r) {
-		s.render(w, http.StatusOK, s.tmplAdminGeneration, v)
+		s.render(w, r, http.StatusOK, s.tmplAdminGeneration, v)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, v)

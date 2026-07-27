@@ -115,6 +115,7 @@ type server struct {
 
 	tmplAdminGeneration *template.Template
 	tmplAdminStrands    *template.Template
+	tmplAdmin           *template.Template
 }
 
 func New(cfg Config) (http.Handler, error) {
@@ -184,6 +185,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplStrand, []string{"templates/layout.html", "templates/strand.html", "templates/fragments/*.html"}},
 		{&s.tmplAdminGeneration, []string{"templates/layout.html", "templates/admin_generation.html"}},
 		{&s.tmplAdminStrands, []string{"templates/layout.html", "templates/admin_strands.html"}},
+		{&s.tmplAdmin, []string{"templates/layout.html", "templates/admin.html"}},
 	} {
 		t, err := template.New("page").Funcs(template.FuncMap{
 			"assetv": func() string { return s.assetVersion },
@@ -230,8 +232,8 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /strands/{strand}/{file}", s.handleStrandAudio)
 	mux.Handle("GET /static/", http.StripPrefix("/static/",
 		cacheControl("public, max-age=86400", http.FileServerFS(static))))
-	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
-		s.renderNotFound(w)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		s.renderNotFound(w, r)
 	})
 
 	// Webapp login (ADR 0010). The login page is Public Surface; the
@@ -362,6 +364,12 @@ func New(cfg Config) (http.Handler, error) {
 	// Listing users takes the token too: it is how an operator finds the
 	// id to promote, and before the first admin exists the token is the
 	// only credential there is.
+	// The index the chrome's Admin link points at. Reading only: every
+	// surface it names guards itself.
+	mux.HandleFunc("GET /admin", s.adminUser(ignoreUser(s.handleAdminIndex)))
+	mux.HandleFunc("GET /admin/{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin", http.StatusMovedPermanently)
+	})
 	mux.HandleFunc("GET /admin/users", s.adminOrToken(s.handleListUsers))
 	mux.HandleFunc("GET /admin/costs", s.adminUser(ignoreUser(s.handleAdminCosts)))
 	mux.HandleFunc("GET /admin/costs/episodes", s.adminUser(ignoreUser(s.handleAdminEpisodeCosts)))
@@ -410,7 +418,7 @@ func ignoreUser(h http.HandlerFunc) authedHandler {
 func (s *server) guest(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		h(w, r)
+		h(w, r.WithContext(withCapabilityScope(r.Context())))
 	}
 }
 
@@ -430,7 +438,10 @@ func (s *server) feed(h authedHandler) http.HandlerFunc {
 			s.fail(w, err)
 			return
 		}
-		h(w, r, u)
+		// The bar stays public here even for a signed-in reader: this
+		// URL is the whole credential and works for whoever holds it,
+		// so it must not offer one particular member's navigation.
+		h(w, r.WithContext(withCapabilityScope(r.Context())), u)
 	}
 }
 
@@ -748,7 +759,7 @@ func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.Use
 		Player:       playerFor(u, ep, session),
 		subscribeBox: s.subscribeBox(r, u),
 	}
-	s.render(w, http.StatusOK, s.tmplEpisode, data)
+	s.render(w, r, http.StatusOK, s.tmplEpisode, data)
 }
 
 // handleMyEpisode is the signed-in twin of the capability routes: the
@@ -882,7 +893,7 @@ func (s *server) handleHome(w http.ResponseWriter, r *http.Request) {
 		data.LoggedIn = true
 		data.Title = u.Title
 	}
-	s.render(w, http.StatusOK, s.tmplHome, data)
+	s.render(w, r, http.StatusOK, s.tmplHome, data)
 }
 
 // subscribeBox is the shared template data for every place the feed URL
@@ -917,17 +928,20 @@ func (s *server) handleFeedLanding(w http.ResponseWriter, r *http.Request, u sto
 	if u.CoverType != "" {
 		data.CoverURL = "/f/" + u.FeedToken + "/cover"
 	}
-	s.render(w, http.StatusOK, s.tmplUser, data)
+	s.render(w, r, http.StatusOK, s.tmplUser, data)
 }
 
-func (s *server) renderNotFound(w http.ResponseWriter) {
-	s.render(w, http.StatusNotFound, s.tmplNotFound, nil)
+func (s *server) renderNotFound(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, http.StatusNotFound, s.tmplNotFound, nil)
 }
 
-// render buffers first so a template error can still become a 500.
-func (s *server) render(w http.ResponseWriter, status int, t *template.Template, data any) {
+// render buffers first so a template error can still become a 500. The
+// request is what the navigation bar is built from (see nav.go); the
+// page's own data goes underneath it untouched, so content templates
+// keep the dot they always had.
+func (s *server) render(w http.ResponseWriter, r *http.Request, status int, t *template.Template, data any) {
 	var buf bytes.Buffer
-	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
+	if err := t.ExecuteTemplate(&buf, "layout", pageView{Nav: s.navFor(r), Page: data}); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -1101,7 +1115,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		}
 		views[i].SuggestedStrand = v.Strand
 	}
-	s.render(w, http.StatusOK, s.tmplDashboard, struct {
+	s.render(w, r, http.StatusOK, s.tmplDashboard, struct {
 		User            store.User
 		FeedPage        string
 		CoverURL        string
@@ -1345,7 +1359,7 @@ func (s *server) handleGetSettings(w http.ResponseWriter, r *http.Request, u sto
 		s.fail(w, err)
 		return
 	}
-	s.render(w, http.StatusOK, s.tmplSettings, struct {
+	s.render(w, r, http.StatusOK, s.tmplSettings, struct {
 		User          store.User
 		CoverURL      string
 		Invites       []inviteView
@@ -2041,7 +2055,7 @@ type invitePage struct {
 func (s *server) liveInvite(w http.ResponseWriter, r *http.Request) (store.Invite, bool) {
 	inv, err := s.store.GetInvite(r.Context(), r.PathValue("token"))
 	if err != nil || !inv.Live(time.Now()) {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return store.Invite{}, false
 	}
 	return inv, true
@@ -2094,7 +2108,7 @@ func (s *server) handleInvitePage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	s.render(w, http.StatusOK, s.tmplInvite, s.invitePageData(r, inv))
+	s.render(w, r, http.StatusOK, s.tmplInvite, s.invitePageData(r, inv))
 }
 
 // handleInviteAudio streams the one Episode an Invite carries. The token
@@ -2106,7 +2120,7 @@ func (s *server) handleInviteAudio(w http.ResponseWriter, r *http.Request) {
 	}
 	ep, found := s.guestEpisode(r, inv)
 	if !found {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	s.serveAudio(w, r, ep.OwnerID, ep.Slug)
@@ -2121,7 +2135,7 @@ func (s *server) handleInviteCover(w http.ResponseWriter, r *http.Request) {
 	}
 	ep, found := s.guestEpisode(r, inv)
 	if !found {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	owner, err := s.store.GetUser(r.Context(), ep.OwnerID)
@@ -2144,13 +2158,13 @@ func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 	// Live but spent: the page still plays, the door is closed. An
 	// Invite admits exactly one User, however long it keeps playing.
 	if !inv.Redeemable(time.Now()) {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	retry := func(status int, msg, username string) {
 		data := s.invitePageData(r, inv)
 		data.Error, data.Username = msg, username
-		s.render(w, status, s.tmplInvite, data)
+		s.render(w, r, status, s.tmplInvite, data)
 	}
 
 	username := r.FormValue("username")
@@ -2202,7 +2216,7 @@ func (s *server) handleRedeem(w http.ResponseWriter, r *http.Request) {
 func (s *server) completeRedemption(w http.ResponseWriter, r *http.Request, inv store.Invite, u store.User) {
 	if err := s.store.RedeemInvite(r.Context(), inv.Token, u.ID); err != nil {
 		// Lost a race with another redemption or a revocation.
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	feedToken, err := randomHex(16)
@@ -2234,7 +2248,7 @@ func (s *server) completeRedemption(w http.ResponseWriter, r *http.Request, inv 
 	}
 
 	s.setSession(w, r, u)
-	s.render(w, http.StatusOK, s.tmplWelcome, struct {
+	s.render(w, r, http.StatusOK, s.tmplWelcome, struct {
 		Username    string
 		SharedTitle string
 		subscribeBox

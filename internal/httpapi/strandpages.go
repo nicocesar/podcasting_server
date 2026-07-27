@@ -91,7 +91,7 @@ func (s *server) handleStrandsIndex(w http.ResponseWriter, r *http.Request) {
 		cards = append(cards, strandCard{Strand: st, Episodes: len(airings)})
 	}
 	w.Header().Set("Cache-Control", publicCache)
-	s.render(w, http.StatusOK, s.tmplStrands, strandsPage{Strands: cards})
+	s.render(w, r, http.StatusOK, s.tmplStrands, strandsPage{Strands: cards})
 }
 
 // handleStrandPage renders one Strand for a browser with no credentials.
@@ -124,7 +124,7 @@ func (s *server) handleStrandPage(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Cache-Control", publicCache)
 	}
-	s.render(w, http.StatusOK, s.tmplStrand, data)
+	s.render(w, r, http.StatusOK, s.tmplStrand, data)
 }
 
 // airedViews loads a Strand's Airings and the Episodes behind them.
@@ -272,7 +272,7 @@ func (s *server) openStrandArt(r *http.Request, id string) (io.ReadCloser, strin
 func (s *server) handleStrandAudio(w http.ResponseWriter, r *http.Request) {
 	id, ok := strings.CutSuffix(r.PathValue("file"), ".mp3")
 	if !ok {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	airing, err := s.store.GetAiring(r.Context(), id)
@@ -283,7 +283,7 @@ func (s *server) handleStrandAudio(w http.ResponseWriter, r *http.Request) {
 	// The id alone decides; the strand in the path is decoration, and
 	// must not be a second way in.
 	if airing.Strand != r.PathValue("strand") {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	w.Header().Set("Cache-Control", publicCache)
@@ -296,7 +296,7 @@ func (s *server) handleStrandAudio(w http.ResponseWriter, r *http.Request) {
 func (s *server) strandOr404(w http.ResponseWriter, r *http.Request) (store.Strand, bool) {
 	st, err := s.store.GetStrand(r.Context(), r.PathValue("strand"))
 	if errors.Is(err, store.ErrNotFound) || (err == nil && st.CoverType == "") {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return store.Strand{}, false
 	}
 	if err != nil {

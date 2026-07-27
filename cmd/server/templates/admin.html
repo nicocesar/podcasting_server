@@ -1,0 +1,42 @@
+{{define "title"}}Admin{{end}}
+{{define "content"}}
+<article class="card shell-wide">
+  <h1>Admin</h1>
+  <p class="muted">The operator's surfaces. Everything here is guarded
+  server-side — this page is a door, not the lock.</p>
+
+  <div class="admin-index">
+    <a class="panel admin-entry" href="/admin/strands">
+      <svg class="icon" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-image"/></svg>
+      <div>
+        <h2>The canon</h2>
+        <p class="muted">The strands episodes can be aired on: their
+        wording, their art, and whether they are still taking episodes. A
+        new one stays dormant until it has cover art.</p>
+      </div>
+    </a>
+
+    <a class="panel admin-entry" href="/admin/costs">
+      <svg class="icon" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rss"/></svg>
+      <div>
+        <h2>Spend</h2>
+        {{if .CostsConfigured}}
+        <p class="muted">What Anthropic actually charged — by day, by
+        episode, and the tokens behind it. Real billed dollars, not an
+        estimate from a price table.</p>
+        {{else}}
+        <p class="muted">Not configured on this server. Set
+        <code>ANTHROPIC_ADMIN_KEY</code> to read what Anthropic charged.</p>
+        {{end}}
+      </div>
+    </a>
+  </div>
+
+  {{/* Moderation is deliberately absent (ADR 0023): the takedown lives
+       on the Strand Page, where you would be reading when you decide
+       something should stop being public. */}}
+  <p class="muted" style="font-size:.82rem">Taking an episode off the air
+  is on the <a href="/strands">strand pages</a>, next to the episode
+  itself.</p>
+</article>
+{{end}}

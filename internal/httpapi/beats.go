@@ -105,7 +105,7 @@ func (s *server) handleBeats(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
-	s.render(w, http.StatusOK, s.tmplBeats, beatsPage{User: u, Beats: views, Max: maxBeatsPerUser})
+	s.render(w, r, http.StatusOK, s.tmplBeats, beatsPage{User: u, Beats: views, Max: maxBeatsPerUser})
 	s.heartbeat(u)
 }
 
@@ -192,7 +192,7 @@ func (s *server) beatOf(w http.ResponseWriter, r *http.Request, u store.User) (s
 	b, err := s.store.GetBeat(r.Context(), u.ID, r.PathValue("id"))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			s.renderNotFound(w)
+			s.renderNotFound(w, r)
 			return b, false
 		}
 		s.fail(w, err)
@@ -210,7 +210,7 @@ func (s *server) handleBeatEdit(w http.ResponseWriter, r *http.Request, u store.
 	}
 	tpl, ok := generation.TemplateByID(b.Template)
 	if !ok {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	page, err := s.generatePage(r, u, tpl)
@@ -220,7 +220,7 @@ func (s *server) handleBeatEdit(w http.ResponseWriter, r *http.Request, u store.
 	}
 	page.Values = beatValues(b)
 	page.Beat = &b
-	s.render(w, http.StatusOK, s.tmplGenerate, page)
+	s.render(w, r, http.StatusOK, s.tmplGenerate, page)
 }
 
 // handleBeatUpdate replaces the Beat's request. It changes the future
@@ -233,7 +233,7 @@ func (s *server) handleBeatUpdate(w http.ResponseWriter, r *http.Request, u stor
 	}
 	tpl, ok := generation.TemplateByID(b.Template)
 	if !ok {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	req, msg := s.parseGenerationForm(r, u, tpl)
@@ -253,7 +253,7 @@ func (s *server) handleBeatUpdate(w http.ResponseWriter, r *http.Request, u stor
 		page.Error = msg
 		page.Values = req
 		page.Beat = &b
-		s.render(w, http.StatusBadRequest, s.tmplGenerate, page)
+		s.render(w, r, http.StatusBadRequest, s.tmplGenerate, page)
 		return
 	}
 

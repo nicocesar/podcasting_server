@@ -87,5 +87,6 @@ previously the same sentence and are no longer.
   guard is server-side and unchanged; the risk is that a future edit to the
   Strand Page forgets the page is public and renders something for
   everybody. The `SignedIn` and admin flags are the seam to check.
-- `/admin` lists four surfaces — the canon, costs, episode costs, usage —
-  and not five. Moderation is not one of its entries.
+- `/admin` lists the canon and Spend, and moderation is not one of its
+  entries. An earlier sketch of the admin page had a row for it; the row
+  is gone rather than pointing at a page that was not built.

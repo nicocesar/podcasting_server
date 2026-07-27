@@ -204,7 +204,7 @@ func (s *server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errMsg := r.URL.Query().Get("error"); errMsg != "" {
-		s.render(w, http.StatusOK, s.tmplLogin, loginPage{
+		s.render(w, r, http.StatusOK, s.tmplLogin, loginPage{
 			Error:         "Google sign-in was cancelled.",
 			Next:          st.Next,
 			GoogleEnabled: true,
@@ -222,7 +222,7 @@ func (s *server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	case "login":
 		u, err := s.store.GetUserByGoogleSub(r.Context(), claims.Sub)
 		if errors.Is(err, store.ErrNotFound) {
-			s.render(w, http.StatusForbidden, s.tmplLogin, loginPage{
+			s.render(w, r, http.StatusForbidden, s.tmplLogin, loginPage{
 				Error:         "That Google account is not linked to any user here. Joining needs an invite.",
 				Next:          st.Next,
 				GoogleEnabled: true,
@@ -268,11 +268,11 @@ func (s *server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 func (s *server) finishGoogleRedemption(w http.ResponseWriter, r *http.Request, st oauthState, claims googleClaims) {
 	inv, err := s.store.GetInvite(r.Context(), st.Invite)
 	if err != nil || !inv.Redeemable(time.Now()) {
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 		return
 	}
 	if _, err := s.store.GetUserByGoogleSub(r.Context(), claims.Sub); err == nil {
-		s.render(w, http.StatusConflict, s.tmplInvite, invitePage{
+		s.render(w, r, http.StatusConflict, s.tmplInvite, invitePage{
 			Inviter: inv.InviterID,
 			Error:   "That Google account already belongs to a user here — log in instead.",
 		})
@@ -282,7 +282,7 @@ func (s *server) finishGoogleRedemption(w http.ResponseWriter, r *http.Request, 
 	if _, err := s.store.GetUser(r.Context(), username); err == nil {
 		data := s.invitePageData(r, inv)
 		data.Error = "That username was taken while you were signing in — pick another."
-		s.render(w, http.StatusConflict, s.tmplInvite, data)
+		s.render(w, r, http.StatusConflict, s.tmplInvite, data)
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, err)

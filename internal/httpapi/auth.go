@@ -178,7 +178,7 @@ func originOK(r *http.Request) bool {
 func (s *server) auth(h authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if u, ok := s.bearerUser(r); ok {
-			h(w, r, u)
+			h(w, r.WithContext(withNavUser(r.Context(), u)), u)
 			return
 		}
 		if u, ok := s.sessionUser(r); ok {
@@ -186,7 +186,7 @@ func (s *server) auth(h authedHandler) http.HandlerFunc {
 				http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				return
 			}
-			h(w, r, u)
+			h(w, r.WithContext(withNavUser(r.Context(), u)), u)
 			return
 		}
 		s.unauthorized(w, r)
@@ -211,7 +211,7 @@ func (s *server) session(h authedHandler) http.HandlerFunc {
 			http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 			return
 		}
-		h(w, r, u)
+		h(w, r.WithContext(withNavUser(r.Context(), u)), u)
 	}
 }
 
@@ -228,7 +228,7 @@ func (s *server) adminUser(h authedHandler) http.HandlerFunc {
 	return s.auth(func(w http.ResponseWriter, r *http.Request, u store.User) {
 		if !u.Admin {
 			if wantsHTML(r) {
-				s.renderNotFound(w)
+				s.renderNotFound(w, r)
 				return
 			}
 			http.Error(w, "not found", http.StatusNotFound)
@@ -260,7 +260,7 @@ func (s *server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, localPath(r.URL.Query().Get("next")), http.StatusSeeOther)
 		return
 	}
-	s.render(w, http.StatusOK, s.tmplLogin, loginPage{
+	s.render(w, r, http.StatusOK, s.tmplLogin, loginPage{
 		Next:          r.URL.Query().Get("next"),
 		GoogleEnabled: s.google != nil,
 	})
@@ -276,7 +276,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	next := r.FormValue("next")
 
 	fail := func() {
-		s.render(w, http.StatusUnauthorized, s.tmplLogin, loginPage{
+		s.render(w, r, http.StatusUnauthorized, s.tmplLogin, loginPage{
 			Username:      username,
 			Error:         "Wrong username or password.",
 			Next:          next,

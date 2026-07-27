@@ -745,21 +745,77 @@ details.subscribe > div {
   border: 1px solid var(--border);
 }
 
+/* ── Chrome ────────────────────────────────────────────────────────────
+   One bar on every page. Sticky, because the way back should not depend
+   on how far you have scrolled — which was the whole complaint about the
+   back-links it replaces. */
+.chrome {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.6rem clamp(0.75rem, 2vw, 1.25rem);
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.chrome-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chrome-id:hover { color: var(--accent); }
+
+/* The on-air dot, at rest: this is the station's mark, not a live
+   indicator, so it never pulses. */
+.chrome-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--live);
+  flex: none;
+}
+
+.chrome-links {
+  display: flex;
+  align-items: center;
+  gap: clamp(0.5rem, 1.6vw, 1.1rem);
+}
+.chrome-links a {
+  font-size: 0.9rem;
+  text-decoration: none;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.chrome-links a:hover { color: var(--text); }
+.chrome-links a[aria-current="page"] { color: var(--text); }
+
 /* ── Theme toggle ──────────────────────────────────────────────────── */
 .theme-toggle {
-  position: fixed;
-  top: 0.75rem;
-  right: 0.75rem;
-  z-index: 10;
-  width: 2.4rem;
-  height: 2.4rem;
+  width: 2.1rem;
+  height: 2.1rem;
   min-height: 0;
   padding: 0;
   display: grid;
   place-items: center;
-  font-size: 1.05rem;
-  background: var(--card);
-  color: var(--text);
+  font-size: 1rem;
+  background: transparent;
+  color: var(--muted);
   border: 1px solid var(--border);
   border-radius: 50%;
 }
@@ -877,3 +933,21 @@ footer.colophon {
 }
 .art-upload[open] > summary { margin-bottom: 0.75rem; }
 .art-upload .strand-art { width: 96px; height: 96px; margin-bottom: 0.75rem; }
+
+/* ── Admin index ───────────────────────────────────────────────────── */
+.admin-index {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.admin-entry {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  text-decoration: none;
+  color: inherit;
+}
+.admin-entry:hover { border-color: var(--accent); }
+.admin-entry h2 { margin: 0 0 0.25rem; font-size: 1.05rem; }
+.admin-entry p { margin: 0; font-size: 0.88rem; }
+.admin-entry .icon { flex: none; margin-top: 0.15rem; color: var(--accent); }

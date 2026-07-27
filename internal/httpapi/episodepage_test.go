@@ -188,7 +188,10 @@ func TestMyEpisodeIsSessionOnly(t *testing.T) {
 	for _, want := range []string{
 		"Alice Morning",
 		`src="/me/episodes/alice/2026-07-06-morning.mp3"`,
-		"Back to your dashboard",
+		// The member chrome, which is the way back now that no page
+		// carries its own back-link. A capability URL never renders it,
+		// so it still tells the two addresses apart.
+		`<a href="/me">Feed</a>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("session episode page missing %q:\n%s", want, body)

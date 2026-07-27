@@ -48,7 +48,7 @@ func (s *server) handleGenerateChooser(w http.ResponseWriter, r *http.Request, _
 		tpl, _ := generation.TemplateByID(id)
 		cards = append(cards, programCard{ID: tpl.ID, Name: tpl.Name, Tagline: tpl.Tagline})
 	}
-	s.render(w, http.StatusOK, s.tmplPrograms, struct{ Programs []programCard }{cards})
+	s.render(w, r, http.StatusOK, s.tmplPrograms, struct{ Programs []programCard }{cards})
 }
 
 // castOption is one returning-cast choice on the stories form: a story
@@ -171,7 +171,7 @@ func (s *server) handleGeneratePage(w http.ResponseWriter, r *http.Request, u st
 		s.fail(w, err)
 		return
 	}
-	s.render(w, http.StatusOK, s.tmplGenerate, page)
+	s.render(w, r, http.StatusOK, s.tmplGenerate, page)
 }
 
 const maxTopicLen = 2000
@@ -376,7 +376,7 @@ func (s *server) retryGenerate(w http.ResponseWriter, r *http.Request, u store.U
 	}
 	page.Error = msg
 	page.Values = req
-	s.render(w, http.StatusBadRequest, s.tmplGenerate, page)
+	s.render(w, r, http.StatusBadRequest, s.tmplGenerate, page)
 }
 
 // handleEpisodeCharacters backfills the cast of one of the caller's own
@@ -581,7 +581,7 @@ func (s *server) handleGeneration(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 	if strings.Contains(r.Header.Get("Accept"), "text/html") {
-		s.render(w, http.StatusOK, s.tmplGeneration, s.generationView(g))
+		s.render(w, r, http.StatusOK, s.tmplGeneration, s.generationView(g))
 		return
 	}
 	s.writeJSON(w, http.StatusOK, s.generationView(g))

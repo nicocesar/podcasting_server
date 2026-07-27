@@ -49,6 +49,15 @@ func (s *server) handleAdminStrands(w http.ResponseWriter, r *http.Request, u st
 	s.renderAdminStrands(w, r, u, "", http.StatusOK)
 }
 
+// handleAdminIndex is the door the chrome's Admin link opens: the canon
+// and Spend, and a pointer to where moderation actually lives. It reads
+// nothing and decides nothing — every surface it names guards itself.
+func (s *server) handleAdminIndex(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, http.StatusOK, s.tmplAdmin, struct {
+		CostsConfigured bool
+	}{CostsConfigured: s.adminAPI != nil})
+}
+
 func (s *server) renderAdminStrands(w http.ResponseWriter, r *http.Request, u store.User, msg string, status int) {
 	canon, err := s.store.ListStrands(r.Context())
 	if err != nil {
@@ -69,7 +78,7 @@ func (s *server) renderAdminStrands(w http.ResponseWriter, r *http.Request, u st
 			ArtText:   st.Title,
 		})
 	}
-	s.render(w, status, s.tmplAdminStrands, adminStrandsPage{
+	s.render(w, r, status, s.tmplAdminStrands, adminStrandsPage{
 		User:    u,
 		Strands: rows,
 		Error:   msg,
@@ -271,7 +280,7 @@ func (s *server) handleAdminStrandAction(w http.ResponseWriter, r *http.Request,
 	case "delete":
 		s.handleAdminStrandDelete(w, r, u)
 	default:
-		s.renderNotFound(w)
+		s.renderNotFound(w, r)
 	}
 }
 

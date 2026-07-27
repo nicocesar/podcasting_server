@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{block "title" .}}podcasting_server{{end}}</title>
+  <title>{{block "title" .Page}}podcasting_server{{end}}</title>
   <script>
     // Apply the saved theme before first paint so there is no flash.
     (function () {
@@ -34,9 +34,30 @@
       <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></symbol>
     </defs>
   </svg>
-  <button class="theme-toggle" id="theme-toggle" title="Switch between light and dark">◐</button>
+  {{/* The chrome. One bar on every page, so nothing here needs its own
+       back-link and lateral movement is always possible. Signed out —
+       and on any capability URL, whoever is holding it — this is the
+       site's own name and the one public destination. */}}
+  <nav class="chrome" aria-label="Site">
+    <a class="chrome-id" href="{{if .Nav.SignedIn}}/me{{else}}/{{end}}">
+      <span class="chrome-dot" aria-hidden="true"></span>
+      {{if .Nav.SignedIn}}{{.Nav.Title}}{{else}}podcasting_server{{end}}
+    </a>
+    <div class="chrome-links">
+      {{if .Nav.SignedIn}}
+      <a href="/me">Feed</a>
+      <a href="/strands">Strands</a>
+      {{if .Nav.Generate}}<a href="/me/generate">Generate</a>{{end}}
+      <a href="/me/settings" title="Settings"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-gear"/></svg><span class="sr-only">Settings</span></a>
+      {{if .Nav.Admin}}<a href="/admin">Admin</a>{{end}}
+      {{else}}
+      <a href="/strands">Strands</a>
+      {{end}}
+      <button class="theme-toggle" id="theme-toggle" title="Switch between light and dark">◐</button>
+    </div>
+  </nav>
   <main>
-    {{template "content" .}}
+    {{template "content" .Page}}
   </main>
   <script>
     (function () {
@@ -56,7 +77,7 @@
     })();
   </script>
   {{/* Pages that need shared JS opt in; nobody else pays for it. */}}
-  {{block "scripts" .}}{{end}}
+  {{block "scripts" .Page}}{{end}}
 </body>
 </html>
 {{end}}
