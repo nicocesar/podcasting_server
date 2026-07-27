@@ -166,6 +166,17 @@ clients. Served inside the Feed Token namespace, so any client that can
 read the feed can fetch the artwork the same way.
 _Avoid_: artwork, thumbnail, logo
 
+**Art Spec**:
+The record of how a Strand's cover art was made: the words set on it, and
+the colour and icon, each of which may be left to follow from the words.
+Kept so the canon page can show what a Strand's art actually says rather
+than guessing from its title, and so that saving a Strand redraws its art
+only when the Spec changed. Emptied when art is uploaded instead of drawn,
+which is how a generated cover and an uploaded one are told apart — the
+two are otherwise interchangeable by design (ADR 0020). An empty Spec on a
+Strand that has art means the art came from a file (ADR 0021).
+_Avoid_: art settings, cover config, art metadata
+
 **Episode Page**:
 A single Episode rendered as HTML — Cover Art, title, description,
 duration, Player, download link. It has two addresses for the same
@@ -175,7 +186,9 @@ without the `.mp3`). The Dashboard uses the first, so that a listener's
 address bar never holds the key to their whole feed. The second is a
 place to listen, *not* a share link: passing that URL on passes on the
 whole Personal Feed. Sharing one Episode is still a Share or an Invite
-(ADR 0013).
+(ADR 0013). On the signed-in address, and only for the Owner reading their
+own Episode, the page also offers the Airing control the Dashboard offers —
+the same control rendered in two places, never a second way to do it.
 _Avoid_: episode permalink, public episode link, show notes page
 
 **Player**:
@@ -368,4 +381,9 @@ of Aired Episodes. Everything else requires a capability (Feed Token,
 Invite), a Session, or an API Key. Strands are enumerable and are meant
 to be; Users and Personal Feeds are not, which is why an Aired Episode
 is addressed by an opaque Airing id and never by its Owner's username.
+Reachable by anyone does not mean identical for everyone: a Strand Page
+renders controls that depend on who is reading it — Follow and its bar,
+Vouch, and the admin takedown — while serving the same Episodes to all.
+A signed-in rendering is never publicly cached, which is what keeps the
+difference safe (ADR 0023).
 _Avoid_: public site, anonymous access
