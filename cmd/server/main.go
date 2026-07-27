@@ -219,28 +219,36 @@ func run(log *slog.Logger) error {
 	// ANTHROPIC_ADMIN_KEY (sk-ant-admin01-..., a different key type from
 	// ANTHROPIC_API_KEY) unlocks /admin/costs and /admin/usage — real
 	// billed dollars from Anthropic's Usage & Cost Admin API.
+	// ANTHROPIC_WORKSPACE_ID scopes that reporting to the workspace this
+	// server's API key belongs to. Without it the reports cover the whole
+	// organization, which is only the same number when nothing else bills
+	// to it — see ADR 0024.
+	workspaceID := strings.TrimSpace(os.Getenv("ANTHROPIC_WORKSPACE_ID"))
 	adminKey := os.Getenv("ANTHROPIC_ADMIN_KEY")
 	if adminKey == "" {
 		log.Info("cost reporting: disabled (ANTHROPIC_ADMIN_KEY not set)")
+	} else if workspaceID == "" {
+		log.Warn("cost reporting: enabled but org-wide (set ANTHROPIC_WORKSPACE_ID to scope it to this server)")
 	} else {
-		log.Info("cost reporting: enabled (/admin/costs, /admin/usage)")
+		log.Info("cost reporting: enabled", "workspace", workspaceID)
 	}
 
 	version := strings.TrimSpace(string(versionByte))
 	handler, err := httpapi.New(httpapi.Config{
-		Store:              st,
-		BaseURL:            os.Getenv("BASE_URL"),
-		AdminToken:         adminToken,
-		SessionSecret:      sessionSecret,
-		GoogleClientID:     googleID,
-		GoogleClientSecret: googleSecret,
-		Assets:             assetsFS,
-		Logger:             log,
-		Generator:          generator,
-		AnthropicAdminKey:  adminKey,
-		Version:            version,
-		Commit:             commit,
-		BuiltAt:            builtAt,
+		Store:                st,
+		BaseURL:              os.Getenv("BASE_URL"),
+		AdminToken:           adminToken,
+		SessionSecret:        sessionSecret,
+		GoogleClientID:       googleID,
+		GoogleClientSecret:   googleSecret,
+		Assets:               assetsFS,
+		Logger:               log,
+		Generator:            generator,
+		AnthropicAdminKey:    adminKey,
+		AnthropicWorkspaceID: workspaceID,
+		Version:              version,
+		Commit:               commit,
+		BuiltAt:              builtAt,
 	})
 	if err != nil {
 		return err

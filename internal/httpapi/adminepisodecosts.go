@@ -96,7 +96,7 @@ func (s *server) handleAdminEpisodeCosts(w http.ResponseWriter, r *http.Request)
 	now := time.Now().UTC()
 	start := now.AddDate(0, 0, -days).Truncate(24 * time.Hour)
 
-	ledger, err := s.adminAPI.fetchLedger(r.Context(), start, now)
+	ledger, err := s.adminAPI.fetchLedger(r.Context(), start, now, s.workspaceID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("anthropic admin api: %v", err), http.StatusBadGateway)
 		return
@@ -232,15 +232,22 @@ func roundUSD(v float64) float64 { return math.Round(v*1e6) / 1e6 }
 // fetchLedger pulls the cost report and the usage report for the range
 // and folds both into per-day dollars and tokens per kind. One page of
 // 1d buckets covers the 31-day maximum, so no pagination loop.
-func (a *anthropicAdmin) fetchLedger(ctx context.Context, start, end time.Time) (map[string]*dayLedger, error) {
+func (a *anthropicAdmin) fetchLedger(ctx context.Context, start, end time.Time, workspace string) (map[string]*dayLedger, error) {
 	q := url.Values{
 		"bucket_width": {"1d"},
 		"limit":        {"31"},
 		"starting_at":  {start.Format(time.RFC3339)},
 		"ending_at":    {end.Format(time.RFC3339)},
+		// Both reports are grouped the same way and filtered the same
+		// way. The effective rate is this workspace's dollars over this
+		// workspace's tokens; mixing scopes between numerator and
+		// denominator is exactly the blend that made per-episode dollars
+		// wrong when the organization ran more than one workload.
+		"group_by[]": {"workspace_id"},
 	}
-	qc := url.Values{"group_by[]": {"description"}}
+	qc := url.Values{"group_by[]": {"description", "workspace_id"}}
 	maps.Copy(qc, q)
+	qc["group_by[]"] = []string{"description", "workspace_id"}
 	costBody, err := a.fetch(ctx, "/v1/organizations/cost_report", qc)
 	if err != nil {
 		return nil, err
@@ -265,9 +272,10 @@ func (a *anthropicAdmin) fetchLedger(ctx context.Context, start, end time.Time) 
 		Data []struct {
 			StartingAt time.Time `json:"starting_at"`
 			Results    []struct {
-				Amount    string `json:"amount"`
-				CostType  string `json:"cost_type"`
-				TokenType string `json:"token_type"`
+				Amount      string `json:"amount"`
+				CostType    string `json:"cost_type"`
+				TokenType   string `json:"token_type"`
+				WorkspaceID string `json:"workspace_id"`
 			} `json:"results"`
 		} `json:"data"`
 	}
@@ -277,6 +285,9 @@ func (a *anthropicAdmin) fetchLedger(ctx context.Context, start, end time.Time) 
 	for _, bucket := range costs.Data {
 		day := bucket.StartingAt.UTC().Format(costDay)
 		for _, rec := range bucket.Results {
+			if !inWorkspace(workspace, rec.WorkspaceID) {
+				continue
+			}
 			cents, err := strconv.ParseFloat(rec.Amount, 64)
 			if err != nil {
 				continue
@@ -303,7 +314,8 @@ func (a *anthropicAdmin) fetchLedger(ctx context.Context, start, end time.Time) 
 					Ephemeral5m int64 `json:"ephemeral_5m_input_tokens"`
 					Ephemeral1h int64 `json:"ephemeral_1h_input_tokens"`
 				} `json:"cache_creation"`
-				Output int64 `json:"output_tokens"`
+				Output      int64  `json:"output_tokens"`
+				WorkspaceID string `json:"workspace_id"`
 			} `json:"results"`
 		} `json:"data"`
 	}
@@ -313,6 +325,9 @@ func (a *anthropicAdmin) fetchLedger(ctx context.Context, start, end time.Time) 
 	for _, bucket := range usage.Data {
 		l := at(bucket.StartingAt.UTC().Format(costDay))
 		for _, rec := range bucket.Results {
+			if !inWorkspace(workspace, rec.WorkspaceID) {
+				continue
+			}
 			l.tokens["input"] += rec.UncachedInput
 			l.tokens["cache_read"] += rec.CacheRead
 			l.tokens["cache_write"] += rec.CacheCreation.Ephemeral5m + rec.CacheCreation.Ephemeral1h
@@ -320,6 +335,15 @@ func (a *anthropicAdmin) fetchLedger(ctx context.Context, start, end time.Time) 
 		}
 	}
 	return ledger, nil
+}
+
+// inWorkspace reports whether a report row belongs to the workspace the
+// server is scoped to. An unset scope keeps every row, which is the
+// org-wide behaviour every deployment had before workspaces were split.
+// The organization's default workspace reports an empty id, so an
+// explicit scope never matches it by accident.
+func inWorkspace(scope, rowID string) bool {
+	return scope == "" || scope == rowID
 }
 
 // fetch GETs one Admin API resource and returns the body, erroring on

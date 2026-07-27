@@ -52,6 +52,11 @@ type spendPage struct {
 	// It lags a few hours, and a page that silently showed them as free
 	// would be worse than one that says it does not know yet.
 	Pending int
+	// Workspace is the Anthropic workspace these numbers cover. Empty
+	// means the whole organization — which the page says out loud,
+	// because that is the difference between "what this server cost" and
+	// "what everything on this key cost" (ADR 0024).
+	Workspace string
 	// Error is a reporting failure, shown on the page instead of a 502:
 	// the admin can do nothing about an upstream hiccup except look
 	// again later, and a blank error page tells them less than this.
@@ -75,7 +80,7 @@ func (s *server) handleAdminSpend(w http.ResponseWriter, r *http.Request) {
 		}
 		days = n
 	}
-	page := spendPage{Days: days}
+	page := spendPage{Days: days, Workspace: s.workspaceID}
 	if s.adminAPI == nil {
 		page.Error = "Cost reporting is not configured on this server. Set ANTHROPIC_ADMIN_KEY to read what Anthropic charged."
 		s.render(w, r, http.StatusOK, s.tmplAdminSpend, page)
@@ -85,7 +90,7 @@ func (s *server) handleAdminSpend(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	start := now.AddDate(0, 0, -days).Truncate(24 * time.Hour)
 
-	ledger, err := s.adminAPI.fetchLedger(r.Context(), start, now)
+	ledger, err := s.adminAPI.fetchLedger(r.Context(), start, now, s.workspaceID)
 	if err != nil {
 		page.Error = "Could not read the cost report: " + err.Error()
 		s.render(w, r, http.StatusOK, s.tmplAdminSpend, page)
@@ -105,7 +110,7 @@ func (s *server) handleAdminSpend(w http.ResponseWriter, r *http.Request) {
 
 	// Tokens by model is the one thing the ledger cannot answer: it
 	// buckets by token kind, which is what pricing needs. One more call.
-	if page.Models, err = s.adminAPI.fetchModelUsage(r.Context(), start, now); err != nil {
+	if page.Models, err = s.adminAPI.fetchModelUsage(r.Context(), start, now, s.workspaceID); err != nil {
 		page.Error = "Could not read the usage report: " + err.Error()
 	}
 	s.render(w, r, http.StatusOK, s.tmplAdminSpend, page)
@@ -142,13 +147,13 @@ func summarise(ledger map[string]*dayLedger) ([]daySpend, float64) {
 // fetchModelUsage totals input and output tokens per model over the
 // range. Grouped by model rather than by day: the question this answers
 // is which model did the work, not when.
-func (a *anthropicAdmin) fetchModelUsage(ctx context.Context, start, end time.Time) ([]modelUsage, error) {
+func (a *anthropicAdmin) fetchModelUsage(ctx context.Context, start, end time.Time, workspace string) ([]modelUsage, error) {
 	body, err := a.fetch(ctx, "/v1/organizations/usage_report/messages", url.Values{
 		"bucket_width": {"1d"},
 		"limit":        {"31"},
 		"starting_at":  {start.Format(time.RFC3339)},
 		"ending_at":    {end.Format(time.RFC3339)},
-		"group_by[]":   {"model"},
+		"group_by[]":   {"model", "workspace_id"},
 	})
 	if err != nil {
 		return nil, err
@@ -157,6 +162,7 @@ func (a *anthropicAdmin) fetchModelUsage(ctx context.Context, start, end time.Ti
 		Data []struct {
 			Results []struct {
 				Model         string `json:"model"`
+				WorkspaceID   string `json:"workspace_id"`
 				UncachedInput int64  `json:"uncached_input_tokens"`
 				CacheRead     int64  `json:"cache_read_input_tokens"`
 				CacheCreation struct {
@@ -173,6 +179,9 @@ func (a *anthropicAdmin) fetchModelUsage(ctx context.Context, start, end time.Ti
 	byModel := map[string]*modelUsage{}
 	for _, bucket := range usage.Data {
 		for _, rec := range bucket.Results {
+			if !inWorkspace(workspace, rec.WorkspaceID) {
+				continue
+			}
 			name := rec.Model
 			if name == "" {
 				name = "(unattributed)"

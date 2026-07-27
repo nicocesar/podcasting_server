@@ -7,6 +7,23 @@
   already reflected. TTS is a different vendor's bill and stays in
   characters.</p>
 
+  {{/* The scope is the difference between "what this server cost" and
+       "what everything on this organisation cost". A page that doesn't
+       say which one it is showing invites exactly the subtraction that
+       ADR 0024 exists to remove. */}}
+  {{if .Workspace}}
+  <p class="muted" style="font-size:.85rem">Scoped to workspace
+  <code>{{.Workspace}}</code> — this server's own key, and nothing else
+  billed to the organisation.</p>
+  {{else}}
+  <p class="warn" style="font-size:.85rem">Showing the whole organisation,
+  not just this server. Anything else billing to this Anthropic account —
+  another app, console work, an agent on the same org — is counted in the
+  totals below and belongs to no episode. Set
+  <code>ANTHROPIC_WORKSPACE_ID</code> to the workspace this server's API
+  key lives in.</p>
+  {{end}}
+
   <nav class="filters" aria-label="Range">
     <a href="/admin/costs?days=7"{{if eq .Days 7}} aria-current="page"{{end}}>7 days</a>
     <a href="/admin/costs?days=14"{{if eq .Days 14}} aria-current="page"{{end}}>14 days</a>

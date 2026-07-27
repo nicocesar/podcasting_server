@@ -79,6 +79,11 @@ type Config struct {
 	AnthropicAdminKey string
 	// AnthropicAdminBaseURL overrides the Admin API host (tests only).
 	AnthropicAdminBaseURL string
+	// AnthropicWorkspaceID scopes cost and usage reporting to one
+	// Anthropic workspace — the one this server's API key lives in.
+	// Empty means report the whole organization, which is what every
+	// deployment did before workspaces were split out.
+	AnthropicWorkspaceID string
 	// Version is the release this build calls itself: the hand-bumped
 	// number in cmd/server/version.txt.
 	Version string
@@ -102,6 +107,7 @@ type server struct {
 	version       string
 	commit        string
 	builtAt       string
+	workspaceID   string
 	assetVersion  string // content hash of style.css; cache-busts the stylesheet URL
 
 	tmplHome       *template.Template
@@ -143,6 +149,7 @@ func New(cfg Config) (http.Handler, error) {
 		generator:     cfg.Generator,
 		adminAPI:      newAnthropicAdmin(cfg.AnthropicAdminKey, cfg.AnthropicAdminBaseURL),
 		version:       cfg.Version,
+		workspaceID:   cfg.AnthropicWorkspaceID,
 		commit:        cfg.Commit,
 		builtAt:       cfg.BuiltAt,
 	}
