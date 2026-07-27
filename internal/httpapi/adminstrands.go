@@ -30,10 +30,19 @@ type adminStrandRow struct {
 	// Deletable is true only for a Strand nothing has ever aired on —
 	// a mistake made five minutes ago. Everything else retires.
 	Deletable bool
-	// ArtText is what generated art would say — the title, lowercased by
-	// the generator. Kept separate because the words on the art and the
-	// words in the feed do not have to match.
+	// ArtText, Accent and Icon are the Art Spec as stored, so the form
+	// shows what the art actually says rather than guessing from the
+	// title. ArtText falls back to the title only where there is no
+	// Spec at all — a Strand created before ADR 0021, or one whose art
+	// was uploaded, where the title is the honest default for the words
+	// a redraw would use.
 	ArtText string
+	Accent  string
+	Icon    string
+	// Uploaded marks a cover that came from a file rather than from
+	// words: art with no Spec behind it. Leaving the art fields alone on
+	// such a Strand keeps the upload (ADR 0021).
+	Uploaded bool
 }
 
 type adminStrandsPage struct {
@@ -78,7 +87,10 @@ func (s *server) renderAdminStrands(w http.ResponseWriter, r *http.Request, u st
 			Strand:    st,
 			Airings:   len(airings),
 			Deletable: len(airings) == 0,
-			ArtText:   st.Title,
+			ArtText:   firstNonEmpty(st.ArtText, st.Title),
+			Accent:    st.Accent,
+			Icon:      st.Icon,
+			Uploaded:  st.CoverType != "" && st.ArtText == "",
 		})
 	}
 	s.render(w, r, status, s.tmplAdminStrands, adminStrandsPage{
@@ -116,16 +128,13 @@ func (s *server) handleAdminStrandCreate(w http.ResponseWriter, r *http.Request,
 		s.fail(w, err)
 		return
 	}
+	spec := specFrom(r, st.Title)
+	rememberSpec(&st, spec)
 	if err := s.store.PutStrand(r.Context(), st); err != nil {
 		s.fail(w, err)
 		return
 	}
-	spec := coverart.Spec{
-		Text:   firstNonEmpty(strings.TrimSpace(r.FormValue("art_text")), st.Title),
-		Accent: strings.TrimSpace(r.FormValue("accent")),
-		Icon:   strings.TrimSpace(r.FormValue("icon")),
-	}
-	if err := s.putGeneratedCover(r, st.ID, spec); err != nil {
+	if _, err := s.putGeneratedCover(r, st.ID, spec); err != nil {
 		if errors.Is(err, errCoverArt) {
 			s.renderAdminStrands(w, r, u,
 				"the strand was added, but its art could not be drawn ("+
@@ -138,6 +147,29 @@ func (s *server) handleAdminStrandCreate(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	http.Redirect(w, r, returnTo(r, "/admin/strands"), http.StatusSeeOther)
+}
+
+// specFrom reads the Art Spec off a form. Empty words mean the title,
+// which is what makes a Strand's art follow its name unless somebody
+// says otherwise; empty accent and icon mean "derive from the words".
+func specFrom(r *http.Request, title string) coverart.Spec {
+	return coverart.Spec{
+		Text:   firstNonEmpty(strings.TrimSpace(r.FormValue("art_text")), title),
+		Accent: strings.TrimSpace(r.FormValue("accent")),
+		Icon:   strings.TrimSpace(r.FormValue("icon")),
+	}
+}
+
+// storedSpec is the Spec a Strand's current art was drawn from, or the
+// zero Spec when the art was uploaded and there is nothing to compare.
+func storedSpec(st store.Strand) coverart.Spec {
+	return coverart.Spec{Text: st.ArtText, Accent: st.Accent, Icon: st.Icon}
+}
+
+// rememberSpec records how the art was just made, so the form can show
+// the truth on reload instead of guessing from the title.
+func rememberSpec(st *store.Strand, spec coverart.Spec) {
+	st.ArtText, st.Accent, st.Icon = spec.Text, spec.Accent, spec.Icon
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -155,14 +187,21 @@ func firstNonEmpty(vals ...string) string {
 var errCoverArt = errors.New("cover art")
 
 // putGeneratedCover draws the art and stores it as this Strand's cover,
-// which is also what wakes a Dormant one up.
-func (s *server) putGeneratedCover(r *http.Request, id string, spec coverart.Spec) error {
+// which is also what wakes a Dormant one up. It returns the stored cover
+// type because SetStrandCover writes that field directly: a caller that
+// goes on to PutStrand a Strand it read *before* this call would write
+// the old empty type back and put the Strand straight back to sleep.
+func (s *server) putGeneratedCover(r *http.Request, id string, spec coverart.Spec) (string, error) {
 	p, err := coverart.Generate(spec)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errCoverArt, err)
+		return "", fmt.Errorf("%w: %w", errCoverArt, err)
 	}
-	return s.store.SetStrandCover(r.Context(), id, p.FullType,
+	err = s.store.SetStrandCover(r.Context(), id, p.FullType,
 		bytes.NewReader(p.Full), bytes.NewReader(p.Thumb))
+	if err != nil {
+		return "", err
+	}
+	return p.FullType, nil
 }
 
 // handleAdminStrandGenerateCover redraws a Strand's art from words the
@@ -172,16 +211,19 @@ func (s *server) handleAdminStrandGenerateCover(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	spec := coverart.Spec{
-		Text:   firstNonEmpty(strings.TrimSpace(r.FormValue("art_text")), st.Title),
-		Accent: strings.TrimSpace(r.FormValue("accent")),
-		Icon:   strings.TrimSpace(r.FormValue("icon")),
-	}
-	if err := s.putGeneratedCover(r, st.ID, spec); err != nil {
+	spec := specFrom(r, st.Title)
+	coverType, err := s.putGeneratedCover(r, st.ID, spec)
+	if err != nil {
 		if errors.Is(err, errCoverArt) {
 			s.renderAdminStrands(w, r, u, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
+		s.fail(w, err)
+		return
+	}
+	st.CoverType = coverType
+	rememberSpec(&st, spec)
+	if err := s.store.PutStrand(r.Context(), st); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -216,17 +258,49 @@ func (s *server) handleAdminCoverPreview(w http.ResponseWriter, r *http.Request,
 	w.Write(buf.Bytes())
 }
 
-// handleAdminStrandUpdate edits the words. The id is not among them.
+// handleAdminStrandUpdate is the one Save on a Strand: its words and its
+// art together, the way creating one already worked. The id is not among
+// them — it addresses the public feed, and renaming it would silently
+// kill every subscription.
+//
+// The art is redrawn only when the Art Spec actually changed (ADR 0021).
+// That is what makes one button safe: fixing a typo in a description
+// leaves the cover alone, and an uploaded cover — which has no Spec —
+// is never overwritten by an edit to the wording.
 func (s *server) handleAdminStrandUpdate(w http.ResponseWriter, r *http.Request, u store.User) {
 	st, ok := s.adminStrandOr404(w, r)
 	if !ok {
 		return
 	}
+	before := storedSpec(st)
 	st.Title = strings.TrimSpace(r.FormValue("title"))
 	st.Description = strings.TrimSpace(r.FormValue("description"))
 	if err := store.ValidateStrand(st); err != nil {
 		s.renderAdminStrands(w, r, u, err.Error(), http.StatusUnprocessableEntity)
 		return
+	}
+
+	// An uploaded cover has no Spec, and the form's art fields are shown
+	// empty against it. Leaving them alone must mean "keep my upload",
+	// not "draw the title over it".
+	uploaded := st.CoverType != "" && before.Text == ""
+	after := specFrom(r, st.Title)
+	if uploaded && strings.TrimSpace(r.FormValue("art_text")) == "" {
+		after = before
+	}
+
+	if after != before {
+		coverType, err := s.putGeneratedCover(r, st.ID, after)
+		if err != nil {
+			if errors.Is(err, errCoverArt) {
+				s.renderAdminStrands(w, r, u, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
+			s.fail(w, err)
+			return
+		}
+		st.CoverType = coverType
+		rememberSpec(&st, after)
 	}
 	if err := s.store.PutStrand(r.Context(), st); err != nil {
 		s.fail(w, err)
@@ -267,6 +341,16 @@ func (s *server) handleAdminStrandCover(w http.ResponseWriter, r *http.Request, 
 	err = s.store.SetStrandCover(r.Context(), st.ID, p.FullType,
 		bytes.NewReader(p.Full), bytes.NewReader(p.Thumb))
 	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	// This art did not come from words, so it has no Spec. Clearing it
+	// is what lets everything downstream know the cover was uploaded —
+	// and what stops a later Save from redrawing over it (ADR 0021).
+	// The cover type comes along for the same reason it does above.
+	st.CoverType = p.FullType
+	rememberSpec(&st, coverart.Spec{})
+	if err := s.store.PutStrand(r.Context(), st); err != nil {
 		s.fail(w, err)
 		return
 	}

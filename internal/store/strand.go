@@ -88,6 +88,21 @@ type Strand struct {
 	// Aired into until an admin has given it art.
 	CoverType string `json:"cover_type,omitempty" datastore:"cover_type,noindex"`
 
+	// ArtText, Accent and Icon are the Art Spec: the record of how this
+	// Strand's cover was made (ADR 0021). Empty ArtText with a CoverType
+	// set means the art came from a file rather than from words — an
+	// upload clears the Spec, which is the only way the two are told
+	// apart, since a generated cover and an uploaded one are otherwise
+	// interchangeable by design (ADR 0020).
+	//
+	// Empty Accent or Icon mean "derive it from the words", exactly as
+	// they do on the way into coverart.Spec. All three empty is what
+	// every Strand created before this looks like, and it reads as
+	// today's behaviour, so there is nothing to migrate.
+	ArtText string `json:"art_text,omitempty" datastore:"art_text,noindex"`
+	Accent  string `json:"accent,omitempty" datastore:"accent,noindex"`
+	Icon    string `json:"icon,omitempty" datastore:"icon,noindex"`
+
 	// Retired takes a Strand out of the canon without taking it off the
 	// internet: no new Airings, no place in discovery, but its page and
 	// feed keep serving whoever already subscribed. The only way a

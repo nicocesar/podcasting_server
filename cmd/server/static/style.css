@@ -951,3 +951,23 @@ footer.colophon {
 .admin-entry h2 { margin: 0 0 0.25rem; font-size: 1.05rem; }
 .admin-entry p { margin: 0; font-size: 0.88rem; }
 .admin-entry .icon { flex: none; margin-top: 0.15rem; color: var(--accent); }
+
+/* Strand header: the standing verbs sit up here, away from the Save
+   that edits the strand's wording and art. One of them is destructive. */
+.strand-head-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.strand-head-row .eyebrow { margin-bottom: 0.5rem; }
+.strand-head-row .eyebrow::after { content: none; }
+.strand-standing {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}

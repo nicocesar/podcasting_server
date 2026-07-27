@@ -9,94 +9,8 @@
 
   {{with .Error}}<p class="error">{{.}}</p>{{end}}
 
-  {{range .Strands}}
-  <section class="panel" id="strand-{{.ID}}">
-    <p class="eyebrow">
-      <code>{{.ID}}</code>
-      {{if .Retired}} · retired{{else if not .CoverType}} · dormant, waiting for cover art{{end}}
-      · {{if eq .Airings 1}}1 episode aired{{else}}{{.Airings}} episodes aired{{end}}
-    </p>
-
-    <form method="post" action="/admin/strands/{{.ID}}">
-        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
-      <label>Title
-        <input name="title" value="{{.Title}}" maxlength="60" required>
-      </label>
-      <label>Description
-        <textarea name="description" rows="2" maxlength="600">{{.Description}}</textarea>
-      </label>
-      <button class="quiet" type="submit">Save wording</button>
-    </form>
-
-    <form class="art-gen" method="post" action="/admin/strands/{{.ID}}/cover/generate" data-art-preview>
-        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
-      <img class="strand-art" width="120" height="120" data-art-target
-           src="/admin/strands/cover/preview?text={{.ArtText}}"
-           alt="What generated art for this strand would look like">
-      <div class="art-gen-fields">
-        <label>Words on the art
-          <input name="art_text" value="{{.ArtText}}" maxlength="60"
-                 data-art-field="text" placeholder="{{.Title}}">
-        </label>
-        <label>Colour
-          <select name="accent" data-art-field="accent">
-            <option value="">from the words</option>
-            {{range $.Accents}}<option value="{{.}}">{{.}}</option>{{end}}
-          </select>
-        </label>
-        <label>Icon
-          <select name="icon" data-art-field="icon">
-            <option value="">from the words</option>
-            {{range $.Icons}}<option value="{{.}}">{{.}}</option>{{end}}
-          </select>
-        </label>
-        <button class="quiet" type="submit">
-          {{if .CoverType}}Redraw the art{{else}}Draw the art to wake it up{{end}}
-        </button>
-      </div>
-    </form>
-
-    <details class="art-upload">
-      <summary>Or upload a file instead</summary>
-      <form method="post" action="/admin/strands/{{.ID}}/cover" enctype="multipart/form-data">
-        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
-        {{if .CoverType}}
-        <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="The art this strand has now"
-             width="96" height="96">
-        {{end}}
-        <label>Cover art (JPEG or PNG)
-          <input type="file" name="cover" accept="image/jpeg,image/png" required>
-        </label>
-        <button class="quiet" type="submit">
-          {{if .CoverType}}Replace art{{else}}Upload art to wake it up{{end}}
-        </button>
-      </form>
-    </details>
-
-    <p class="actions">
-      {{if .Retired}}
-      <form method="post" action="/admin/strands/{{.ID}}/unretire">
-        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
-        <button class="quiet" type="submit">Bring it back</button>
-      </form>
-      {{else}}
-      <form method="post" action="/admin/strands/{{.ID}}/retire">
-        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
-        <button class="quiet" type="submit">Retire</button>
-      </form>
-      {{end}}
-      {{if .Deletable}}
-      <form method="post" action="/admin/strands/{{.ID}}/delete">
-        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
-        <button class="quiet danger" type="submit">Delete</button>
-      </form>
-      {{else}}
-      <span class="muted">Episodes have aired here, so it can only be retired.</span>
-      {{end}}
-    </p>
-  </section>
-  {{end}}
-
+  {{/* Adding comes first: it is the thing you came here to do, and it
+       used to sit below every strand already in the canon. */}}
   <section class="panel">
     <h2>Add a strand</h2>
     <p class="muted">The id is permanent: it addresses the public feed, and
@@ -140,5 +54,102 @@
       </div>
     </form>
   </section>
+
+  {{range .Strands}}
+  {{/* One strand, one Save. The words and the art go together because
+       they are one decision, and the art is redrawn only when the Art
+       Spec changed (ADR 0021) — so fixing a typo in a description does
+       not redraw the cover, and never overwrites an upload.
+
+       Retire and delete stay out of that form and up in the header:
+       they change a strand's standing rather than its wording, and one
+       of them is destructive. */}}
+  <section class="panel" id="strand-{{.ID}}">
+    <div class="strand-head-row">
+      <p class="eyebrow">
+        <code>{{.ID}}</code>
+        {{if .Retired}} · retired{{else if not .CoverType}} · dormant, waiting for cover art{{end}}
+        · {{if eq .Airings 1}}1 episode aired{{else}}{{.Airings}} episodes aired{{end}}
+      </p>
+      <p class="strand-standing">
+        {{if .Retired}}
+        <form method="post" action="/admin/strands/{{.ID}}/unretire">
+          <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
+          <button class="quiet" type="submit">Bring it back</button>
+        </form>
+        {{else}}
+        <form method="post" action="/admin/strands/{{.ID}}/retire">
+          <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
+          <button class="quiet" type="submit">Retire</button>
+        </form>
+        {{end}}
+        {{if .Deletable}}
+        <form method="post" action="/admin/strands/{{.ID}}/delete">
+          <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
+          <button class="quiet danger" type="submit">Delete</button>
+        </form>
+        {{else}}
+        <span class="muted">Episodes have aired here, so it can only be retired.</span>
+        {{end}}
+      </p>
+    </div>
+
+    <form class="art-gen" method="post" action="/admin/strands/{{.ID}}" data-art-preview>
+      <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
+      <img class="strand-art" width="120" height="120" data-art-target
+           src="{{if .Uploaded}}/strands/{{.ID}}/cover?s=thumb{{else}}/admin/strands/cover/preview?text={{.ArtText}}{{end}}"
+           alt="This strand's cover art">
+      <div class="art-gen-fields">
+        <label>Title
+          <input name="title" value="{{.Title}}" maxlength="60" required>
+        </label>
+        <label>Description
+          <textarea name="description" rows="2" maxlength="600">{{.Description}}</textarea>
+        </label>
+        <label>Words on the art
+          <input name="art_text" value="{{if not .Uploaded}}{{.ArtText}}{{end}}"
+                 maxlength="60" data-art-field="text" placeholder="{{.Title}}">
+        </label>
+        <label>Colour
+          <select name="accent" data-art-field="accent">
+            <option value="">from the words</option>
+            {{$accent := .Accent}}
+            {{range $.Accents}}<option value="{{.}}"{{if eq . $accent}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        </label>
+        <label>Icon
+          <select name="icon" data-art-field="icon">
+            <option value="">from the words</option>
+            {{$icon := .Icon}}
+            {{range $.Icons}}<option value="{{.}}"{{if eq . $icon}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        </label>
+        {{if .Uploaded}}
+        <p class="muted" style="font-size:.82rem">This art was uploaded, so
+        there are no words behind it. Leave these fields alone and your file
+        stays; type words here and it gets redrawn over.</p>
+        {{end}}
+        <button type="submit">Save</button>
+      </div>
+    </form>
+
+    <details class="art-upload">
+      <summary>Or upload a file instead</summary>
+      <form method="post" action="/admin/strands/{{.ID}}/cover" enctype="multipart/form-data">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
+        {{if .CoverType}}
+        <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="The art this strand has now"
+             width="96" height="96">
+        {{end}}
+        <label>Cover art (JPEG or PNG)
+          <input type="file" name="cover" accept="image/jpeg,image/png" required>
+        </label>
+        <button class="quiet" type="submit">
+          {{if .CoverType}}Replace art{{else}}Upload art to wake it up{{end}}
+        </button>
+      </form>
+    </details>
+  </section>
+  {{end}}
 </article>
 {{end}}
