@@ -5,14 +5,17 @@ package httpapi
 // subjects without forking, which means somebody needs a screen to keep
 // it on — this is that screen.
 //
-// It is deliberately small: create, edit the words, upload the art,
-// retire. There is no rename, because a Strand's id addresses its public
-// feed and renaming it would silently kill every subscription.
+// It is deliberately small: create, edit the words, draw or upload the
+// art, retire. There is no rename, because a Strand's id addresses its
+// public feed and renaming it would silently kill every subscription.
 
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"image/png"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,12 +30,19 @@ type adminStrandRow struct {
 	// Deletable is true only for a Strand nothing has ever aired on —
 	// a mistake made five minutes ago. Everything else retires.
 	Deletable bool
+	// ArtText is what generated art would say — the title, lowercased by
+	// the generator. Kept separate because the words on the art and the
+	// words in the feed do not have to match.
+	ArtText string
 }
 
 type adminStrandsPage struct {
 	User    store.User
 	Strands []adminStrandRow
 	Error   string
+	// Accents and Icons are the pickers for generated art.
+	Accents []string
+	Icons   []string
 }
 
 func (s *server) handleAdminStrands(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -56,14 +66,25 @@ func (s *server) renderAdminStrands(w http.ResponseWriter, r *http.Request, u st
 			Strand:    st,
 			Airings:   len(airings),
 			Deletable: len(airings) == 0,
+			ArtText:   st.Title,
 		})
 	}
-	s.render(w, status, s.tmplAdminStrands, adminStrandsPage{User: u, Strands: rows, Error: msg})
+	s.render(w, status, s.tmplAdminStrands, adminStrandsPage{
+		User:    u,
+		Strands: rows,
+		Error:   msg,
+		Accents: coverart.AccentNames(),
+		Icons:   coverart.IconNames(),
+	})
 }
 
-// handleAdminStrandCreate adds one entry to the canon. It starts
-// Dormant: a podcast feed with no <itunes:image> is broken in most
-// clients, so nothing may be aired into it until the art arrives.
+// handleAdminStrandCreate adds one entry to the canon, and draws its cover
+// art from the title on the way in. A Strand with no art is Dormant — a
+// podcast feed with no <itunes:image> is broken in most clients — and
+// asking an admin to open a design tool before the canon can grow is how a
+// canon stops growing, so the art is generated (ADR 0020).
+// A title the generator cannot set still creates the Strand; it just stays
+// Dormant until somebody generates from shorter words or uploads a file.
 func (s *server) handleAdminStrandCreate(w http.ResponseWriter, r *http.Request, u store.User) {
 	st := store.Strand{
 		ID:          strings.TrimSpace(r.FormValue("id")),
@@ -86,7 +107,100 @@ func (s *server) handleAdminStrandCreate(w http.ResponseWriter, r *http.Request,
 		s.fail(w, err)
 		return
 	}
+	spec := coverart.Spec{
+		Text:   firstNonEmpty(strings.TrimSpace(r.FormValue("art_text")), st.Title),
+		Accent: strings.TrimSpace(r.FormValue("accent")),
+		Icon:   strings.TrimSpace(r.FormValue("icon")),
+	}
+	if err := s.putGeneratedCover(r, st.ID, spec); err != nil {
+		if errors.Is(err, errCoverArt) {
+			s.renderAdminStrands(w, r, u,
+				"the strand was added, but its art could not be drawn ("+
+					strings.TrimPrefix(err.Error(), errCoverArt.Error()+": ")+
+					"), so it is dormant — generate it from shorter words or upload a file",
+				http.StatusOK)
+			return
+		}
+		s.fail(w, err)
+		return
+	}
 	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// errCoverArt marks a failure that is the admin's wording, not the
+// server's fault: too many words to set, an unknown accent. The caller
+// turns it into a message on the page instead of a 500.
+var errCoverArt = errors.New("cover art")
+
+// putGeneratedCover draws the art and stores it as this Strand's cover,
+// which is also what wakes a Dormant one up.
+func (s *server) putGeneratedCover(r *http.Request, id string, spec coverart.Spec) error {
+	p, err := coverart.Generate(spec)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errCoverArt, err)
+	}
+	return s.store.SetStrandCover(r.Context(), id, p.FullType,
+		bytes.NewReader(p.Full), bytes.NewReader(p.Thumb))
+}
+
+// handleAdminStrandGenerateCover redraws a Strand's art from words the
+// admin can retype, with the accent and icon either chosen or derived.
+func (s *server) handleAdminStrandGenerateCover(w http.ResponseWriter, r *http.Request, u store.User) {
+	st, ok := s.adminStrandOr404(w, r)
+	if !ok {
+		return
+	}
+	spec := coverart.Spec{
+		Text:   firstNonEmpty(strings.TrimSpace(r.FormValue("art_text")), st.Title),
+		Accent: strings.TrimSpace(r.FormValue("accent")),
+		Icon:   strings.TrimSpace(r.FormValue("icon")),
+	}
+	if err := s.putGeneratedCover(r, st.ID, spec); err != nil {
+		if errors.Is(err, errCoverArt) {
+			s.renderAdminStrands(w, r, u, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		s.fail(w, err)
+		return
+	}
+	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+}
+
+// previewEdge is the size of the admin preview. Big enough to judge the
+// type, small enough to redraw on every keystroke.
+const previewEdge = 512
+
+// handleAdminCoverPreview draws art without storing it, so the admin page
+// can show what a title would turn into before committing to it.
+func (s *server) handleAdminCoverPreview(w http.ResponseWriter, r *http.Request, _ store.User) {
+	q := r.URL.Query()
+	img, err := coverart.Render(coverart.Spec{
+		Text:   strings.TrimSpace(q.Get("text")),
+		Accent: strings.TrimSpace(q.Get("accent")),
+		Icon:   strings.TrimSpace(q.Get("icon")),
+	}, previewEdge)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	w.Write(buf.Bytes())
 }
 
 // handleAdminStrandUpdate edits the words. The id is not among them.

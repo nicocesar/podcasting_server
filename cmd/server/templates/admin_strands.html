@@ -1,4 +1,5 @@
 {{define "title"}}Strands — admin{{end}}
+{{define "scripts"}}<script src="/static/coverart.js?v={{assetv}}" defer></script>{{end}}
 {{define "content"}}
 <article class="card shell-wide">
   <a class="backlink" href="/me">← Back to your podcast</a>
@@ -27,17 +28,48 @@
       <button class="quiet" type="submit">Save wording</button>
     </form>
 
-    <form method="post" action="/admin/strands/{{.ID}}/cover" enctype="multipart/form-data">
-      {{if .CoverType}}
-      <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="" width="96" height="96">
-      {{end}}
-      <label>Cover art (JPEG or PNG)
-        <input type="file" name="cover" accept="image/jpeg,image/png" required>
-      </label>
-      <button class="quiet" type="submit">
-        {{if .CoverType}}Replace art{{else}}Upload art to wake it up{{end}}
-      </button>
+    <form class="art-gen" method="post" action="/admin/strands/{{.ID}}/cover/generate" data-art-preview>
+      <img class="strand-art" width="120" height="120" data-art-target
+           src="/admin/strands/cover/preview?text={{.ArtText}}"
+           alt="What generated art for this strand would look like">
+      <div class="art-gen-fields">
+        <label>Words on the art
+          <input name="art_text" value="{{.ArtText}}" maxlength="60"
+                 data-art-field="text" placeholder="{{.Title}}">
+        </label>
+        <label>Colour
+          <select name="accent" data-art-field="accent">
+            <option value="">from the words</option>
+            {{range $.Accents}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </label>
+        <label>Icon
+          <select name="icon" data-art-field="icon">
+            <option value="">from the words</option>
+            {{range $.Icons}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </label>
+        <button class="quiet" type="submit">
+          {{if .CoverType}}Redraw the art{{else}}Draw the art to wake it up{{end}}
+        </button>
+      </div>
     </form>
+
+    <details class="art-upload">
+      <summary>Or upload a file instead</summary>
+      <form method="post" action="/admin/strands/{{.ID}}/cover" enctype="multipart/form-data">
+        {{if .CoverType}}
+        <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="The art this strand has now"
+             width="96" height="96">
+        {{end}}
+        <label>Cover art (JPEG or PNG)
+          <input type="file" name="cover" accept="image/jpeg,image/png" required>
+        </label>
+        <button class="quiet" type="submit">
+          {{if .CoverType}}Replace art{{else}}Upload art to wake it up{{end}}
+        </button>
+      </form>
+    </details>
 
     <p class="actions">
       {{if .Retired}}
@@ -63,21 +95,44 @@
   <section class="panel">
     <h2>Add a strand</h2>
     <p class="muted">The id is permanent: it addresses the public feed, and
-    renaming it would kill every subscription. A new strand stays dormant
-    until it has cover art.</p>
-    <form method="post" action="/admin/strands">
-      <label>Id
-        <input name="id" placeholder="tech-news" pattern="[a-z0-9]+(-[a-z0-9]+)*"
-               minlength="3" maxlength="32" required>
-      </label>
-      <label>Title
-        <input name="title" placeholder="Tech News" maxlength="60" required>
-      </label>
-      <label>Description
-        <textarea name="description" rows="2" maxlength="600"
-                  placeholder="What happened in technology, briefly."></textarea>
-      </label>
-      <button type="submit">Add it</button>
+    renaming it would kill every subscription. The cover art is drawn from
+    the title — one or two words work best — so a new strand is awake as
+    soon as you add it. The colour and the icon follow the words unless you
+    choose them.</p>
+    <form class="art-gen" method="post" action="/admin/strands" data-art-preview>
+      <img class="strand-art" width="120" height="120" data-art-target
+           src="/admin/strands/cover/preview?text=tech+news"
+           alt="What the generated art will look like">
+      <div class="art-gen-fields">
+        <label>Id
+          <input name="id" placeholder="tech-news" pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                 minlength="3" maxlength="32" required>
+        </label>
+        <label>Title
+          <input name="title" placeholder="Tech News" maxlength="60" required
+                 data-art-field="text">
+        </label>
+        <label>Description
+          <textarea name="description" rows="2" maxlength="600"
+                    placeholder="What happened in technology, briefly."></textarea>
+        </label>
+        <label>Words on the art <span class="muted">(optional, defaults to the title)</span>
+          <input name="art_text" maxlength="60" placeholder="tech news" data-art-field="text">
+        </label>
+        <label>Colour
+          <select name="accent" data-art-field="accent">
+            <option value="">from the words</option>
+            {{range .Accents}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </label>
+        <label>Icon
+          <select name="icon" data-art-field="icon">
+            <option value="">from the words</option>
+            {{range .Icons}}<option value="{{.}}">{{.}}</option>{{end}}
+          </select>
+        </label>
+        <button type="submit">Add it</button>
+      </div>
     </form>
   </section>
 </article>

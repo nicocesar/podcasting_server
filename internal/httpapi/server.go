@@ -152,7 +152,7 @@ func New(cfg Config) (http.Handler, error) {
 	s.assetVersion = "dev"
 	h := sha256.New()
 	hashed := false
-	for _, name := range []string{"static/style.css", "static/player.js", "static/beat.js"} {
+	for _, name := range []string{"static/style.css", "static/player.js", "static/beat.js", "static/coverart.js"} {
 		if b, err := fs.ReadFile(cfg.Assets, name); err == nil {
 			h.Write(b)
 			hashed = true
@@ -373,7 +373,9 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /admin/strands", s.adminUser(s.handleAdminStrands))
 	mux.HandleFunc("POST /admin/strands", s.adminUser(s.handleAdminStrandCreate))
 	mux.HandleFunc("POST /admin/strands/{strand}", s.adminUser(s.handleAdminStrandUpdate))
+	mux.HandleFunc("GET /admin/strands/cover/preview", s.adminUser(s.handleAdminCoverPreview))
 	mux.HandleFunc("POST /admin/strands/{strand}/cover", s.adminUser(s.handleAdminStrandCover))
+	mux.HandleFunc("POST /admin/strands/{strand}/cover/generate", s.adminUser(s.handleAdminStrandGenerateCover))
 	mux.HandleFunc("POST /admin/strands/{strand}/{action}", s.adminUser(s.handleAdminStrandAction))
 
 	return s.logged(mux), nil

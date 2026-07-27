@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,6 +15,17 @@ import (
 
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
+
+// getAs fetches a URL carrying credentials, for the admin-only pages that
+// a stranger may not see at all. It returns the raw bytes because some of
+// what the canon page serves is a PNG.
+func getAs(t *testing.T, ts *httptest.Server, path, creds string) (*http.Response, []byte) {
+	t.Helper()
+	resp := sendNoRedirect(t, "GET", ts.URL+path, creds, nil, "")
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp, b
+}
 
 // uploadStrandCover posts an image to the canon page's cover form.
 func uploadStrandCover(t *testing.T, ts *httptest.Server, creds, strand string, img []byte, contentType string) *http.Response {
@@ -32,9 +44,11 @@ func uploadStrandCover(t *testing.T, ts *httptest.Server, creds, strand string, 
 	return sendNoRedirect(t, "POST", ts.URL+"/admin/strands/"+strand+"/cover", creds, &buf, mw.FormDataContentType())
 }
 
-// TestAdminCreatesAStrandDormant: a new canon entry has no art, so it is
-// dormant and nothing may be aired into it yet (ADR 0017).
-func TestAdminCreatesAStrandDormant(t *testing.T) {
+// TestAdminCreateDrawsCoverArt: a title is enough to make a strand real.
+// The art is generated on the way in, so the entry is awake immediately
+// rather than waiting for somebody to upload a square (ADR 0017 on
+// dormancy, plus generated cover art).
+func TestAdminCreateDrawsCoverArt(t *testing.T) {
 	ts, st := newStrandServer(t)
 	admin := createAdmin(t, ts, "chief")
 
@@ -52,12 +66,115 @@ func TestAdminCreatesAStrandDormant(t *testing.T) {
 	if got.Title != "Tech News" || got.Description != "What happened." {
 		t.Errorf("stored = %+v", got)
 	}
-	if !got.Dormant() {
-		t.Error("a strand with no cover art must be dormant")
+	if got.Dormant() {
+		t.Error("a strand created from a title must come out with art, not dormant")
 	}
-	// Dormant means invisible in public, and unairable.
-	if resp, _ := get(t, ts, "/strands/tech-news"); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("dormant strand page: %d, want 404", resp.StatusCode)
+	// Both derivatives serve, and the page is public straight away.
+	for _, path := range []string{"/strands/tech-news/cover", "/strands/tech-news/cover?s=thumb"} {
+		r, body := get(t, ts, path)
+		if r.StatusCode != http.StatusOK || len(body) == 0 {
+			t.Errorf("GET %s: %d, %d bytes", path, r.StatusCode, len(body))
+		}
+	}
+	if r, _ := get(t, ts, "/strands/tech-news"); r.StatusCode != http.StatusOK {
+		t.Errorf("strand page: %d, want 200", r.StatusCode)
+	}
+}
+
+// TestAdminCreateKeepsStrandWhenArtCannotBeDrawn: a title too long to set
+// as a logotype still creates the strand. It stays dormant — which is the
+// honest state for a feed with no <itunes:image> — and the page says so
+// rather than losing the admin's typing to a 500.
+func TestAdminCreateKeepsStrandWhenArtCannotBeDrawn(t *testing.T) {
+	ts, st := newStrandServer(t)
+	admin := createAdmin(t, ts, "chief")
+
+	resp := postForm(t, ts, admin.sessionCreds(), "/admin/strands", url.Values{
+		"id":    {"long-one"},
+		"title": {"Seven whole words is far too many here"},
+	})
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create: %d, want 200 with an explanation", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), "dormant") {
+		t.Error("the page does not explain that the strand is dormant")
+	}
+	got, err := st.GetStrand(context.Background(), "long-one")
+	if err != nil {
+		t.Fatalf("the strand was not kept: %v", err)
+	}
+	if !got.Dormant() {
+		t.Error("a strand with no art must be dormant")
+	}
+	if r, _ := get(t, ts, "/strands/long-one"); r.StatusCode != http.StatusNotFound {
+		t.Errorf("dormant strand page: %d, want 404", r.StatusCode)
+	}
+}
+
+// TestAdminGeneratesCoverArt: the words on the art, its colour and its icon
+// are all steerable after the fact, and redrawing wakes a dormant strand.
+func TestAdminGeneratesCoverArt(t *testing.T) {
+	ts, st := newStrandServer(t)
+	admin := createAdmin(t, ts, "chief")
+	postForm(t, ts, admin.sessionCreds(), "/admin/strands", url.Values{
+		"id": {"long-one"}, "title": {"Seven whole words is far too many here"},
+	}).Body.Close()
+	if got, _ := st.GetStrand(context.Background(), "long-one"); !got.Dormant() {
+		t.Fatal("precondition: the strand should have started dormant")
+	}
+
+	resp := postForm(t, ts, admin.sessionCreds(), "/admin/strands/long-one/cover/generate",
+		url.Values{"art_text": {"night talks"}, "accent": {"violet"}, "icon": {"mic"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("generate: %d, want 303", resp.StatusCode)
+	}
+	got, err := st.GetStrand(context.Background(), "long-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Dormant() {
+		t.Fatal("the strand is still dormant after generating art")
+	}
+	if got.CoverType != "image/png" {
+		t.Errorf("cover type = %q, want image/png", got.CoverType)
+	}
+
+	// Art the generator cannot draw is the admin's wording, not a crash.
+	resp = postForm(t, ts, admin.sessionCreds(), "/admin/strands/long-one/cover/generate",
+		url.Values{"art_text": {"tech news"}, "accent": {"chartreuse"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("unknown accent: %d, want 422", resp.StatusCode)
+	}
+}
+
+// TestAdminCoverPreviewDraws: the preview endpoint renders without storing
+// anything, so the admin page can show a title before committing to it.
+func TestAdminCoverPreviewDraws(t *testing.T) {
+	ts, st := newStrandServer(t)
+	admin := createAdmin(t, ts, "chief")
+
+	resp, body := getAs(t, ts, "/admin/strands/cover/preview?text=global+news&accent=teal&icon=globe",
+		admin.sessionCreds())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("preview: %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/png" {
+		t.Errorf("content type = %q", ct)
+	}
+	if _, err := png.Decode(bytes.NewReader(body)); err != nil {
+		t.Errorf("preview is not a decodable PNG: %v", err)
+	}
+	if strands, err := st.ListStrands(context.Background()); err != nil || len(strands) != 0 {
+		t.Errorf("previewing stored something: %v, %v", strands, err)
+	}
+
+	// Nonsense in, an explanation out — not a 500.
+	if r, _ := getAs(t, ts, "/admin/strands/cover/preview?text=", admin.sessionCreds()); r.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("empty text: %d, want 422", r.StatusCode)
 	}
 }
 

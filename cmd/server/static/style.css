@@ -845,3 +845,35 @@ footer.colophon {
 
 .resume { margin-top: 1rem; }
 .resume .actions { justify-content: center; }
+
+/* Generated cover art on the admin canon page: the preview sits beside the
+   words that produce it, so the art and its cause are one object. */
+.strand-art {
+  display: block;
+  width: 120px;
+  height: 120px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: var(--shadow);
+  background: var(--card);
+}
+
+.art-gen {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.art-gen-fields { flex: 1 1 18rem; }
+.art-gen-fields label { display: block; }
+
+.art-upload > summary {
+  cursor: pointer;
+  font: 600 0.72rem/1 var(--font-body);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.art-upload[open] > summary { margin-bottom: 0.75rem; }
+.art-upload .strand-art { width: 96px; height: 96px; margin-bottom: 0.75rem; }
