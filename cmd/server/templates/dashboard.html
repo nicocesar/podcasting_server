@@ -31,16 +31,19 @@
         </div>
       </details>
 
-      <p class="actions"><a class="button quiet" href="/me/settings"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-gear"/></svg>Settings</a></p>
     </section>
 
+    {{/* Status, not navigation: Generate and Settings are in the bar,
+         and a second copy here is the duplication that makes a UI feel
+         bolted together. What the bar cannot say is what is running
+         right now, so that is all this keeps. */}}
     {{if .GenerateEnabled}}
     <section class="card">
-      <p class="eyebrow">Studio</p>
-      <p class="actions"><a class="button" href="/me/generate"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-mic"/></svg>Generate an episode</a></p>
-      <p class="muted" style="font-size:.85rem;margin:0">Pick a program — news
-      briefing or children's story — and an agent writes and voices it into
-      your feed.</p>
+      <p class="eyebrow">In flight · {{len .Generations}}</p>
+      {{if not .Generations}}
+      <p class="muted" style="font-size:.85rem;margin:0">Nothing being made
+      right now.</p>
+      {{end}}
       {{range .Generations}}
       <div class="gen-row">
         <span class="topic">{{.Topic}}</span>
@@ -74,25 +77,6 @@
     </section>
     {{end}}
 
-    {{/* Admin-only, and deliberately outside the Studio block above:
-         these are the operator's tools, not the listener's, and they
-         exist whether or not generation is switched on. Everything
-         linked here is already guarded server-side — the card is a door,
-         not the lock. */}}
-    {{if .User.Admin}}
-    <section class="card">
-      <p class="eyebrow">Station · admin</p>
-      <p class="actions"><a class="button quiet" href="/admin/strands"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-image"/></svg>The canon</a></p>
-      <p class="muted" style="font-size:.85rem;margin:0">The strands episodes
-      can be aired on. A new one stays dormant until it has cover art.</p>
-      <p class="actions">
-        <a class="button quiet" href="/admin/costs"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-external"/></svg>Costs</a>
-        <a class="button quiet" href="/admin/usage"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-external"/></svg>Usage</a>
-      </p>
-      <p class="muted" style="font-size:.82rem;margin:0">Those two answer raw
-      JSON from Anthropic's Cost API, not a page.</p>
-    </section>
-    {{end}}
   </aside>
 
   <section class="log">

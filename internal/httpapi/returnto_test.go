@@ -112,3 +112,57 @@ func TestTakedownReturnsToTheStrand(t *testing.T) {
 		t.Errorf("the takedown's destination answers %d:\n%s", page.StatusCode, body)
 	}
 }
+
+// TestTakedownIsOnTheStrandPageForAdminsOnly: ADR 0023 puts the control
+// on the Public Surface, so who sees it is the whole question. The page
+// is readable by anyone; the button is not.
+func TestTakedownIsOnTheStrandPageForAdminsOnly(t *testing.T) {
+	ts, st := newStrandServer(t)
+	putStrand(t, st, "music", true, false)
+	admin := createAdmin(t, ts, "chief")
+	alice := createUser(t, ts, "alice")
+	id := airedEpisode(t, ts, st, alice, "ep1", "music")
+
+	page := ts.URL + "/strands/music"
+	want := "/admin/airings/" + id + "/unair"
+
+	_, boss := htmlPage(t, page, admin.sessionCreds())
+	if !strings.Contains(boss, want) {
+		t.Errorf("an admin reading the strand page is offered no takedown:\n%s", boss)
+	}
+
+	// The owner, a signed-in stranger, and nobody at all: no button.
+	for name, creds := range map[string]string{
+		"the episode's owner": alice.sessionCreds(),
+		"anonymous":           "",
+	} {
+		_, body := htmlPage(t, page, creds)
+		if !strings.Contains(body, "ep1") && !strings.Contains(body, "airing-"+id) {
+			t.Fatalf("%s cannot read the strand page at all:\n%s", name, body)
+		}
+		if strings.Contains(body, want) {
+			t.Errorf("%s is offered the takedown:\n%s", name, body)
+		}
+	}
+}
+
+// TestTakedownStaysOutOfThePublicCache: the strand page is Public
+// Surface and is publicly cacheable for anonymous readers. An admin's
+// rendering carries a button nobody else may use, so it must never be
+// the copy a shared cache keeps.
+func TestTakedownStaysOutOfThePublicCache(t *testing.T) {
+	ts, st := newStrandServer(t)
+	putStrand(t, st, "music", true, false)
+	admin := createAdmin(t, ts, "chief")
+	alice := createUser(t, ts, "alice")
+	airedEpisode(t, ts, st, alice, "ep1", "music")
+
+	resp, _ := htmlPage(t, ts.URL+"/strands/music", admin.sessionCreds())
+	if cc := resp.Header.Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("an admin's strand page is cacheable: Cache-Control = %q", cc)
+	}
+	resp, _ = htmlPage(t, ts.URL+"/strands/music", "")
+	if cc := resp.Header.Get("Cache-Control"); strings.Contains(cc, "no-store") {
+		t.Errorf("the anonymous strand page lost its public cacheability: %q", cc)
+	}
+}

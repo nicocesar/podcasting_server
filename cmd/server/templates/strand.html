@@ -70,6 +70,18 @@
         <button class="quiet" type="submit" form="vouch-{{.Airing.ID}}">Vouch for this</button>
         {{end}}
       {{end}}
+
+      {{/* The takedown (ADR 0023). It lives here rather than on an admin
+           index because this is the page you are reading when you decide
+           something should stop being public. Guarded server-side by
+           adminUser — this is a door, not the lock. */}}
+      {{if $.Admin}}
+      <form method="post" action="/admin/airings/{{.Airing.ID}}/unair">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#airing-{{.Airing.ID}}">
+        <button class="quiet danger" type="submit"
+                title="End this airing. The episode stays in its owner's feed; only the publicness stops.">Take off the air</button>
+      </form>
+      {{end}}
     </p>
     {{if and $.SignedIn (not .Mine)}}
     <form id="vouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}" hidden>

@@ -68,6 +68,11 @@ type strandPage struct {
 	// ReturnTo is this page, so vouching or following lands back on the
 	// episode it acted on rather than at the top (ADR 0022).
 	ReturnTo string
+	// Admin offers the takedown inline (ADR 0023). This is a page on the
+	// Public Surface that renders a control only some readers may use —
+	// safe because a signed-in rendering is never publicly cached, which
+	// this page already had to arrange for vouch and follow state.
+	Admin bool
 }
 
 // handleStrandsIndex lists the canon. This is the narrowing of ADR 0003
@@ -117,6 +122,7 @@ func (s *server) handleStrandPage(w http.ResponseWriter, r *http.Request) {
 		ReturnTo: r.URL.RequestURI(),
 	}
 	if signedIn {
+		data.Admin = viewer.Admin
 		if f, err := s.followOf(r, viewer, st.ID); err == nil {
 			data.Following, data.Bar = true, f.Bar
 		}

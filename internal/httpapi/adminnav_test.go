@@ -38,31 +38,34 @@ func dashboardHTML(t *testing.T, ts *httptest.Server, creds string) string {
 	return body
 }
 
-// TestDashboardShowsAdminCardToAdmins: an admin had no way into
+// TestDashboardShowsAdminEntryToAdmins: an admin had no way into
 // /admin/strands except by typing the URL, which meant the canon — the
 // thing that decides what the whole public side can be about — was
 // effectively hidden from the person who maintains it.
-func TestDashboardShowsAdminCardToAdmins(t *testing.T) {
+//
+// The sidebar card that used to carry those links is gone: the chrome
+// carries them on every page now, and a second copy on one page is the
+// duplication that made the app feel bolted together. What matters is
+// unchanged — an admin has a way in that is not the address bar.
+func TestDashboardShowsAdminEntryToAdmins(t *testing.T) {
 	ts := newTestServer(t)
 	admin := createAdmin(t, ts, "chief")
 
 	page := dashboardHTML(t, ts, admin.sessionCreds())
-	for _, want := range []string{"Station · admin", "/admin/strands", "/admin/costs", "/admin/usage"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("an admin's dashboard is missing %q", want)
-		}
+	if !strings.Contains(page, `href="/admin"`) {
+		t.Errorf("an admin's dashboard offers no way into the admin surfaces:\n%s", page)
 	}
 }
 
-// TestDashboardHidesAdminCardFromUsers: the links are guarded
+// TestDashboardHidesAdminEntryFromUsers: the links are guarded
 // server-side, so showing them would not leak access — but it would
 // offer a door that answers 404, which is worse than no door.
-func TestDashboardHidesAdminCardFromUsers(t *testing.T) {
+func TestDashboardHidesAdminEntryFromUsers(t *testing.T) {
 	ts := newTestServer(t)
 	alice := createUser(t, ts, "alice")
 
 	page := dashboardHTML(t, ts, alice.sessionCreds())
-	for _, unwanted := range []string{"Station · admin", "/admin/strands", "/admin/costs"} {
+	for _, unwanted := range []string{`href="/admin"`, "/admin/strands", "/admin/costs"} {
 		if strings.Contains(page, unwanted) {
 			t.Errorf("an ordinary user's dashboard offers %q", unwanted)
 		}
