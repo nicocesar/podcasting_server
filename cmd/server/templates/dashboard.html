@@ -109,6 +109,7 @@
       <a href="/me"{{if not .Filter}} aria-current="page"{{end}}>All</a>
       <a href="/me?filter=mine"{{if eq .Filter "mine"}} aria-current="page"{{end}}>Mine</a>
       <a href="/me?filter=shared"{{if eq .Filter "shared"}} aria-current="page"{{end}}>Shared with me</a>
+      <a href="/me?filter=followed"{{if eq .Filter "followed"}} aria-current="page"{{end}}>Followed</a>
     </nav>
 
     {{if not .Episodes}}
@@ -124,7 +125,8 @@
     </div>
     {{end}}
     {{range .Episodes}}
-    <div class="episode{{if .Shared}} shared{{end}}" data-owner="{{.OwnerID}}" data-slug="{{.Slug}}">
+    <div class="episode{{if .Shared}} shared{{end}}{{if .Followed}} followed{{end}}"
+         data-owner="{{.OwnerID}}" data-slug="{{.Slug}}"{{if .Followed}} data-followed="1"{{end}}>
       <p class="ep-title"><a href="{{.PageURL}}">{{.Title}}</a></p>
       {{/* Own episodes lead with the slug, which is how you address
            them when publishing. On a shared one it names something in
@@ -134,10 +136,24 @@
       <p class="ep-meta">{{.Published}}{{with .Duration}} · {{.}}{{end}}{{with .Arrived}} · shared {{.}}{{end}}</p>
       <p class="ep-credit">by <strong>@{{.OwnerID}}</strong>
         {{- if ne .SharerID .OwnerID}} · via <strong>@{{.SharerID}}</strong>{{end}}</p>
+      {{else if .Followed}}
+      {{/* Nobody sent this: a strand you follow delivered it. Credited
+           by the owner's feed title, the way the strand page credits
+           it — the username is a share address and stays private. */}}
+      <p class="ep-meta">{{.Published}}{{with .Duration}} · {{.}}{{end}}</p>
+      <p class="ep-credit">by <strong>{{.Author}}</strong> · from the
+        <a href="/strands/{{.FromStrand}}">{{.FromStrand}}</a> strand</p>
       {{else}}
       <p class="ep-meta">{{.Slug}}{{with .Published}} · {{.}}{{end}}{{with .Duration}} · {{.}}{{end}}</p>
       {{end}}
       {{template "player" .Player}}
+      {{/* A followed row gets no controls at all. Share and "send as a
+           link" both authorise own-or-shared server-side (inFeed), so
+           offering them here would be buttons that fail; airing and the
+           character backfill are the owner's, and this episode is not
+           yours. It is already public — the strand link above is how you
+           pass it on. */}}
+      {{if not .Followed}}
       <div class="actions">
         <input class="share-to" list="users-dl" placeholder="usernames, comma-separated…"
                autocomplete="off" spellcheck="false">
@@ -158,13 +174,14 @@
         </form>
         {{end}}
       </div>
+      {{end}}
 
       {{/* Airing: the one control here that hands audio to strangers, so
            it says so in words rather than relying on an icon. Own
            episodes only — a Sharer may forward but never air (ADR 0018).
            A plain form, no JavaScript: the whole thing degrades to a
            select and a button. */}}
-      {{if not .Shared}}
+      {{if and (not .Shared) (not .Followed)}}
       <div class="air-row">
         {{if .AirBarred}}
         <p class="muted">The station took this off the air. Only an admin can put it back.</p>
@@ -255,6 +272,10 @@ document.querySelectorAll(".share-to").forEach((input) => {
 });
 
 document.querySelectorAll(".episode").forEach((ep) => {
+  // A followed row carries no controls — no share box, no invite
+  // button, no message line. Wiring would throw on the first missing
+  // element and take every row after it down with the exception.
+  if (ep.dataset.followed) return;
   const msg = ep.querySelector(".msg");
   const say = (text) => { msg.textContent = text; msg.hidden = false; };
   ep.querySelector("[data-share]").onclick = async () => {

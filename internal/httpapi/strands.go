@@ -19,6 +19,86 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
+// maxDelivered caps what a Follow may put in one feed render. Four
+// strands over a thirty-day horizon is nothing today, but the query is
+// strands x airings and a ceiling is cheaper to add now than to
+// discover later.
+const maxDelivered = 200
+
+// delivery is one Aired Episode a Follow puts in a User's Personal
+// Feed — the third kind of reference a feed holds, after the User's own
+// Episodes and their Shares (ADR 0019).
+type delivery struct {
+	Episode store.Episode
+	Airing  store.Airing
+	// Author is the Owner's feed title: an Aired Episode is attributed
+	// by that and never by username (ADR 0018).
+	Author string
+}
+
+// deliveredEpisodes is what u's Follows bring into their feed right
+// now. It also settles: ADR 0019 puts the freezing of a Vouch count on
+// the traffic that reads it, and a Personal Feed poll is the traffic
+// that matters — a podcast client asking for new audio is the one sign
+// of life that arrives while its owner is asleep (ADR 0016).
+func (s *server) deliveredEpisodes(r *http.Request, u store.User) ([]delivery, error) {
+	follows, err := s.store.ListFollows(r.Context(), u.ID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	authors := map[string]string{}
+	var out []delivery
+
+	for _, f := range follows {
+		airings, err := s.store.ListAirings(r.Context(), f.Strand)
+		if err != nil {
+			return nil, err
+		}
+		airings = s.settleDue(r, airings)
+		for _, a := range airings {
+			if len(out) >= maxDelivered {
+				return out, nil
+			}
+			// Settled, inside the horizon, and at or above this
+			// follower's Bar. The whole rule lives on the Airing.
+			if !a.Delivers(f.Bar, now) {
+				continue
+			}
+			// Your own Episode is already in your feed as your own; it
+			// must not arrive a second time wearing a different hat.
+			if a.OwnerID == u.ID {
+				continue
+			}
+			// Mute means nothing from that Owner anywhere I look.
+			if u.Muted(a.OwnerID) {
+				continue
+			}
+			ep, err := s.store.GetEpisode(r.Context(), a.OwnerID, a.Slug)
+			if errors.Is(err, store.ErrNotFound) {
+				continue // deleted since; the Airing is that delete arriving late
+			}
+			if err != nil {
+				return nil, err
+			}
+			author, ok := authors[a.OwnerID]
+			if !ok {
+				owner, err := s.store.GetUser(r.Context(), a.OwnerID)
+				if errors.Is(err, store.ErrNotFound) {
+					continue
+				}
+				if err != nil {
+					return nil, err
+				}
+				author = owner.Title
+				authors[a.OwnerID] = author
+			}
+			out = append(out, delivery{Episode: ep, Airing: a, Author: author})
+		}
+	}
+	return out, nil
+}
+
 // awakeStrands is the canon an Episode may actually be aired into:
 // everything neither Retired nor still waiting for its cover art. The
 // Dashboard offers exactly these, so the picker can never present a

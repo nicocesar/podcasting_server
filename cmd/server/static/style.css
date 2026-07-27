@@ -511,6 +511,17 @@ details.subscribe > div {
 }
 .on-air a { color: inherit; }
 
+/* Delivered by a strand you follow. Set apart the same way a share is —
+   by material, not a new ink — but with the accent rail dotted, because
+   nobody chose to send you this one. */
+.episode.followed {
+  background: var(--bg);
+  border-left: 3px dotted var(--accent);
+  border-radius: 4px 12px 12px 4px;
+  padding-left: calc(1rem - 2px);
+  box-shadow: none;
+}
+
 /* An episode that arrived rather than being made here. It is set apart
    by material, not by a new ink: the card sinks to the page ground
    instead of standing on it, and a rail in the ordinary accent marks

@@ -512,19 +512,34 @@ type feedEntry struct {
 	store.Episode
 	SharerID string     `json:"sharer,omitempty"`
 	SharedAt *time.Time `json:"shared_at,omitempty"`
+
+	// Strand and AiringID are set on an entry a Follow delivered: the
+	// third kind of reference a feed holds (ADR 0019). They also decide
+	// the enclosure — a delivered Episode is public, so its audio is
+	// addressed on its Strand and not inside this reader's Feed Token.
+	Strand   string `json:"strand,omitempty"`
+	AiringID string `json:"airing,omitempty"`
+	// Author is the Owner's feed title, carried only on delivered
+	// entries because nothing else in a Personal Feed needs it.
+	Author string `json:"author,omitempty"`
 }
 
-// feedEntries assembles u's Personal Feed: own episodes plus shared-in
-// references, muted owners hidden, newest-first. from ("" = all, "me", or
-// an owner ID) and filter ("" = all, "mine", "shared") are the Feed
-// Variant parameters (ADR 0005).
+// Delivered reports whether a Follow put this entry in the feed rather
+// than the reader making it or someone sharing it.
+func (e feedEntry) Delivered() bool { return e.AiringID != "" }
+
+// feedEntries assembles u's Personal Feed: own episodes, shared-in
+// references, and whatever their Follows deliver, muted owners hidden,
+// newest-first. from ("" = all, "me", or an owner ID) and filter
+// ("" = all, "mine", "shared", "followed") are the Feed Variant
+// parameters (ADR 0005).
 func (s *server) feedEntries(r *http.Request, u store.User, from, filter string) ([]feedEntry, error) {
 	if from == "me" {
 		from = u.ID
 	}
 	entries := []feedEntry{}
 
-	if filter != "shared" && (from == "" || from == u.ID) {
+	if filter != "shared" && filter != "followed" && (from == "" || from == u.ID) {
 		own, err := s.store.ListEpisodes(r.Context(), u.ID)
 		if err != nil {
 			return nil, err
@@ -534,7 +549,7 @@ func (s *server) feedEntries(r *http.Request, u store.User, from, filter string)
 		}
 	}
 
-	if filter != "mine" && from != u.ID {
+	if filter != "mine" && filter != "followed" && from != u.ID {
 		shares, err := s.store.ListShares(r.Context(), u.ID)
 		if err != nil {
 			return nil, err
@@ -555,6 +570,35 @@ func (s *server) feedEntries(r *http.Request, u store.User, from, filter string)
 			}
 			sharedAt := sh.SharedAt
 			entries = append(entries, feedEntry{Episode: ep, SharerID: sh.SharerID, SharedAt: &sharedAt})
+		}
+	}
+
+	// What the user's Follows bring in (ADR 0019). Last, so the dedupe
+	// below can prefer everything already here: an explicit Share was
+	// somebody's decision to send you this, and the credit line should
+	// say so rather than crediting a strand.
+	if filter != "mine" && filter != "shared" {
+		delivered, err := s.deliveredEpisodes(r, u)
+		if err != nil {
+			return nil, err
+		}
+		have := make(map[string]bool, len(entries))
+		for _, e := range entries {
+			have[e.OwnerID+"/"+e.Slug] = true
+		}
+		for _, d := range delivered {
+			if have[d.Episode.OwnerID+"/"+d.Episode.Slug] {
+				continue
+			}
+			if from != "" && d.Episode.OwnerID != from {
+				continue
+			}
+			entries = append(entries, feedEntry{
+				Episode:  d.Episode,
+				Strand:   d.Airing.Strand,
+				AiringID: d.Airing.ID,
+				Author:   d.Author,
+			})
 		}
 	}
 
@@ -596,11 +640,23 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 		s.fail(w, err)
 		return
 	}
-	episodes := make([]store.Episode, len(entries))
+	base := s.base(r)
+	items := make([]feed.Item, len(entries))
 	for i, e := range entries {
-		episodes[i] = e.Episode
+		it := feed.Item{Episode: e.Episode, Author: e.OwnerID}
+		if e.Delivered() {
+			// Delivered by a Follow: the audio is public, so it is
+			// addressed on its Strand rather than inside this reader's
+			// Feed Token, and credited to its Owner's feed title the
+			// way the Strand does (ADR 0018/0019).
+			it.EnclosureURL = feed.StrandEnclosure(base, e.Strand, e.AiringID)
+			it.Author = e.Author
+		} else {
+			it.EnclosureURL = feed.FeedTokenEnclosure(base, u.FeedToken, e.Episode)
+		}
+		items[i] = it
 	}
-	body, err := feed.RSS(u, episodes, s.base(r))
+	body, err := feed.RSS(u, items, base)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -922,7 +978,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 	// what the RSS feed has always carried. filter is the Feed Variant
 	// parameter (ADR 0005), spelled the same here as on /me/feed.
 	filter := r.URL.Query().Get("filter")
-	if filter != "mine" && filter != "shared" {
+	if filter != "mine" && filter != "shared" && filter != "followed" {
 		filter = ""
 	}
 	entries, err := s.feedEntries(r, u, "", filter)
@@ -969,10 +1025,22 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			Player: playerFor(u, e.Episode, true),
 			Rank:   e.PublishedAt,
 		}
-		if e.SharedAt == nil {
+		switch {
+		case e.Delivered():
+			// A Follow put this here. It is neither mine nor shared to
+			// me, and the difference is not cosmetic: its audio lives
+			// on the public Strand, because /me/episodes/{owner}/{slug}
+			// authorises own-or-shared and would refuse it.
+			v.Followed = true
+			v.FromStrand = e.Strand
+			v.Author = e.Author
+			v.PageURL = "/strands/" + e.Strand
+			v.Player.AudioURL = feed.StrandEnclosure("", e.Strand, e.AiringID)
+			v.Player.CoverURL = "/strands/" + e.Strand + "/cover"
+		case e.SharedAt == nil:
 			v.Links = links[e.OwnerID+"/"+e.Slug]
 			v.NeedsCharacters = s.generator != nil && e.Template == "stories" && len(e.Characters) == 0
-		} else {
+		default:
 			shared++
 			v.Shared = true
 			v.SharerID = e.SharerID
@@ -1105,8 +1173,23 @@ type episodeView struct {
 	// says so once rather than twice.
 	SharerID string
 	// Arrived is when the Share landed, in the same relative words as
-	// Aired. Empty on own Episodes, which arrived by being made.
+	// Published. Empty on own Episodes, which arrived by being made.
 	Arrived string
+
+	// Followed marks an Episode a Follow delivered (ADR 0019). It is
+	// the third kind of row, and the reason this struct no longer lets
+	// "not Shared" stand for "mine": a followed Episode is nobody's
+	// here to air, delete, or send as a link.
+	Followed bool
+	// FromStrand names where a followed Episode came from, for the
+	// credit line and the link back to it. Deliberately not "Strand":
+	// that name belongs to the embedded Episode, where it means the
+	// subject the station sorted it into, and shadowing it silently
+	// emptied the air picker's default.
+	FromStrand string
+	// Author is the Owner's feed title on a followed row — the same
+	// attribution the Strand Page shows, never the username.
+	Author string
 	// Rank orders the log: when the Episode became news to this user,
 	// which for a Share is its arrival and not its air date.
 	Rank time.Time

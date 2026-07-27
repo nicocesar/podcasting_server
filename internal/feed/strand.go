@@ -15,28 +15,23 @@ package feed
 // story worth standing behind.
 
 import (
-	"encoding/xml"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
-// StrandItem is one Aired Episode as its Strand Feed sees it: the
-// Episode itself, the public id that addresses its audio, and the
-// Owner's feed title, which is how an Aired Episode is attributed
-// (never by username — ADR 0018).
-type StrandItem struct {
-	AiringID string
-	Episode  store.Episode
-	Author   string
+// StrandEnclosure is the address of an Aired Episode's audio on the
+// public side: the opaque Airing id and nothing else, so the Owner's
+// username stays out of public URLs (ADR 0018).
+func StrandEnclosure(baseURL, strandID, airingID string) string {
+	return fmt.Sprintf("%s/strands/%s/%s.mp3", baseURL, strandID, airingID)
 }
 
 // StrandRSS renders one Strand as a public podcast feed. items must
 // already be sorted newest-first and capped by the caller. baseURL is
 // the server's external base URL without a trailing slash.
-func StrandRSS(st store.Strand, items []StrandItem, baseURL string) ([]byte, error) {
+func StrandRSS(st store.Strand, items []Item, baseURL string) ([]byte, error) {
 	strandBase := fmt.Sprintf("%s/strands/%s", baseURL, st.ID)
 	ch := channel{
 		Title:       st.Title,
@@ -54,33 +49,7 @@ func StrandRSS(st store.Strand, items []StrandItem, baseURL string) ([]byte, err
 		ch.LastBuildDate = items[0].Episode.PublishedAt.UTC().Format(time.RFC1123Z)
 	}
 	for _, in := range items {
-		ep := in.Episode
-		it := item{
-			Title:       ep.Title,
-			GUID:        guid{IsPermaLink: "false", Value: ep.OwnerID + "/" + ep.Slug},
-			PubDate:     ep.PublishedAt.UTC().Format(time.RFC1123Z),
-			Description: ep.Description,
-			// Attribution is the Owner's feed title, so the username —
-			// which is also the Share address — stays private.
-			Author: in.Author,
-			Enclosure: enclosure{
-				URL:    fmt.Sprintf("%s/%s.mp3", strandBase, in.AiringID),
-				Length: ep.AudioSize,
-				Type:   ep.AudioType,
-			},
-		}
-		if ep.DurationSec > 0 {
-			it.Duration = strconv.Itoa(ep.DurationSec)
-		}
-		ch.Items = append(ch.Items, it)
+		ch.Items = append(ch.Items, buildItem(in))
 	}
-	body, err := xml.MarshalIndent(rss{
-		Version:  "2.0",
-		ItunesNS: "http://www.itunes.com/dtds/podcast-1.0.dtd",
-		Channel:  ch,
-	}, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append([]byte(xml.Header), body...), nil
+	return render(ch)
 }

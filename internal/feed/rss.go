@@ -56,12 +56,61 @@ type enclosure struct {
 	Type   string `xml:"type,attr"`
 }
 
-// RSS renders u's Personal Feed. episodes mixes the user's own episodes
-// with those shared into the feed — each carries its Owner — and must
-// already be sorted newest-first. baseURL is the server's external base
-// URL without a trailing slash. All links live under the Feed Token
-// capability namespace (ADR 0008), so clients never authenticate.
-func RSS(u store.User, episodes []store.Episode, baseURL string) ([]byte, error) {
+// Item is one entry in a rendered feed: the Episode, the address its
+// audio is fetched from, and who it is credited to. The enclosure URL
+// is passed in rather than derived because it is not always the same
+// namespace — an Episode delivered by a Follow is public, and points at
+// its Strand rather than into the reader's Feed Token (ADR 0019).
+type Item struct {
+	Episode store.Episode
+	// EnclosureURL is the absolute address of the audio.
+	EnclosureURL string
+	// Author is the item's itunes:author.
+	Author string
+}
+
+// buildItem renders one entry. The GUID derives from (owner, slug) in
+// every feed, so an Episode that is aired, shared, and delivered is one
+// item to a podcast client rather than three (ADR 0002/0006/0008).
+func buildItem(in Item) item {
+	ep := in.Episode
+	it := item{
+		Title:       ep.Title,
+		GUID:        guid{IsPermaLink: "false", Value: ep.OwnerID + "/" + ep.Slug},
+		PubDate:     ep.PublishedAt.UTC().Format(time.RFC1123Z),
+		Description: ep.Description,
+		Author:      in.Author,
+		Enclosure: enclosure{
+			URL:    in.EnclosureURL,
+			Length: ep.AudioSize,
+			Type:   ep.AudioType,
+		},
+	}
+	if ep.DurationSec > 0 {
+		it.Duration = strconv.Itoa(ep.DurationSec)
+	}
+	return it
+}
+
+// render marshals a finished channel with the XML header podcast
+// clients expect.
+func render(ch channel) ([]byte, error) {
+	body, err := xml.MarshalIndent(rss{
+		Version:  "2.0",
+		ItunesNS: "http://www.itunes.com/dtds/podcast-1.0.dtd",
+		Channel:  ch,
+	}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(xml.Header), body...), nil
+}
+
+// RSS renders u's Personal Feed: their own Episodes, those shared into
+// the feed, and those a Follow delivers — each carrying its Owner, and
+// already sorted newest-first. baseURL is the server's external base URL
+// without a trailing slash.
+func RSS(u store.User, items []Item, baseURL string) ([]byte, error) {
 	feedBase := fmt.Sprintf("%s/f/%s", baseURL, u.FeedToken)
 	ch := channel{
 		Title:       u.Title,
@@ -73,39 +122,18 @@ func RSS(u store.User, episodes []store.Episode, baseURL string) ([]byte, error)
 	if u.CoverType != "" {
 		ch.Image = &itunesImage{Href: feedBase + "/cover"}
 	}
-	if len(episodes) > 0 {
-		ch.LastBuildDate = episodes[0].PublishedAt.UTC().Format(time.RFC1123Z)
+	if len(items) > 0 {
+		ch.LastBuildDate = items[0].Episode.PublishedAt.UTC().Format(time.RFC1123Z)
 	}
-	for _, ep := range episodes {
-		it := item{
-			Title: ep.Title,
-			// GUID derives from (owner, slug): a replaced episode keeps its
-			// GUID everywhere, and one episode shared into many feeds is the
-			// same item in each (ADR 0002/0006).
-			GUID:        guid{IsPermaLink: "false", Value: ep.OwnerID + "/" + ep.Slug},
-			PubDate:     ep.PublishedAt.UTC().Format(time.RFC1123Z),
-			Description: ep.Description,
-			Author:      ep.OwnerID,
-			Enclosure: enclosure{
-				// Owner-addressed inside this feed's capability namespace;
-				// the GUID keeps the item identical across feeds.
-				URL:    fmt.Sprintf("%s/%s/%s.mp3", feedBase, ep.OwnerID, ep.Slug),
-				Length: ep.AudioSize,
-				Type:   ep.AudioType,
-			},
-		}
-		if ep.DurationSec > 0 {
-			it.Duration = strconv.Itoa(ep.DurationSec)
-		}
-		ch.Items = append(ch.Items, it)
+	for _, in := range items {
+		ch.Items = append(ch.Items, buildItem(in))
 	}
-	body, err := xml.MarshalIndent(rss{
-		Version:  "2.0",
-		ItunesNS: "http://www.itunes.com/dtds/podcast-1.0.dtd",
-		Channel:  ch,
-	}, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append([]byte(xml.Header), body...), nil
+	return render(ch)
+}
+
+// FeedTokenEnclosure is the address of an Episode's audio inside a
+// reader's own capability namespace — the default for anything that is
+// theirs or was shared to them (ADR 0008).
+func FeedTokenEnclosure(baseURL, feedToken string, ep store.Episode) string {
+	return fmt.Sprintf("%s/f/%s/%s/%s.mp3", baseURL, feedToken, ep.OwnerID, ep.Slug)
 }

@@ -217,15 +217,16 @@ func (s *server) handleStrandFeed(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	items := make([]feed.StrandItem, 0, len(views))
+	base := s.base(r)
+	items := make([]feed.Item, 0, len(views))
 	for _, v := range views {
-		items = append(items, feed.StrandItem{
-			AiringID: v.Airing.ID,
-			Episode:  v.Episode,
-			Author:   v.Author,
+		items = append(items, feed.Item{
+			Episode:      v.Episode,
+			EnclosureURL: feed.StrandEnclosure(base, st.ID, v.Airing.ID),
+			Author:       v.Author,
 		})
 	}
-	body, err := feed.StrandRSS(st, items, s.base(r))
+	body, err := feed.StrandRSS(st, items, base)
 	if err != nil {
 		s.fail(w, err)
 		return
