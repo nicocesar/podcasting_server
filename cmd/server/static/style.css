@@ -1028,3 +1028,17 @@ footer.colophon {
 .buildstamp:hover { opacity: 0.9; }
 .buildstamp code { font-size: 0.95em; }
 .buildstamp time { cursor: help; }
+
+/* A topic is free text and often a sentence. Clipped rather than
+   allowed to widen the table, because a table wider than its container
+   scrolls horizontally and the cost column — the reason you opened the
+   page — is the first thing to go. Full text is in the tooltip. */
+.spend-topic {
+  max-width: 22rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+@media (max-width: 40rem) {
+  .spend-topic { max-width: 11rem; }
+}

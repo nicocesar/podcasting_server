@@ -59,11 +59,14 @@
         <tbody>
           {{range .Episodes}}
           <tr>
-            <td>{{.Topic}}{{if eq .Stage "failed"}} <span class="muted">· failed</span>{{end}}</td>
+            {{/* Topics run long. Clipped to keep the table from growing
+                 a horizontal scrollbar that pushes the cost column out
+                 of sight, with the whole thing in the tooltip. */}}
+            <td class="spend-topic" title="{{.Topic}}">{{.Topic}}{{if eq .Stage "failed"}} · failed{{end}}</td>
             <td class="muted">@{{.User}}</td>
             <td class="muted">{{.CreatedAt.Format "2 Jan"}}</td>
             <td class="spend-amount">
-              {{if .CostUSD}}${{printf "%.4f" .CostUSD}}{{else}}<span class="muted">pending</span>{{end}}
+              {{with .Dollars}}${{.}}{{else}}<span class="muted">pending</span>{{end}}
             </td>
           </tr>
           {{end}}

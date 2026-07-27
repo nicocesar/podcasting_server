@@ -148,6 +148,20 @@ func (s *server) pricedEpisodes(ctx context.Context, ledger map[string]*dayLedge
 	return episodes, nil
 }
 
+// Dollars is the cost as a person reads it, or "" while the day is
+// still pending. The template cannot do this itself: CostUSD is a
+// *float64 so that "not priced yet" is distinguishable from "free", and
+// handing that pointer to printf renders "$%!f(*float64=0x...)" — which
+// is exactly what production showed on every reconciled row.
+//
+// A method, so it stays out of the JSON: the API's shape is unchanged.
+func (e *episodeCost) Dollars() string {
+	if e.CostUSD == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*e.CostUSD, 'f', 4, 64)
+}
+
 // priceGeneration prices one Generation's meters at its creation day's
 // effective rates. Any consumed kind without a posted rate makes the
 // whole episode "pending" — a partial dollar figure would mislead.
