@@ -273,6 +273,10 @@ func New(cfg Config) (http.Handler, error) {
 	})
 	mux.HandleFunc("GET /f/{token}/feed.xml", s.feed(s.handleFeed))
 	mux.HandleFunc("GET /f/{token}/cover", s.feed(s.handleCover))
+	// Another User's Cover Art, as seen from inside this feed: what a
+	// shared Episode wears (ADR 0025). Deliberately one segment deeper
+	// than the Episode Page so no Episode slugged "cover" collides.
+	mux.HandleFunc("GET /f/{token}/u/{owner}/cover", s.feed(s.handleFeedOwnerCover))
 	mux.HandleFunc("GET /f/{token}/qr.png", s.feed(s.handleQR))
 	mux.HandleFunc("GET /f/{token}/{owner}/{file}", s.feed(s.handleEpisodeFile))
 
@@ -289,6 +293,9 @@ func New(cfg Config) (http.Handler, error) {
 	// The same Cover Art the feed serves, addressed under the session so
 	// signed-in pages need no capability in their markup.
 	mux.HandleFunc("GET /me/image", s.session(s.handleMyCover))
+	// The session-side twin of /f/{token}/u/{owner}/cover: the Owner's
+	// art behind a shared Episode, with no capability in the markup.
+	mux.HandleFunc("GET /me/u/{owner}/cover", s.session(s.handleMyOwnerCover))
 	mux.HandleFunc("GET /me/feed", s.auth(s.handleListFeed))
 	mux.HandleFunc("GET /me/episodes", s.auth(s.handleListEpisodes))
 	// The signed-in listening surface: same Episode Page and enclosure as
@@ -673,9 +680,17 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 		return
 	}
 	base := s.base(r)
+	covers := s.ownerCovers(r, u, entries, false)
 	items := make([]feed.Item, len(entries))
 	for i, e := range entries {
 		it := feed.Item{Episode: e.Episode, Author: e.OwnerID}
+		// An item image only where it says something the channel image
+		// does not — a shared Episode wearing its Owner's art (ADR
+		// 0025). Repeating the channel's own art per item would just
+		// bloat the feed.
+		if c := covers[e.OwnerID]; c != "" && c != coverURL(u) {
+			it.ImageURL = base + c
+		}
 		if e.Delivered() {
 			// Delivered by a Follow: the audio is public, so it is
 			// addressed on its Strand rather than inside this reader's
@@ -750,13 +765,10 @@ func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
-	// The cover is the feed's, not the Episode owner's: the RSS channel
-	// already presents shared Episodes under this feed's art, and no
-	// route exposes another user's cover inside this token anyway.
-	cover := coverURL(u)
-	if session {
-		cover = sessionCoverURL(u)
-	}
+	// A shared Episode wears its Owner's art, here and in the RSS item,
+	// addressed inside this reader's own namespace (ADR 0025). Their own
+	// Episodes, and Owners without a cover, keep this feed's.
+	cover := s.coverForEpisode(r, u, ownerID, session)
 	// The airing control, but only where it can honestly be offered:
 	// signed in (a capability URL is a place to listen, and its holder
 	// may not be the Owner at all) and on the Owner's own Episode (a
@@ -806,7 +818,7 @@ func (s *server) episodePage(w http.ResponseWriter, r *http.Request, u store.Use
 		CoverURL:     cover,
 		AudioURL:     audioURL(u, ep, session),
 		Session:      session,
-		Player:       playerFor(u, ep, session),
+		Player:       playerFor(u, ep, session, cover),
 		AirRow:       airRow,
 		subscribeBox: s.subscribeBox(r, u),
 	}
@@ -884,6 +896,68 @@ func (s *server) handleCover(w http.ResponseWriter, r *http.Request, u store.Use
 // may keep a copy — never a shared proxy.
 func (s *server) handleMyCover(w http.ResponseWriter, r *http.Request, u store.User) {
 	s.cover(w, r, u, "private, max-age=3600")
+}
+
+// handleFeedOwnerCover serves the Cover Art of another User whose
+// Episode sits in this feed. Reachable only for an Owner who actually
+// shared something here, so the route reveals no more than the feed
+// already does — and never a muted Owner's art.
+func (s *server) handleFeedOwnerCover(w http.ResponseWriter, r *http.Request, u store.User) {
+	s.ownerCover(w, r, u, "public, max-age=3600")
+}
+
+// handleMyOwnerCover is the same image for a signed-in browser, private
+// for the reason handleMyCover is: the URL carries no capability, so
+// only this session's browser may keep a copy.
+func (s *server) handleMyOwnerCover(w http.ResponseWriter, r *http.Request, u store.User) {
+	s.ownerCover(w, r, u, "private, max-age=3600")
+}
+
+func (s *server) ownerCover(w http.ResponseWriter, r *http.Request, u store.User, cacheControl string) {
+	ownerID := r.PathValue("owner")
+	if !store.ValidID(ownerID) {
+		http.NotFound(w, r)
+		return
+	}
+	visible, err := s.sharedOwner(r, u, ownerID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if !visible {
+		s.renderNotFound(w, r)
+		return
+	}
+	owner, err := s.store.GetUser(r.Context(), ownerID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.cover(w, r, owner, cacheControl)
+}
+
+// sharedOwner reports whether ownerID put an Episode in u's feed by way
+// of a Share. It is the authorisation for showing that Owner's art: a
+// muted Owner is invisible, and so is a stranger who shared nothing.
+// The Owner's own art needs no Share, and a Follow's does not qualify —
+// a delivered Episode wears its Strand's art, not its Owner's.
+func (s *server) sharedOwner(r *http.Request, u store.User, ownerID string) (bool, error) {
+	if ownerID == u.ID {
+		return true, nil
+	}
+	if u.Muted(ownerID) {
+		return false, nil
+	}
+	shares, err := s.store.ListShares(r.Context(), u.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, sh := range shares {
+		if sh.OwnerID == ownerID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *server) cover(w http.ResponseWriter, r *http.Request, u store.User, cacheControl string) {
@@ -1077,6 +1151,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			Redeemed: inv.RedeemedBy != "",
 		})
 	}
+	covers := s.ownerCovers(r, u, entries, true)
 	views := make([]episodeView, 0, len(entries))
 	shared := 0
 	for _, e := range entries {
@@ -1085,11 +1160,10 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			Published: relativeDate(e.PublishedAt),
 			Duration:  humanDuration(e.DurationSec),
 			PageURL:   episodeBase(u, e.Episode, true),
-			// The cover art stays this feed's, for the reason
-			// episodePage gives: a shared Episode is presented under
-			// the art of the feed it arrived in. The credit line
-			// carries the attribution the art cannot.
-			Player: playerFor(u, e.Episode, true),
+			// A shared Episode wears its Owner's art (ADR 0025); the
+			// credit line still carries the attribution art cannot.
+			// Delivered entries get their Strand's art just below.
+			Player: playerFor(u, e.Episode, true, covers[e.OwnerID]),
 			Rank:   e.PublishedAt,
 		}
 		switch {
@@ -1336,11 +1410,10 @@ func audioURL(u store.User, ep store.Episode, session bool) string {
 	return episodeBase(u, ep, session) + ".mp3"
 }
 
-func playerFor(u store.User, ep store.Episode, session bool) playerView {
-	cover := coverURL(u)
-	if session {
-		cover = sessionCoverURL(u)
-	}
+// playerFor builds the inline Player. cover is passed in rather than
+// derived because it is not always this feed's: a shared Episode wears
+// its Owner's art, and a delivered one its Strand's (ADR 0025).
+func playerFor(u store.User, ep store.Episode, session bool, cover string) playerView {
 	return playerView{
 		AudioURL: audioURL(u, ep, session),
 		Title:    ep.Title,
@@ -1348,6 +1421,55 @@ func playerFor(u store.User, ep store.Episode, session bool) playerView {
 		Key:      ep.OwnerID + "/" + ep.Slug,
 		CoverURL: cover,
 	}
+}
+
+// ownerCoverURL addresses another User's Cover Art from inside the
+// reader's own namespace — never a URL in the Owner's, which would be
+// either a capability this reader must not hold or a public address a
+// private Episode has no business advertising (ADR 0008/0025).
+func ownerCoverURL(u store.User, ownerID string, session bool) string {
+	if session {
+		return "/me/u/" + ownerID + "/cover"
+	}
+	return "/f/" + u.FeedToken + "/u/" + ownerID + "/cover"
+}
+
+// coverForEpisode is the art an Episode wears in u's surfaces. A shared
+// Episode keeps its Owner's cover, so nico's art follows his Episode
+// into ldipenti's feed and on into focagorda's — provenance the Sharer
+// cannot repaint (ADR 0006/0025). Everything else, including an Owner
+// who never uploaded art, falls back to this feed's own cover.
+func (s *server) coverForEpisode(r *http.Request, u store.User, ownerID string, session bool) string {
+	if ownerID != u.ID {
+		// A missing Owner or a failed lookup is not worth a 500 on a
+		// page that renders perfectly well under the feed's own art.
+		if owner, err := s.store.GetUser(r.Context(), ownerID); err == nil && owner.CoverType != "" {
+			return ownerCoverURL(u, ownerID, session)
+		}
+	}
+	if session {
+		return sessionCoverURL(u)
+	}
+	return coverURL(u)
+}
+
+// ownerCovers resolves the art for a whole feed's worth of entries with
+// one lookup per distinct Owner rather than one per Episode. Delivered
+// entries are skipped: their art comes from their Strand, and their
+// Owner may have shared nothing here, so no owner-cover URL would
+// resolve for them anyway.
+func (s *server) ownerCovers(r *http.Request, u store.User, entries []feedEntry, session bool) map[string]string {
+	covers := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if e.Delivered() {
+			continue
+		}
+		if _, done := covers[e.OwnerID]; done {
+			continue
+		}
+		covers[e.OwnerID] = s.coverForEpisode(r, u, e.OwnerID, session)
+	}
+	return covers
 }
 
 // coverURL is where the owner's Cover Art is served, or "" without one.

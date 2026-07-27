@@ -40,9 +40,13 @@ type item struct {
 	PubDate     string `xml:"pubDate"`
 	Description string `xml:"description,omitempty"`
 	// The Owner's ID, so a mixed feed shows where each episode came from.
-	Author    string    `xml:"itunes:author"`
-	Duration  string    `xml:"itunes:duration,omitempty"`
-	Enclosure enclosure `xml:"enclosure"`
+	Author   string `xml:"itunes:author"`
+	Duration string `xml:"itunes:duration,omitempty"`
+	// Episode artwork, overriding the channel's for this item alone. A
+	// client that ignores it falls back to the channel image, so this
+	// only ever adds fidelity (ADR 0025).
+	Image     *itunesImage `xml:"itunes:image,omitempty"`
+	Enclosure enclosure    `xml:"enclosure"`
 }
 
 type guid struct {
@@ -67,6 +71,10 @@ type Item struct {
 	EnclosureURL string
 	// Author is the item's itunes:author.
 	Author string
+	// ImageURL is this item's own artwork, set when the Episode should
+	// not wear the channel's — a shared Episode keeps its Owner's cover
+	// (ADR 0025). Empty means the channel image stands.
+	ImageURL string
 }
 
 // buildItem renders one entry. The GUID derives from (owner, slug) in
@@ -88,6 +96,9 @@ func buildItem(in Item) item {
 	}
 	if ep.DurationSec > 0 {
 		it.Duration = strconv.Itoa(ep.DurationSec)
+	}
+	if in.ImageURL != "" {
+		it.Image = &itunesImage{Href: in.ImageURL}
 	}
 	return it
 }
