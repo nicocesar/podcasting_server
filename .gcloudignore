@@ -1,0 +1,49 @@
+# What `make deploy` must not ship to Cloud Build.
+#
+# Without this file gcloud derives the upload set from .gitignore, which
+# is tuned for what should not be *committed* — a different question from
+# what belongs in a build context. The gap let three things through:
+# worktrees (full copies of this repo, living inside it), local media,
+# and secrets.
+#
+# The Docker build context is this tarball, and the Dockerfile does
+# `COPY . .`, so everything excluded here is excluded from the image too.
+# Keep go.mod, go.sum, cmd/ and internal/ — that is the entire build.
+
+.git/
+.gitignore
+
+# Claude Code keeps worktrees under .claude/, each a full checkout of
+# this repository. Uploading them nearly doubled the tarball and put
+# stale copies of the codebase in the build context.
+.claude/
+.agents/
+
+# Local development store: episodes, audio, covers, users.
+data/
+
+# Media worked on locally. Root-anchored on purpose: nothing under cmd/
+# is an image today, but if an asset is ever embedded it must not vanish
+# from the build because of a pattern written years earlier.
+/*.png
+/*.jpg
+/*.jpeg
+/*.mp3
+
+# Credentials. None of this belongs in an image build context, and some
+# of it does not belong on disk either.
+.env
+.env.*
+client_secret*.json
+*-key.json
+*.pem
+
+# Scratch output from admin endpoints and local experiments.
+/costs.json
+/costs-episodes.json
+/dsm-alice.json
+/ft-alice.json
+/skills-lock.json
+
+# An alternate image that the deploy does not build.
+Dockerfile.opencode
