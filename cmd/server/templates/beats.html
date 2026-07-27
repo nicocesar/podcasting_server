@@ -14,7 +14,7 @@
   {{else}}
 
   {{range .Beats}}
-  <section class="panel beat">
+  <section class="panel beat" id="beat-{{.ID}}">
     <p class="eyebrow">{{.ProgramName}}</p>
     <p class="beat-topic">{{.Topic}}</p>
     <p class="muted beat-meta">
@@ -28,16 +28,19 @@
       <a class="button quiet" href="{{.EditURL}}">Edit</a>
       {{if .Paused}}
       <form method="post" action="/me/beats/{{.ID}}/resume">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#beat-{{.ID}}">
         <button class="quiet" type="submit">
           <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-power"/></svg>Resume</button>
       </form>
       {{else}}
       <form method="post" action="/me/beats/{{.ID}}/pause">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#beat-{{.ID}}">
         <button class="quiet" type="submit">
           <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-power"/></svg>Pause</button>
       </form>
       {{end}}
       <form method="post" action="/me/beats/{{.ID}}/cancel">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#beat-{{.ID}}">
         <button class="danger" type="submit">
           <svg class="icon" width="16" height="16" aria-hidden="true"><use href="#i-x"/></svg>Cancel</button>
       </form>

@@ -1129,9 +1129,14 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		// strands only, since a dormant or retired one takes nothing.
 		// Empty means the airing controls do not appear at all.
 		AirStrands []store.Strand
+		// ReturnTo is this page as the reader reached it, filter and
+		// all, so an action lands them back where they were rather than
+		// at the top of an unfiltered log (ADR 0022).
+		ReturnTo string
 		subscribeBox
 	}{
 		User:            u,
+		ReturnTo:        r.URL.RequestURI(),
 		FeedPage:        "/f/" + u.FeedToken,
 		CoverURL:        sessionCoverURL(u),
 		Episodes:        views,

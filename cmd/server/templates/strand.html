@@ -24,16 +24,19 @@
       <p class="muted" style="font-size:.9rem">You follow this strand at a bar of
       {{if eq .Bar 0}}zero — everything aired lands in your feed{{else}}{{.Bar}}{{end}}.</p>
       <form method="post" action="/me/follows/{{.Strand.ID}}" class="bar-form">
+        <input type="hidden" name="return" value="{{.ReturnTo}}">
         <label for="bar">Only deliver episodes with at least</label>
         <input id="bar" name="bar" type="number" min="0" max="10" value="{{.Bar}}" size="2">
         <span>vouches</span>
         <button class="quiet" type="submit">Save</button>
       </form>
       <form method="post" action="/me/follows/{{.Strand.ID}}/unfollow">
+        <input type="hidden" name="return" value="{{.ReturnTo}}">
         <button class="quiet" type="submit">Unfollow</button>
       </form>
       {{else if not .Strand.Retired}}
       <form method="post" action="/me/follows/{{.Strand.ID}}">
+        <input type="hidden" name="return" value="{{.ReturnTo}}">
         <button type="submit">Follow — into my own feed</button>
       </form>
       {{end}}
@@ -46,7 +49,7 @@
   </section>
   {{else}}
   {{range .Episodes}}
-  <section class="panel aired">
+  <section class="panel aired" id="airing-{{.Airing.ID}}">
     <h2>{{.Episode.Title}}</h2>
     <p class="eyebrow">{{.Author}} · {{.Episode.PublishedAt.Format "2 Jan 2006"}}</p>
     {{template "player" .Player}}
@@ -69,8 +72,12 @@
       {{end}}
     </p>
     {{if and $.SignedIn (not .Mine)}}
-    <form id="vouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}" hidden></form>
-    <form id="unvouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}/remove" hidden></form>
+    <form id="vouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}" hidden>
+      <input type="hidden" name="return" value="{{$.ReturnTo}}#airing-{{.Airing.ID}}">
+    </form>
+    <form id="unvouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}/remove" hidden>
+      <input type="hidden" name="return" value="{{$.ReturnTo}}#airing-{{.Airing.ID}}">
+    </form>
     {{end}}
   </section>
   {{end}}

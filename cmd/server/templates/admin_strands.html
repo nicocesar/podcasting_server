@@ -10,7 +10,7 @@
   {{with .Error}}<p class="error">{{.}}</p>{{end}}
 
   {{range .Strands}}
-  <section class="panel">
+  <section class="panel" id="strand-{{.ID}}">
     <p class="eyebrow">
       <code>{{.ID}}</code>
       {{if .Retired}} · retired{{else if not .CoverType}} · dormant, waiting for cover art{{end}}
@@ -18,6 +18,7 @@
     </p>
 
     <form method="post" action="/admin/strands/{{.ID}}">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
       <label>Title
         <input name="title" value="{{.Title}}" maxlength="60" required>
       </label>
@@ -28,6 +29,7 @@
     </form>
 
     <form class="art-gen" method="post" action="/admin/strands/{{.ID}}/cover/generate" data-art-preview>
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
       <img class="strand-art" width="120" height="120" data-art-target
            src="/admin/strands/cover/preview?text={{.ArtText}}"
            alt="What generated art for this strand would look like">
@@ -57,6 +59,7 @@
     <details class="art-upload">
       <summary>Or upload a file instead</summary>
       <form method="post" action="/admin/strands/{{.ID}}/cover" enctype="multipart/form-data">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
         {{if .CoverType}}
         <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="The art this strand has now"
              width="96" height="96">
@@ -73,15 +76,18 @@
     <p class="actions">
       {{if .Retired}}
       <form method="post" action="/admin/strands/{{.ID}}/unretire">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
         <button class="quiet" type="submit">Bring it back</button>
       </form>
       {{else}}
       <form method="post" action="/admin/strands/{{.ID}}/retire">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
         <button class="quiet" type="submit">Retire</button>
       </form>
       {{end}}
       {{if .Deletable}}
       <form method="post" action="/admin/strands/{{.ID}}/delete">
+        <input type="hidden" name="return" value="{{$.ReturnTo}}#strand-{{.ID}}">
         <button class="quiet danger" type="submit">Delete</button>
       </form>
       {{else}}

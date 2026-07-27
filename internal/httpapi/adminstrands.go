@@ -43,6 +43,9 @@ type adminStrandsPage struct {
 	// Accents and Icons are the pickers for generated art.
 	Accents []string
 	Icons   []string
+	// ReturnTo is this page, so an action lands back on the strand it
+	// touched rather than at the top of the canon (ADR 0022).
+	ReturnTo string
 }
 
 func (s *server) handleAdminStrands(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -79,11 +82,12 @@ func (s *server) renderAdminStrands(w http.ResponseWriter, r *http.Request, u st
 		})
 	}
 	s.render(w, r, status, s.tmplAdminStrands, adminStrandsPage{
-		User:    u,
-		Strands: rows,
-		Error:   msg,
-		Accents: coverart.AccentNames(),
-		Icons:   coverart.IconNames(),
+		User:     u,
+		Strands:  rows,
+		Error:    msg,
+		Accents:  coverart.AccentNames(),
+		Icons:    coverart.IconNames(),
+		ReturnTo: r.URL.RequestURI(),
 	})
 }
 
@@ -133,7 +137,7 @@ func (s *server) handleAdminStrandCreate(w http.ResponseWriter, r *http.Request,
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/admin/strands"), http.StatusSeeOther)
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -181,7 +185,7 @@ func (s *server) handleAdminStrandGenerateCover(w http.ResponseWriter, r *http.R
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/admin/strands"), http.StatusSeeOther)
 }
 
 // previewEdge is the size of the admin preview. Big enough to judge the
@@ -228,7 +232,7 @@ func (s *server) handleAdminStrandUpdate(w http.ResponseWriter, r *http.Request,
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/admin/strands"), http.StatusSeeOther)
 }
 
 // handleAdminStrandCover uploads the art, which is also what wakes a
@@ -266,7 +270,7 @@ func (s *server) handleAdminStrandCover(w http.ResponseWriter, r *http.Request, 
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/admin/strands"), http.StatusSeeOther)
 }
 
 // handleAdminStrandAction dispatches the three verbs that change a
@@ -297,7 +301,7 @@ func (s *server) setStrandRetired(w http.ResponseWriter, r *http.Request, retire
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/admin/strands"), http.StatusSeeOther)
 }
 
 // handleAdminStrandDelete removes an entry outright, and only when
@@ -323,7 +327,7 @@ func (s *server) handleAdminStrandDelete(w http.ResponseWriter, r *http.Request,
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/strands", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/admin/strands"), http.StatusSeeOther)
 }
 
 func (s *server) adminStrandOr404(w http.ResponseWriter, r *http.Request) (store.Strand, bool) {

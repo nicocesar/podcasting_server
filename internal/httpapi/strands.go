@@ -178,7 +178,7 @@ func (s *server) handleAir(w http.ResponseWriter, r *http.Request, u store.User)
 	// deliberately rather than a side effect of pressing air twice.
 	if have, err := s.store.GetAiringByEpisode(r.Context(), u.ID, slug); err == nil {
 		if have.Strand == strand {
-			s.redirectToEpisode(w, r, u, slug)
+			s.afterAiring(w, r, u, slug)
 			return
 		}
 		http.Error(w, "this episode is already on another strand — take it off the air first", http.StatusConflict)
@@ -210,7 +210,7 @@ func (s *server) handleAir(w http.ResponseWriter, r *http.Request, u store.User)
 				"user", u.ID, "episode", slug, "strand", strand, "err", err)
 		}
 	}
-	s.redirectToEpisode(w, r, u, slug)
+	s.afterAiring(w, r, u, slug)
 }
 
 // handleUnair takes the caller's own Episode off the air. Best effort by
@@ -227,7 +227,7 @@ func (s *server) handleUnair(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
-	s.redirectToEpisode(w, r, u, slug)
+	s.afterAiring(w, r, u, slug)
 }
 
 // handleAdminUnair is the takedown (ADR 0018). It is the only power an
@@ -251,7 +251,7 @@ func (s *server) handleAdminUnair(w http.ResponseWriter, r *http.Request, _ stor
 		// The airing is already gone, which is the part that mattered.
 		s.log.Error("un-aired an episode that is no longer there",
 			"owner", airing.OwnerID, "episode", airing.Slug, "err", err)
-		http.Redirect(w, r, "/admin/airings", http.StatusSeeOther)
+		http.Redirect(w, r, returnTo(r, "/strands/"+airing.Strand), http.StatusSeeOther)
 		return
 	}
 	ep.AirBarred = true
@@ -259,7 +259,7 @@ func (s *server) handleAdminUnair(w http.ResponseWriter, r *http.Request, _ stor
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/admin/airings", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/strands/"+airing.Strand), http.StatusSeeOther)
 }
 
 // handleVouch puts the caller's name to an Aired Episode. Never their
@@ -282,7 +282,7 @@ func (s *server) handleVouch(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/strands/"+airing.Strand, http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/strands/"+airing.Strand), http.StatusSeeOther)
 }
 
 // handleUnvouch takes the caller's name back off. It does not retract
@@ -298,7 +298,7 @@ func (s *server) handleUnvouch(w http.ResponseWriter, r *http.Request, u store.U
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/strands/"+airing.Strand, http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/strands/"+airing.Strand), http.StatusSeeOther)
 }
 
 // handleFollow starts or adjusts a Follow. The same handler sets the Bar,
@@ -337,7 +337,7 @@ func (s *server) handleFollow(w http.ResponseWriter, r *http.Request, u store.Us
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/strands/"+st.ID, http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/strands/"+st.ID), http.StatusSeeOther)
 }
 
 // handleUnfollow stops the deliveries. Unfollowing is the control here —
@@ -349,12 +349,13 @@ func (s *server) handleUnfollow(w http.ResponseWriter, r *http.Request, u store.
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/strands/"+strand, http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/strands/"+strand), http.StatusSeeOther)
 }
 
-// redirectToEpisode sends the browser back to the Episode Page it acted
-// from — the signed-in address, never the capability one, so a
-// listener's address bar never holds the key to their whole feed.
-func (s *server) redirectToEpisode(w http.ResponseWriter, r *http.Request, u store.User, slug string) {
-	http.Redirect(w, r, "/me/episodes/"+u.ID+"/"+slug, http.StatusSeeOther)
+// afterAiring sends the browser where the form asked to go (ADR 0022),
+// falling back to the Episode Page on its signed-in address — never the
+// capability one, so a listener's address bar never holds the key to
+// their whole feed.
+func (s *server) afterAiring(w http.ResponseWriter, r *http.Request, u store.User, slug string) {
+	http.Redirect(w, r, returnTo(r, "/me/episodes/"+u.ID+"/"+slug), http.StatusSeeOther)
 }

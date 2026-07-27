@@ -40,6 +40,9 @@ type beatsPage struct {
 	User  store.User
 	Beats []beatView
 	Max   int
+	// ReturnTo is this page, so pausing or cancelling lands back on the
+	// beat it touched rather than at the top of the list (ADR 0022).
+	ReturnTo string
 }
 
 // newBeat builds the Beat a form asked to repeat. The request fields are
@@ -105,7 +108,7 @@ func (s *server) handleBeats(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
-	s.render(w, r, http.StatusOK, s.tmplBeats, beatsPage{User: u, Beats: views, Max: maxBeatsPerUser})
+	s.render(w, r, http.StatusOK, s.tmplBeats, beatsPage{User: u, Beats: views, Max: maxBeatsPerUser, ReturnTo: r.URL.RequestURI()})
 	s.heartbeat(u)
 }
 
@@ -270,7 +273,7 @@ func (s *server) handleBeatUpdate(w http.ResponseWriter, r *http.Request, u stor
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/me/beats", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/me/beats"), http.StatusSeeOther)
 }
 
 // handleBeatPause stops a Beat without losing it.
@@ -284,7 +287,7 @@ func (s *server) handleBeatPause(w http.ResponseWriter, r *http.Request, u store
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/me/beats", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/me/beats"), http.StatusSeeOther)
 }
 
 // handleBeatResume restarts a Beat, re-phasing its clock to now. Coming
@@ -306,7 +309,7 @@ func (s *server) handleBeatResume(w http.ResponseWriter, r *http.Request, u stor
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/me/beats", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/me/beats"), http.StatusSeeOther)
 }
 
 // handleBeatCancel removes the Beat. Episodes it already published are
@@ -320,7 +323,7 @@ func (s *server) handleBeatCancel(w http.ResponseWriter, r *http.Request, u stor
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/me/beats", http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, "/me/beats"), http.StatusSeeOther)
 }
 
 // heartbeat brings the user's Beats up to date, off the request path.

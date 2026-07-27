@@ -65,6 +65,9 @@ type strandPage struct {
 	SignedIn  bool
 	Following bool
 	Bar       int
+	// ReturnTo is this page, so vouching or following lands back on the
+	// episode it acted on rather than at the top (ADR 0022).
+	ReturnTo string
 }
 
 // handleStrandsIndex lists the canon. This is the narrowing of ADR 0003
@@ -111,6 +114,7 @@ func (s *server) handleStrandPage(w http.ResponseWriter, r *http.Request) {
 		Episodes: views,
 		FeedURL:  s.base(r) + "/strands/" + st.ID + "/feed.xml",
 		SignedIn: signedIn,
+		ReturnTo: r.URL.RequestURI(),
 	}
 	if signedIn {
 		if f, err := s.followOf(r, viewer, st.ID); err == nil {

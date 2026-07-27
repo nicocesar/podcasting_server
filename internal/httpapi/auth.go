@@ -249,10 +249,36 @@ type loginPage struct {
 
 // localPath keeps ?next= redirects on this site.
 func localPath(next string) string {
-	if strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") {
+	if isLocalPath(next) {
 		return next
 	}
 	return "/me"
+}
+
+// isLocalPath reports whether v is a path on this site and nothing else.
+// "//host" is rejected because it is protocol-relative and leaves the
+// site; a control character is rejected because it is only ever an
+// attempt to write a second header.
+func isLocalPath(v string) bool {
+	if !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") {
+		return false
+	}
+	return !strings.ContainsAny(v, "\r\n\x00")
+}
+
+// returnTo is where a form said to send the browser once its action is
+// done (ADR 0022). A handler knows what it did, not where the reader
+// was when they asked for it — the same control now lives on more than
+// one page — so the form carries the address and the handler keeps its
+// old destination as the fallback.
+//
+// The value is attacker-controlled on an authenticated POST, so it is
+// constrained to a local path exactly as ?next= is on login.
+func returnTo(r *http.Request, fallback string) string {
+	if v := r.FormValue("return"); isLocalPath(v) {
+		return v
+	}
+	return fallback
 }
 
 func (s *server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
