@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -31,18 +32,33 @@ import (
 //go:embed templates static
 var assetsFS embed.FS
 
-// versionByte identifies the running build: "dev" locally; Cloud Build
-// overwrites the file with the commit SHA before the image is built, so
-// GET /version tells which deploy is live.
+// versionByte is the release the repo calls this: hand-bumped, and the
+// only one of the three build stamps that a person chose. Cloud Build
+// used to overwrite it with the commit SHA, which meant the number in
+// the file never reached production and there was no way to show the
+// release and the commit at the same time. It ships as written now, and
+// the commit arrives separately.
 //
 //go:embed version.txt
 var versionByte []byte
 
-// versionHandler serves the embedded build version as plain text.
+// commit and builtAt are stamped in at link time — see the ldflags in
+// the Dockerfile, fed by cloudbuild.yaml. Empty in a local `go build`,
+// which is the honest answer there: a working tree is not a build.
+var (
+	commit  string
+	builtAt string // RFC3339, UTC
+)
+
+// versionHandler serves the identifier of the running deploy as plain
+// text. It answers the commit, not the release: this endpoint exists to
+// tell which build is live, and two deploys of one release have to be
+// distinguishable. Falls back to the release when there is no commit,
+// so a local build still answers something.
 func versionHandler(version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintln(w, version)
+		fmt.Fprintln(w, cmp.Or(commit, version))
 	}
 }
 
@@ -223,6 +239,8 @@ func run(log *slog.Logger) error {
 		Generator:          generator,
 		AnthropicAdminKey:  adminKey,
 		Version:            version,
+		Commit:             commit,
+		BuiltAt:            builtAt,
 	})
 	if err != nil {
 		return err

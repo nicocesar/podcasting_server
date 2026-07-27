@@ -17,9 +17,10 @@ docker:
 
 # Build and deploy via Cloud Build (see cloudbuild.yaml and SETUP.md).
 # Manual submits carry no git context, so feed SHORT_SHA from local git:
-# cloudbuild.yaml stamps it into version.txt and tags the image with it,
-# and GET /version then reports the deployed commit. Trigger builds get
-# SHORT_SHA for free; this only matters for `make deploy`.
+# it tags the image, is linked into the binary as the commit, and GET
+# /version then reports the deployed commit. _BUILT_AT rides along for
+# the dashboard's build stamp. Trigger builds get SHORT_SHA for free and
+# fall back to the builder's clock for the timestamp.
 deploy:
 	gcloud builds submit --config cloudbuild.yaml \
-		--substitutions=SHORT_SHA=$$(git rev-parse --short HEAD)
+		--substitutions=SHORT_SHA=$$(git rev-parse --short HEAD),_BUILT_AT=$$(date -u +%Y-%m-%dT%H:%M:%SZ)

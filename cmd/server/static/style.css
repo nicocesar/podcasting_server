@@ -1008,3 +1008,23 @@ footer.colophon {
   border-radius: 2px;
   background: var(--accent);
 }
+
+/* ── Build stamp ───────────────────────────────────────────────────────
+   What you are running, for the day something is wrong. Barely there on
+   purpose: it must cost nothing to ignore, and it follows the theme
+   because --muted already does. */
+.buildstamp {
+  margin: 0.25rem 0 0;
+  padding: 0 0.25rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--muted);
+  opacity: 0.45;
+}
+.buildstamp:hover { opacity: 0.9; }
+.buildstamp code { font-size: 0.95em; }
+.buildstamp time { cursor: help; }

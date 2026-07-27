@@ -77,6 +77,19 @@
     </section>
     {{end}}
 
+    {{/* What you are actually running. Deliberately almost invisible:
+         it answers a question nobody asks until something is wrong, and
+         it should cost nothing to ignore. The relative time is filled in
+         by the browser, because the reader's clock is the only one that
+         can say "2 days ago" correctly and a server-rendered one would
+         be wrong the moment the page is cached. */}}
+    {{with .Build}}{{if .Known}}
+    <p class="buildstamp">
+      {{with .Version}}<span>{{.}}</span>{{end}}
+      {{with .Commit}}<code>{{.}}</code>{{end}}
+      {{with .BuiltAt}}<time datetime="{{.}}">{{.}}</time>{{end}}
+    </p>
+    {{end}}{{end}}
   </aside>
 
   <section class="log">
@@ -193,6 +206,30 @@
 </div>
 
 <script>
+// The build stamp's timestamp, read on the reader's own clock: "2 days
+// ago" in their locale, with the full local date and time in the
+// tooltip. Done here rather than on the server because only the browser
+// knows the timezone, and a server-rendered relative time starts going
+// stale the moment it is sent.
+(function () {
+  const el = document.querySelector(".buildstamp time[datetime]");
+  if (!el) return;
+  const when = new Date(el.dateTime);
+  if (isNaN(when.getTime())) return;
+  el.title = when.toLocaleString(undefined, {dateStyle: "full", timeStyle: "long"});
+  const secs = Math.round((when.getTime() - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, {numeric: "auto"});
+  const units = [["year", 31536000], ["month", 2592000], ["week", 604800],
+                 ["day", 86400], ["hour", 3600], ["minute", 60]];
+  for (const [unit, size] of units) {
+    if (Math.abs(secs) >= size) {
+      el.textContent = rtf.format(Math.round(secs / size), unit);
+      return;
+    }
+  }
+  el.textContent = rtf.format(secs, "second");
+})();
+
 async function api(path, opts = {}) {
   if (opts.body) opts.headers = {"Content-Type": "application/json"};
   const r = await fetch(path, opts);

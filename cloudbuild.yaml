@@ -17,6 +17,10 @@ substitutions:
   # update the same service with the same image lineage.
   _IMAGE: us-east4-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/podcasting_server/podcasting-server
   _CACHE_IMAGE: us-east4-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/podcasting_server/podcasting-server:buildcache
+  # Empty for trigger builds, which have no easy timestamp; the
+  # Dockerfile falls back to the builder's own clock, so the stamp is
+  # right either way. `make deploy` fills it from the local clock.
+  _BUILT_AT: ""
   _SERVICE: podcasting-server
   _REGION: us-east4
 
@@ -31,12 +35,14 @@ steps:
         echo "SHORT_SHA=${SHORT_SHA}"
         echo "_IMAGE=${_IMAGE}"
         echo "_CACHE_IMAGE=${_CACHE_IMAGE}"
-        # Stamp the build so GET /version reports which deploy is live
-        # (the file is go:embed-ded into the binary). Manual submits have
-        # no SHORT_SHA — keep the repo's hand-bumped version.txt then.
-        if [ -n "${SHORT_SHA}" ]; then
-          echo "${SHORT_SHA}" > cmd/server/version.txt
-        fi
+        echo "_BUILT_AT=${_BUILT_AT}"
+        # This step used to overwrite cmd/server/version.txt with
+        # ${SHORT_SHA}, which meant the hand-bumped release number never
+        # reached production and the release and the commit could not
+        # both be shown. version.txt ships as written now; the commit and
+        # the build time go in through the linker (see the Dockerfile).
+        # GET /version still answers the commit — it reports which deploy
+        # is live — it just reads it from the linker instead of the file.
 
   # Create & bootstrap a buildx builder (BuildKit)
   - name: gcr.io/cloud-builders/docker
@@ -51,6 +57,12 @@ steps:
       - buildx
       - build
       - --tag=${_IMAGE}:${SHORT_SHA}
+      # The build stamp the dashboard shows. Plain substitutions, no
+      # shell: a $(...) in this file would be read by Cloud Build before
+      # any shell sees it, and the first place that would surface is a
+      # failed deploy.
+      - --build-arg=COMMIT=${SHORT_SHA}
+      - --build-arg=BUILT_AT=${_BUILT_AT}
       - --cache-from=type=registry,ref=${_CACHE_IMAGE}
       - --cache-to=type=registry,ref=${_CACHE_IMAGE},mode=max
       - --push

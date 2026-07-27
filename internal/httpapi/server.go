@@ -79,9 +79,15 @@ type Config struct {
 	AnthropicAdminKey string
 	// AnthropicAdminBaseURL overrides the Admin API host (tests only).
 	AnthropicAdminBaseURL string
-	// Version is the running build (cmd/server embeds version.txt); the
-	// Dashboard shows it so users can tell which release they are on.
+	// Version is the release this build calls itself: the hand-bumped
+	// number in cmd/server/version.txt.
 	Version string
+	// Commit and BuiltAt are stamped in at link time and are empty in a
+	// local build. Together with Version they are the three answers to
+	// "what exactly am I looking at" — the release a person chose, the
+	// commit it was cut from, and when the image was made.
+	Commit  string
+	BuiltAt string // RFC3339, UTC
 }
 
 type server struct {
@@ -94,6 +100,8 @@ type server struct {
 	generator     *generation.Runner
 	adminAPI      *anthropicAdmin
 	version       string
+	commit        string
+	builtAt       string
 	assetVersion  string // content hash of style.css; cache-busts the stylesheet URL
 
 	tmplHome       *template.Template
@@ -135,6 +143,8 @@ func New(cfg Config) (http.Handler, error) {
 		generator:     cfg.Generator,
 		adminAPI:      newAnthropicAdmin(cfg.AnthropicAdminKey, cfg.AnthropicAdminBaseURL),
 		version:       cfg.Version,
+		commit:        cfg.Commit,
+		builtAt:       cfg.BuiltAt,
 	}
 	if cfg.GoogleClientID != "" && cfg.GoogleClientSecret != "" {
 		s.google = &googleOIDC{
@@ -1171,10 +1181,12 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		// all, so an action lands them back where they were rather than
 		// at the top of an unfiltered log (ADR 0022).
 		ReturnTo string
+		Build    buildStamp
 		subscribeBox
 	}{
 		User:            u,
 		ReturnTo:        r.URL.RequestURI(),
+		Build:           s.buildStamp(),
 		FeedPage:        "/f/" + u.FeedToken,
 		CoverURL:        sessionCoverURL(u),
 		Episodes:        views,

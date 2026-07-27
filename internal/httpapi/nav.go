@@ -87,6 +87,29 @@ func (s *server) navFor(r *http.Request) navView {
 	}
 }
 
+// buildStamp is the three-part answer to "what exactly am I running":
+// the release someone chose, the commit it was cut from, and when the
+// image was built. Only the release is guaranteed — a local `go build`
+// has no commit and no build time, and says so by omitting them rather
+// than inventing values.
+type buildStamp struct {
+	Version string
+	Commit  string
+	// BuiltAt is RFC3339 UTC, for the <time datetime> attribute. The
+	// browser turns it into "2 days ago" and a local-time tooltip: the
+	// reader's clock is the only one that can do that correctly, and a
+	// server-rendered relative time is stale the moment it is cached.
+	BuiltAt string
+}
+
+// Known reports whether there is anything worth showing. False for a
+// working tree, where a version stamp would be theatre.
+func (b buildStamp) Known() bool { return b.Version != "" || b.Commit != "" }
+
+func (s *server) buildStamp() buildStamp {
+	return buildStamp{Version: s.version, Commit: s.commit, BuiltAt: s.builtAt}
+}
+
 // airRowView is everything the airing control needs, and nothing else.
 // It is self-contained on purpose: the Dashboard and the Episode Page
 // both render the same fragment from one of these, so the two surfaces
