@@ -1,14 +1,13 @@
 package fsstore
 
-// The public side on disk. Three global files beside invites.json — the
-// canon, the airings, and the vouches — plus a follows.json per user,
-// which sits next to that user's shares.json because a Follow is the
-// third kind of reference in their feed.
+// The public side on disk. Two global files beside invites.json — the
+// canon and the airings — plus a follows.json per user, which sits next
+// to that user's shares.json because a Follow is the third kind of
+// reference in their feed.
 //
 //	root/
 //	├── strands.json                the canon
 //	├── airings.json                every airing, keyed by public id
-//	├── vouches.json                every vouch
 //	├── strands/
 //	│   └── tech-news/
 //	│       ├── cover.jpg
@@ -29,7 +28,6 @@ import (
 const (
 	strandsFile = "strands.json"
 	airingsFile = "airings.json"
-	vouchesFile = "vouches.json"
 	followsFile = "follows.json"
 	strandsDir  = "strands"
 )
@@ -225,10 +223,7 @@ func (s *Store) DeleteAiring(ctx context.Context, id string) error {
 	if len(kept) == len(all) {
 		return store.ErrNotFound
 	}
-	if err := s.writeAirings(kept); err != nil {
-		return err
-	}
-	return s.removeVouches(func(v store.Vouch) bool { return v.AiringID == id })
+	return s.writeAirings(kept)
 }
 
 func (s *Store) ListAirings(_ context.Context, strand string) ([]store.Airing, error) {
@@ -254,111 +249,24 @@ func (s *Store) listAirings(keep func(store.Airing) bool) ([]store.Airing, error
 	return out, nil
 }
 
-// removeAirings drops every airing matching drop, and their vouches. It
-// is how an Owner's delete reaches the public surface (ADR 0006: the
-// delete propagates everywhere, with no tombstone).
+// removeAirings drops every airing matching drop. It is how an Owner's
+// delete reaches the public surface (ADR 0006: the delete propagates
+// everywhere, with no tombstone).
 func (s *Store) removeAirings(drop func(store.Airing) bool) error {
 	all, err := s.readAirings()
 	if err != nil {
 		return err
 	}
 	kept := all[:0]
-	var dropped []string
 	for _, a := range all {
-		if drop(a) {
-			dropped = append(dropped, a.ID)
-			continue
-		}
-		kept = append(kept, a)
-	}
-	if len(dropped) == 0 {
-		return nil
-	}
-	if err := s.writeAirings(kept); err != nil {
-		return err
-	}
-	gone := make(map[string]bool, len(dropped))
-	for _, id := range dropped {
-		gone[id] = true
-	}
-	return s.removeVouches(func(v store.Vouch) bool { return gone[v.AiringID] })
-}
-
-// --- vouches ---
-
-func (s *Store) readVouches() ([]store.Vouch, error) {
-	var out []store.Vouch
-	err := readJSON(filepath.Join(s.root, vouchesFile), &out)
-	if err != nil && err != store.ErrNotFound {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (s *Store) writeVouches(all []store.Vouch) error {
-	return writeJSON(filepath.Join(s.root, vouchesFile), all)
-}
-
-func (s *Store) AddVouch(_ context.Context, v store.Vouch) error {
-	all, err := s.readVouches()
-	if err != nil {
-		return err
-	}
-	for _, have := range all {
-		if have.AiringID == v.AiringID && have.UserID == v.UserID {
-			return nil // vouching twice says nothing twice
-		}
-	}
-	return s.writeVouches(append(all, v))
-}
-
-func (s *Store) RemoveVouch(_ context.Context, airingID, userID string) error {
-	all, err := s.readVouches()
-	if err != nil {
-		return err
-	}
-	kept := all[:0]
-	for _, have := range all {
-		if have.AiringID != airingID || have.UserID != userID {
-			kept = append(kept, have)
-		}
-	}
-	if len(kept) == len(all) {
-		return store.ErrNotFound
-	}
-	return s.writeVouches(kept)
-}
-
-func (s *Store) ListVouches(_ context.Context, airingID string) ([]store.Vouch, error) {
-	all, err := s.readVouches()
-	if err != nil {
-		return nil, err
-	}
-	var out []store.Vouch
-	for _, v := range all {
-		if v.AiringID == airingID {
-			out = append(out, v)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
-	return out, nil
-}
-
-func (s *Store) removeVouches(drop func(store.Vouch) bool) error {
-	all, err := s.readVouches()
-	if err != nil {
-		return err
-	}
-	kept := all[:0]
-	for _, v := range all {
-		if !drop(v) {
-			kept = append(kept, v)
+		if !drop(a) {
+			kept = append(kept, a)
 		}
 	}
 	if len(kept) == len(all) {
 		return nil
 	}
-	return s.writeVouches(kept)
+	return s.writeAirings(kept)
 }
 
 // --- follows ---

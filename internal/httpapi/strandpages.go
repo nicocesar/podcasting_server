@@ -20,7 +20,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/nicocesar/podcasting_server/internal/feed"
 	"github.com/nicocesar/podcasting_server/internal/store"
@@ -47,14 +46,7 @@ type airedView struct {
 	Airing  store.Airing
 	Episode store.Episode
 	Author  string
-	Vouches []store.Vouch
-	// Vouched marks the signed-in viewer's own vouch, so the button can
-	// say what pressing it will do.
-	Vouched bool
-	// Mine is true for the viewer's own Episode: a Vouch is never for
-	// your own (ADR 0019), so the control is not offered at all.
-	Mine   bool
-	Player playerView
+	Player  playerView
 }
 
 // strandPage is the template data for /strands/{strand}.
@@ -64,14 +56,13 @@ type strandPage struct {
 	FeedURL   string
 	SignedIn  bool
 	Following bool
-	Bar       int
-	// ReturnTo is this page, so vouching or following lands back on the
-	// episode it acted on rather than at the top (ADR 0022).
+	// ReturnTo is this page, so following lands back on the episode it
+	// acted on rather than at the top (ADR 0022).
 	ReturnTo string
 	// Admin offers the takedown inline (ADR 0023). This is a page on the
 	// Public Surface that renders a control only some readers may use —
 	// safe because a signed-in rendering is never publicly cached, which
-	// this page already had to arrange for vouch and follow state.
+	// this page already had to arrange for mute and follow state.
 	Admin bool
 }
 
@@ -123,11 +114,11 @@ func (s *server) handleStrandPage(w http.ResponseWriter, r *http.Request) {
 	}
 	if signedIn {
 		data.Admin = viewer.Admin
-		if f, err := s.followOf(r, viewer, st.ID); err == nil {
-			data.Following, data.Bar = true, f.Bar
+		if _, err := s.followOf(r, viewer, st.ID); err == nil {
+			data.Following = true
 		}
 	}
-	// Signed-in pages are per-viewer (mute, vouch state), so they must
+	// Signed-in pages are per-viewer (mute, follow state), so they must
 	// not land in a shared cache.
 	if signedIn {
 		w.Header().Set("Cache-Control", "private, no-store")
@@ -146,10 +137,6 @@ func (s *server) airedViews(r *http.Request, st store.Strand, viewer store.User,
 	if err != nil {
 		return nil, err
 	}
-	// Reading a Strand is the traffic settling rides on (ADR 0016's
-	// pattern): an Airing whose day is up has its Vouch count frozen
-	// here rather than by a scheduler nobody runs.
-	airings = s.settleDue(r, airings)
 	muted := map[string]bool{}
 	if signedIn {
 		for _, id := range viewer.Mutes {
@@ -180,16 +167,10 @@ func (s *server) airedViews(r *http.Request, st store.Strand, viewer store.User,
 		if err != nil {
 			return nil, err
 		}
-		vouches, err := s.store.ListVouches(r.Context(), a.ID)
-		if err != nil {
-			return nil, err
-		}
 		v := airedView{
 			Airing:  a,
 			Episode: ep,
 			Author:  owner.Title,
-			Vouches: vouches,
-			Mine:    signedIn && a.OwnerID == viewer.ID,
 			Player: playerView{
 				AudioURL: "/strands/" + st.ID + "/" + a.ID + ".mp3",
 				Title:    ep.Title,
@@ -200,14 +181,6 @@ func (s *server) airedViews(r *http.Request, st store.Strand, viewer store.User,
 				Key:      a.ID,
 				CoverURL: "/strands/" + st.ID + "/cover",
 			},
-		}
-		if signedIn {
-			for _, vo := range vouches {
-				if vo.UserID == viewer.ID {
-					v.Vouched = true
-					break
-				}
-			}
 		}
 		views = append(views, v)
 	}
@@ -327,28 +300,4 @@ func (s *server) followOf(r *http.Request, u store.User, strand string) (store.F
 		}
 	}
 	return store.Follow{}, store.ErrNotFound
-}
-
-// settleDue freezes the Vouch count of every Airing whose day is up.
-// Settling needs no scheduler: as with Beats (ADR 0016), the work rides
-// on the traffic that reads it.
-func (s *server) settleDue(r *http.Request, airings []store.Airing) []store.Airing {
-	now := time.Now().UTC()
-	for i, a := range airings {
-		if !a.Settleable(now) {
-			continue
-		}
-		vouches, err := s.store.ListVouches(r.Context(), a.ID)
-		if err != nil {
-			s.log.Error("could not settle an airing", "airing", a.ID, "err", err)
-			continue
-		}
-		a.Settled, a.VouchesAtSettle = true, len(vouches)
-		if err := s.store.PutAiring(r.Context(), a); err != nil {
-			s.log.Error("could not settle an airing", "airing", a.ID, "err", err)
-			continue
-		}
-		airings[i] = a
-	}
-	return airings
 }

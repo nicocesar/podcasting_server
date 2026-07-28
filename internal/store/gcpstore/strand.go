@@ -19,16 +19,11 @@ import (
 const (
 	kindStrand = "Strand"
 	kindAiring = "Airing"
-	kindVouch  = "Vouch"
 	kindFollow = "Follow"
 )
 
 func strandKey(id string) *datastore.Key { return datastore.NameKey(kindStrand, id, nil) }
 func airingKey(id string) *datastore.Key { return datastore.NameKey(kindAiring, id, nil) }
-
-func vouchKey(airingID, userID string) *datastore.Key {
-	return datastore.NameKey(kindVouch, airingID+"/"+userID, nil)
-}
 
 func followKey(userID, strand string) *datastore.Key {
 	return datastore.NameKey(kindFollow, userID+"/"+strand, nil)
@@ -171,10 +166,7 @@ func (s *Store) DeleteAiring(ctx context.Context, id string) error {
 	if _, err := s.GetAiring(ctx, id); err != nil {
 		return err
 	}
-	if err := s.ds.Delete(ctx, airingKey(id)); err != nil {
-		return err
-	}
-	return s.deleteQuery(ctx, datastore.NewQuery(kindVouch).FilterField("airing_id", "=", id).KeysOnly())
+	return s.ds.Delete(ctx, airingKey(id))
 }
 
 func (s *Store) ListAirings(ctx context.Context, strand string) ([]store.Airing, error) {
@@ -197,38 +189,6 @@ func (s *Store) listAirings(ctx context.Context, q *datastore.Query) ([]store.Ai
 	sort.Slice(out, func(i, j int) bool { return out[i].AiredAt.After(out[j].AiredAt) })
 	if out == nil {
 		out = []store.Airing{}
-	}
-	return out, nil
-}
-
-// --- vouches ---
-
-func (s *Store) AddVouch(ctx context.Context, v store.Vouch) error {
-	_, err := s.ds.Put(ctx, vouchKey(v.AiringID, v.UserID), &v)
-	return err
-}
-
-func (s *Store) RemoveVouch(ctx context.Context, airingID, userID string) error {
-	key := vouchKey(airingID, userID)
-	var v store.Vouch
-	if err := s.ds.Get(ctx, key, &v); err != nil {
-		if errors.Is(err, datastore.ErrNoSuchEntity) {
-			return store.ErrNotFound
-		}
-		return err
-	}
-	return s.ds.Delete(ctx, key)
-}
-
-func (s *Store) ListVouches(ctx context.Context, airingID string) ([]store.Vouch, error) {
-	var out []store.Vouch
-	q := datastore.NewQuery(kindVouch).FilterField("airing_id", "=", airingID)
-	if _, err := s.ds.GetAll(ctx, q, &out); err != nil {
-		return nil, err
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
-	if out == nil {
-		out = []store.Vouch{}
 	}
 	return out, nil
 }

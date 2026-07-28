@@ -188,9 +188,7 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 		datastore.NewQuery(kindGeneration).FilterField("user_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindBeat).FilterField("user_id", "=", id).KeysOnly(),
 		datastore.NewQuery(kindAPIKey).FilterField("user_id", "=", id).KeysOnly(),
-		// The vouches they gave stop counting toward anyone's Bar, and
-		// the strands they followed stop delivering (ADR 0019).
-		datastore.NewQuery(kindVouch).FilterField("user_id", "=", id).KeysOnly(),
+		// The strands they followed stop delivering (ADR 0019).
 		datastore.NewQuery(kindFollow).FilterField("user_id", "=", id).KeysOnly(),
 	} {
 		keys, err := s.ds.GetAll(ctx, q, nil)
@@ -201,7 +199,7 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 			return err
 		}
 	}
-	// Everything they had on the air comes off it, vouches included.
+	// Everything they had on the air comes off it.
 	if err := s.removeOwnerAirings(ctx, id, func(store.Airing) bool { return true }); err != nil {
 		return err
 	}
@@ -506,7 +504,7 @@ func (s *Store) DeleteEpisode(ctx context.Context, ownerID, slug string) error {
 }
 
 // removeOwnerAirings un-Airs every one of the owner's airings that drop
-// accepts, taking each one's vouches with it.
+// accepts.
 func (s *Store) removeOwnerAirings(ctx context.Context, ownerID string, drop func(store.Airing) bool) error {
 	airings, err := s.ListAiringsByOwner(ctx, ownerID)
 	if err != nil {

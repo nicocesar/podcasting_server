@@ -5,12 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
 // get fetches a URL with no credentials at all — the way a stranger or a
@@ -224,51 +220,5 @@ func TestMuteReachesTheStrandPage(t *testing.T) {
 	body, _ := io.ReadAll(seen.Body)
 	if strings.Contains(string(body), "ep1") {
 		t.Fatalf("a muted owner's episode is on the strand page:\n%s", body)
-	}
-}
-
-// TestSettlingRidesOnTraffic: reading a Strand freezes the Vouch count
-// of anything whose day is up, with no scheduler anywhere (ADR 0016's
-// pattern, ADR 0019's rule).
-func TestSettlingRidesOnTraffic(t *testing.T) {
-	ts, st := newStrandServer(t)
-	putStrand(t, st, "music", true, false)
-	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bobby")
-	id := airedEpisode(t, ts, st, alice, "ep1", "music")
-
-	// Bob vouches, then the airing is backdated past its settling day.
-	postForm(t, ts, bob.sessionCreds(), "/me/vouches/"+id, url.Values{}).Body.Close()
-	airing, err := st.GetAiring(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	airing.AiredAt = time.Now().UTC().Add(-store.SettleWindow - time.Hour)
-	if err := st.PutAiring(context.Background(), airing); err != nil {
-		t.Fatal(err)
-	}
-
-	get(t, ts, "/strands/music") // the traffic that settles it
-
-	airing, err = st.GetAiring(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !airing.Settled || airing.VouchesAtSettle != 1 {
-		t.Fatalf("airing = settled %v with %d vouches; want settled with 1",
-			airing.Settled, airing.VouchesAtSettle)
-	}
-
-	// A later vouch is displayed but does not change the frozen count:
-	// feeds must not flap (ADR 0019).
-	carol := createUser(t, ts, "carol")
-	postForm(t, ts, carol.sessionCreds(), "/me/vouches/"+id, url.Values{}).Body.Close()
-	get(t, ts, "/strands/music")
-	airing, _ = st.GetAiring(context.Background(), id)
-	if airing.VouchesAtSettle != 1 {
-		t.Errorf("the frozen count moved to %d after settling", airing.VouchesAtSettle)
-	}
-	if v, _ := st.ListVouches(context.Background(), id); len(v) != 2 {
-		t.Errorf("the later vouch was not recorded for display: %+v", v)
 	}
 }

@@ -245,14 +245,6 @@ remains the Owner's, and the Owner's replace or delete propagates to every
 feed referencing it.
 _Avoid_: send, forward, repost
 
-**Vouch**:
-One signed-in User putting their name to one Aired Episode: public,
-attributed by feed title, and never for one's own Episode. Not a vote —
-there is no ranking, no score and no ordering by it. At the size of this
-station a Vouch says "this one is worth your time", and one of them is
-worth more than a tally would be.
-_Avoid_: vote, like, upvote, rating
-
 **Follow**:
 A User's standing choice to have a Strand's Aired Episodes delivered into
 their Personal Feed. The third kind of reference a Personal Feed holds,
@@ -260,23 +252,6 @@ after the User's own Episodes and their Shares — and unlike a Share it
 has no Sharer, because nobody chose to send it. Unfollowing is the
 control; Block and Mute are not overloaded to do this job.
 _Avoid_: subscribe (that's a podcast client and a feed URL), watch
-
-**Bar**:
-The number of Vouches an Episode must carry before a Follow delivers it:
-zero for everything Aired, one — the default — for whatever somebody
-vouched for, higher for a Strand that has become noisy. Set per Follow,
-so the same Strand can be a firehose for one listener and a trickle for
-another.
-_Avoid_: threshold, score, filter
-
-**Settling**:
-The day between Airing and eligibility, during which Vouches accumulate.
-When it ends the Vouch count is frozen onto the Airing and the delivery
-question is answered once and for all: above the Bar it goes out, below
-it never does. Later Vouches still show, but they no longer deliver —
-because nothing may be inserted into a listener's past, and re-dating an
-Episode would misdate the news inside it.
-_Avoid_: cooldown, delay, embargo
 
 **Block**:
 A recipient control: Shares from a Blocked User never enter my Personal
@@ -382,8 +357,8 @@ Invite), a Session, or an API Key. Strands are enumerable and are meant
 to be; Users and Personal Feeds are not, which is why an Aired Episode
 is addressed by an opaque Airing id and never by its Owner's username.
 Reachable by anyone does not mean identical for everyone: a Strand Page
-renders controls that depend on who is reading it — Follow and its bar,
-Vouch, and the admin takedown — while serving the same Episodes to all.
+renders controls that depend on who is reading it — Follow, Mute, and
+the admin takedown — while serving the same Episodes to all.
 A signed-in rendering is never publicly cached, which is what keeps the
 difference safe (ADR 0023).
 _Avoid_: public site, anonymous access

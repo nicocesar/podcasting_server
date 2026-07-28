@@ -21,15 +21,8 @@
 
     {{if .SignedIn}}
       {{if .Following}}
-      <p class="muted" style="font-size:.9rem">You follow this strand at a bar of
-      {{if eq .Bar 0}}zero — everything aired lands in your feed{{else}}{{.Bar}}{{end}}.</p>
-      <form method="post" action="/me/follows/{{.Strand.ID}}" class="bar-form">
-        <input type="hidden" name="return" value="{{.ReturnTo}}">
-        <label for="bar">Only deliver episodes with at least</label>
-        <input id="bar" name="bar" type="number" min="0" max="10" value="{{.Bar}}" size="2">
-        <span>vouches</span>
-        <button class="quiet" type="submit">Save</button>
-      </form>
+      <p class="muted" style="font-size:.9rem">You follow this strand —
+      everything aired here lands in your feed.</p>
       <form method="post" action="/me/follows/{{.Strand.ID}}/unfollow">
         <input type="hidden" name="return" value="{{.ReturnTo}}">
         <button class="quiet" type="submit">Unfollow</button>
@@ -55,41 +48,18 @@
     {{template "player" .Player}}
     {{if .Episode.Description}}<p class="muted">{{.Episode.Description}}</p>{{end}}
 
+    {{if $.Admin}}
     <p class="actions">
-      {{if .Vouches}}
-      <span class="muted">Vouched for by
-        {{range $i, $v := .Vouches}}{{if $i}}, {{end}}{{$v.UserID}}{{end}}</span>
-      {{else}}
-      <span class="muted">No vouches yet</span>
-      {{end}}
-
-      {{if and $.SignedIn (not .Mine)}}
-        {{if .Vouched}}
-        <button class="quiet" type="submit" form="unvouch-{{.Airing.ID}}">Take back my vouch</button>
-        {{else}}
-        <button class="quiet" type="submit" form="vouch-{{.Airing.ID}}">Vouch for this</button>
-        {{end}}
-      {{end}}
-
       {{/* The takedown (ADR 0023). It lives here rather than on an admin
            index because this is the page you are reading when you decide
            something should stop being public. Guarded server-side by
            adminUser — this is a door, not the lock. */}}
-      {{if $.Admin}}
       <form method="post" action="/admin/airings/{{.Airing.ID}}/unair">
         <input type="hidden" name="return" value="{{$.ReturnTo}}#airing-{{.Airing.ID}}">
         <button class="quiet danger" type="submit"
                 title="End this airing. The episode stays in its owner's feed; only the publicness stops.">Take off the air</button>
       </form>
-      {{end}}
     </p>
-    {{if and $.SignedIn (not .Mine)}}
-    <form id="vouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}" hidden>
-      <input type="hidden" name="return" value="{{$.ReturnTo}}#airing-{{.Airing.ID}}">
-    </form>
-    <form id="unvouch-{{.Airing.ID}}" method="post" action="/me/vouches/{{.Airing.ID}}/remove" hidden>
-      <input type="hidden" name="return" value="{{$.ReturnTo}}#airing-{{.Airing.ID}}">
-    </form>
     {{end}}
   </section>
   {{end}}

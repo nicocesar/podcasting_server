@@ -155,9 +155,6 @@ func TestDeleteEpisodeUnAirs(t *testing.T) {
 	s, ctx := newStrandStore(t)
 	mustEpisode(t, s, ctx, "alice", "2026-07-25-morning")
 	mustAir(t, s, ctx, "aaaa111111", "alice", "2026-07-25-morning", "tech-news", time.Now().UTC())
-	if err := s.AddVouch(ctx, store.Vouch{AiringID: "aaaa111111", UserID: "bob", At: time.Now().UTC()}); err != nil {
-		t.Fatal(err)
-	}
 
 	if err := s.DeleteEpisode(ctx, "alice", "2026-07-25-morning"); err != nil {
 		t.Fatal(err)
@@ -165,26 +162,16 @@ func TestDeleteEpisodeUnAirs(t *testing.T) {
 	if _, err := s.GetAiring(ctx, "aaaa111111"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("airing survived the episode delete: %v", err)
 	}
-	vouches, err := s.ListVouches(ctx, "aaaa111111")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(vouches) != 0 {
-		t.Fatalf("vouches survived the episode delete: %+v", vouches)
-	}
 }
 
 // TestDeleteUserUnAirs: deleting a user takes their airings off the air
-// and stops their vouches counting toward anyone else's Bar.
+// and leaves everyone else's alone.
 func TestDeleteUserUnAirs(t *testing.T) {
 	s, ctx := newStrandStore(t)
 	mustEpisode(t, s, ctx, "alice", "ep1")
 	mustEpisode(t, s, ctx, "bob", "ep2")
 	mustAir(t, s, ctx, "aaaa111111", "alice", "ep1", "music", time.Now().UTC())
 	mustAir(t, s, ctx, "bbbb222222", "bob", "ep2", "music", time.Now().UTC())
-	if err := s.AddVouch(ctx, store.Vouch{AiringID: "bbbb222222", UserID: "alice"}); err != nil {
-		t.Fatal(err)
-	}
 
 	if err := s.DeleteUser(ctx, "alice"); err != nil {
 		t.Fatal(err)
@@ -192,83 +179,39 @@ func TestDeleteUserUnAirs(t *testing.T) {
 	if _, err := s.GetAiring(ctx, "aaaa111111"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("deleted user's airing survived: %v", err)
 	}
-	vouches, err := s.ListVouches(ctx, "bbbb222222")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(vouches) != 0 {
-		t.Fatalf("deleted user's vouch still counts: %+v", vouches)
-	}
 	if _, err := s.GetAiring(ctx, "bbbb222222"); err != nil {
 		t.Fatalf("bob's airing should be untouched: %v", err)
 	}
 }
 
-// TestUnAirDropsVouches: re-airing mints a new id, so a vouch left
-// behind under the old one would be a ghost nobody can remove.
-func TestUnAirDropsVouches(t *testing.T) {
+// TestUnAirRemovesTheAiring: an un-air is what makes a re-air mint a
+// new id, so the old one must really be gone and stay gone.
+func TestUnAirRemovesTheAiring(t *testing.T) {
 	s, ctx := newStrandStore(t)
 	mustEpisode(t, s, ctx, "alice", "ep1")
 	mustAir(t, s, ctx, "aaaa111111", "alice", "ep1", "music", time.Now().UTC())
-	if err := s.AddVouch(ctx, store.Vouch{AiringID: "aaaa111111", UserID: "bob"}); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.DeleteAiring(ctx, "aaaa111111"); err != nil {
 		t.Fatal(err)
 	}
-	vouches, err := s.ListVouches(ctx, "aaaa111111")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(vouches) != 0 {
-		t.Fatalf("vouches outlived the airing: %+v", vouches)
+	if _, err := s.GetAiring(ctx, "aaaa111111"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("GetAiring after un-air = %v, want ErrNotFound", err)
 	}
 	if err := s.DeleteAiring(ctx, "aaaa111111"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second DeleteAiring = %v, want ErrNotFound", err)
 	}
 }
 
-// TestVouchIsIdempotent: a Vouch is one person's name on one episode.
-// Clicking twice must not count twice, or a Bar means nothing.
-func TestVouchIsIdempotent(t *testing.T) {
-	s, ctx := newStrandStore(t)
-	early := time.Now().UTC().Add(-time.Hour)
-	if err := s.AddVouch(ctx, store.Vouch{AiringID: "aaaa111111", UserID: "bob", At: early}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddVouch(ctx, store.Vouch{AiringID: "aaaa111111", UserID: "bob", At: time.Now().UTC()}); err != nil {
-		t.Fatal(err)
-	}
-	vouches, err := s.ListVouches(ctx, "aaaa111111")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(vouches) != 1 {
-		t.Fatalf("ListVouches = %+v, want exactly one", vouches)
-	}
-	if !vouches[0].At.Equal(early) {
-		t.Errorf("the second vouch overwrote the first: At = %v, want %v", vouches[0].At, early)
-	}
-
-	if err := s.RemoveVouch(ctx, "aaaa111111", "bob"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RemoveVouch(ctx, "aaaa111111", "bob"); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("second RemoveVouch = %v, want ErrNotFound", err)
-	}
-}
-
-// TestFollowRoundTrip: a Follow is per (user, strand) and changing the
-// Bar edits it rather than adding a second one.
+// TestFollowRoundTrip: a Follow is per (user, strand), so following the
+// same strand twice edits one record rather than adding a second.
 func TestFollowRoundTrip(t *testing.T) {
 	s, ctx := newStrandStore(t)
-	if err := s.PutFollow(ctx, store.Follow{UserID: "alice", Strand: "music", Bar: store.DefaultBar}); err != nil {
+	if err := s.PutFollow(ctx, store.Follow{UserID: "alice", Strand: "music"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutFollow(ctx, store.Follow{UserID: "alice", Strand: "tech-news", Bar: 0}); err != nil {
+	if err := s.PutFollow(ctx, store.Follow{UserID: "alice", Strand: "tech-news"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutFollow(ctx, store.Follow{UserID: "alice", Strand: "music", Bar: 3}); err != nil {
+	if err := s.PutFollow(ctx, store.Follow{UserID: "alice", Strand: "music"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -279,8 +222,11 @@ func TestFollowRoundTrip(t *testing.T) {
 	if len(follows) != 2 {
 		t.Fatalf("ListFollows = %+v, want two", follows)
 	}
-	if follows[0].Strand != "music" || follows[0].Bar != 3 {
-		t.Errorf("raising the bar did not edit the follow: %+v", follows[0])
+	// Three PutFollows, two records: the repeat edited music rather than
+	// adding a second one. With no Bar left to vary, the count is the
+	// only evidence of that (ADR 0027).
+	if follows[0].Strand != "music" || follows[1].Strand != "tech-news" {
+		t.Errorf("follows are not the two strands, ordered: %+v", follows)
 	}
 	if follows[0].UserID != "alice" {
 		t.Errorf("UserID not restored on read: %+v", follows[0])

@@ -1,8 +1,8 @@
 package httpapi
 
 // The controls behind the public side: airing an Episode on its Strand,
-// vouching for someone else's, and following a Strand into your own feed
-// (ADR 0018, ADR 0019).
+// and following a Strand into your own feed (ADR 0018, ADR 0019, ADR
+// 0027).
 //
 // Session-only, all of it, for the same reason Beats are (ADR 0010): a
 // leaked API Key must not be able to put a User's audio in front of
@@ -13,7 +13,6 @@ package httpapi
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/nicocesar/podcasting_server/internal/store"
@@ -37,10 +36,8 @@ type delivery struct {
 }
 
 // deliveredEpisodes is what u's Follows bring into their feed right
-// now. It also settles: ADR 0019 puts the freezing of a Vouch count on
-// the traffic that reads it, and a Personal Feed poll is the traffic
-// that matters — a podcast client asking for new audio is the one sign
-// of life that arrives while its owner is asleep (ADR 0016).
+// now. A pure read: with the Vouch and its frozen count gone (ADR 0027),
+// a feed poll no longer writes anything back.
 func (s *server) deliveredEpisodes(r *http.Request, u store.User) ([]delivery, error) {
 	follows, err := s.store.ListFollows(r.Context(), u.ID)
 	if err != nil {
@@ -55,14 +52,12 @@ func (s *server) deliveredEpisodes(r *http.Request, u store.User) ([]delivery, e
 		if err != nil {
 			return nil, err
 		}
-		airings = s.settleDue(r, airings)
 		for _, a := range airings {
 			if len(out) >= maxDelivered {
 				return out, nil
 			}
-			// Settled, inside the horizon, and at or above this
-			// follower's Bar. The whole rule lives on the Airing.
-			if !a.Delivers(f.Bar, now) {
+			// Inside the horizon. The whole rule lives on the Airing.
+			if !a.Delivers(now) {
 				continue
 			}
 			// Your own Episode is already in your feed as your own; it
@@ -262,47 +257,8 @@ func (s *server) handleAdminUnair(w http.ResponseWriter, r *http.Request, _ stor
 	http.Redirect(w, r, returnTo(r, "/strands/"+airing.Strand), http.StatusSeeOther)
 }
 
-// handleVouch puts the caller's name to an Aired Episode. Never their
-// own: at the size of this station, self-vouching past a Bar of one
-// would make every Bar decorative (ADR 0019).
-func (s *server) handleVouch(w http.ResponseWriter, r *http.Request, u store.User) {
-	airing, err := s.store.GetAiring(r.Context(), r.PathValue("airing"))
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	if airing.OwnerID == u.ID {
-		http.Error(w, "you cannot vouch for your own episode", http.StatusForbidden)
-		return
-	}
-	err = s.store.AddVouch(r.Context(), store.Vouch{
-		AiringID: airing.ID, UserID: u.ID, At: time.Now().UTC(),
-	})
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	http.Redirect(w, r, returnTo(r, "/strands/"+airing.Strand), http.StatusSeeOther)
-}
-
-// handleUnvouch takes the caller's name back off. It does not retract
-// anything already delivered: a settled Airing carries a frozen count,
-// so feeds do not flap when someone changes their mind (ADR 0019).
-func (s *server) handleUnvouch(w http.ResponseWriter, r *http.Request, u store.User) {
-	airing, err := s.store.GetAiring(r.Context(), r.PathValue("airing"))
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	if err := s.store.RemoveVouch(r.Context(), airing.ID, u.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
-		s.fail(w, err)
-		return
-	}
-	http.Redirect(w, r, returnTo(r, "/strands/"+airing.Strand), http.StatusSeeOther)
-}
-
-// handleFollow starts or adjusts a Follow. The same handler sets the Bar,
-// because raising it is the same act as choosing it.
+// handleFollow starts a Follow: everything Aired on the Strand lands in
+// the caller's Personal Feed from here on (ADR 0027).
 func (s *server) handleFollow(w http.ResponseWriter, r *http.Request, u store.User) {
 	strand := r.PathValue("strand")
 	st, err := s.store.GetStrand(r.Context(), strand)
@@ -317,21 +273,8 @@ func (s *server) handleFollow(w http.ResponseWriter, r *http.Request, u store.Us
 		return
 	}
 
-	bar := store.DefaultBar
-	if raw := r.FormValue("bar"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil {
-			http.Error(w, "bar must be a whole number", http.StatusBadRequest)
-			return
-		}
-		if err := store.ValidateBar(n); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		bar = n
-	}
 	err = s.store.PutFollow(r.Context(), store.Follow{
-		UserID: u.ID, Strand: st.ID, Bar: bar, At: time.Now().UTC(),
+		UserID: u.ID, Strand: st.ID, At: time.Now().UTC(),
 	})
 	if err != nil {
 		s.fail(w, err)

@@ -168,12 +168,8 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 	if err := s.removeAPIKeys(func(k store.APIKey) bool { return k.UserID == id }); err != nil && err != store.ErrNotFound {
 		return err
 	}
-	// Everything they had on the air comes off it, and the vouches they
-	// gave stop counting toward anyone else's Bar.
+	// Everything they had on the air comes off it.
 	if err := s.removeAirings(func(a store.Airing) bool { return a.OwnerID == id }); err != nil {
-		return err
-	}
-	if err := s.removeVouches(func(v store.Vouch) bool { return v.UserID == id }); err != nil {
 		return err
 	}
 	return os.RemoveAll(s.userDir(id))

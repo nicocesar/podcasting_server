@@ -85,58 +85,27 @@ func TestStrandDormant(t *testing.T) {
 	}
 }
 
-// TestAiringSettleable: the window closes exactly once, at 24 hours. An
-// airing already settled is never settleable again — re-freezing the
-// count would let a late vouch change a delivery decision that has
-// already been taken.
-func TestAiringSettleable(t *testing.T) {
-	now := time.Now().UTC()
-	tests := []struct {
-		name string
-		a    Airing
-		want bool
-	}{
-		{"fresh", Airing{AiredAt: now.Add(-time.Hour)}, false},
-		{"one minute short", Airing{AiredAt: now.Add(-SettleWindow + time.Minute)}, false},
-		{"exactly the window", Airing{AiredAt: now.Add(-SettleWindow)}, true},
-		{"long past", Airing{AiredAt: now.Add(-90 * 24 * time.Hour)}, true},
-		{"already settled", Airing{AiredAt: now.Add(-90 * 24 * time.Hour), Settled: true}, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.a.Settleable(now); got != tc.want {
-				t.Fatalf("Settleable() = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-// TestAiringDelivers is the whole of ADR 0019's delivery rule: settled,
-// inside the horizon, and at or above the follower's Bar.
+// TestAiringDelivers: with the Bar and Settling gone (ADR 0027) the
+// horizon is the whole delivery rule, so this is the only thing standing
+// between a new follower and the entire archive.
 func TestAiringDelivers(t *testing.T) {
 	now := time.Now().UTC()
-	settled := func(vouches int, age time.Duration) Airing {
-		return Airing{AiredAt: now.Add(-age), Settled: true, VouchesAtSettle: vouches}
-	}
+	aired := func(age time.Duration) Airing { return Airing{AiredAt: now.Add(-age)} }
 	tests := []struct {
 		name string
 		a    Airing
-		bar  int
 		want bool
 	}{
-		{"unsettled never delivers", Airing{AiredAt: now.Add(-time.Hour), VouchesAtSettle: 9}, 0, false},
-		{"firehose takes the unvouched", settled(0, 48*time.Hour), 0, true},
-		{"bar of one rejects the unvouched", settled(0, 48*time.Hour), 1, false},
-		{"bar of one takes one vouch", settled(1, 48*time.Hour), 1, true},
-		{"bar of two rejects one vouch", settled(1, 48*time.Hour), 2, false},
-		{"vouches above the bar still deliver", settled(5, 48*time.Hour), 2, true},
-		{"inside the horizon", settled(1, DeliveryHorizon-time.Hour), 1, true},
-		{"past the horizon", settled(9, DeliveryHorizon+time.Hour), 0, false},
+		{"just aired", aired(time.Minute), true},
+		{"yesterday, with no window to wait out", aired(24 * time.Hour), true},
+		{"inside the horizon", aired(DeliveryHorizon - time.Hour), true},
+		{"exactly the horizon", aired(DeliveryHorizon), true},
+		{"past the horizon", aired(DeliveryHorizon + time.Hour), false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.a.Delivers(tc.bar, now); got != tc.want {
-				t.Fatalf("Delivers(bar=%d) = %v, want %v", tc.bar, got, tc.want)
+			if got := tc.a.Delivers(now); got != tc.want {
+				t.Fatalf("Delivers() = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -157,19 +126,6 @@ func TestNewAiringID(t *testing.T) {
 		seen[id] = true
 		if strings.Trim(id, "abcdefghijklmnopqrstuvwxyz234567") != "" {
 			t.Fatalf("NewAiringID returned %q, which is not lowercase base32", id)
-		}
-	}
-}
-
-func TestValidateBar(t *testing.T) {
-	for _, bar := range []int{0, 1, 2, MaxBar} {
-		if err := ValidateBar(bar); err != nil {
-			t.Errorf("ValidateBar(%d) = %v, want nil", bar, err)
-		}
-	}
-	for _, bar := range []int{-1, MaxBar + 1} {
-		if err := ValidateBar(bar); err == nil {
-			t.Errorf("ValidateBar(%d) = nil, want an error", bar)
 		}
 	}
 }

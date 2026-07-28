@@ -133,9 +133,6 @@ func TestAirPutsAnEpisodeOnAStrand(t *testing.T) {
 	if airing.OwnerID != "alice" || airing.Slug != "chillout-one" || airing.Strand != "music" {
 		t.Fatalf("airing = %+v", airing)
 	}
-	if airing.Settled || airing.VouchesAtSettle != 0 {
-		t.Errorf("a fresh airing must be unsettled: %+v", airing)
-	}
 	ep, err := st.GetEpisode(context.Background(), "alice", "chillout-one")
 	if err != nil {
 		t.Fatal(err)
@@ -343,89 +340,27 @@ func TestAdminUnAirIsAdminOnly(t *testing.T) {
 	}
 }
 
-// TestVouchNotForYourOwn: at a dozen users, self-vouching past a Bar of
-// one would make every Bar decorative (ADR 0019).
-func TestVouchNotForYourOwn(t *testing.T) {
+// TestFollowStartsAndIsIdempotent: pressing Follow is the whole of the
+// control now — no Bar to set, and pressing it twice does not make two
+// (ADR 0027).
+func TestFollowStartsAndIsIdempotent(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	id := airedEpisode(t, ts, st, alice, "ep1", "music")
-
-	resp := postForm(t, ts, alice.sessionCreds(), "/me/vouches/"+id, url.Values{})
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("self-vouch: got %d, want 403", resp.StatusCode)
-	}
-	if v, _ := st.ListVouches(context.Background(), id); len(v) != 0 {
-		t.Fatalf("self-vouch recorded: %+v", v)
-	}
-}
-
-// TestVouchIsIdempotentOverHTTP: one person, one name, however many
-// times they press the button.
-func TestVouchIsIdempotentOverHTTP(t *testing.T) {
-	ts, st := newStrandServer(t)
-	putStrand(t, st, "music", true, false)
-	alice := createUser(t, ts, "alice")
-	bob := createUser(t, ts, "bobby")
-	id := airedEpisode(t, ts, st, alice, "ep1", "music")
 
 	for range 3 {
-		resp := postForm(t, ts, bob.sessionCreds(), "/me/vouches/"+id, url.Values{})
+		resp := postForm(t, ts, alice.sessionCreds(), "/me/follows/music", url.Values{})
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusSeeOther {
-			t.Fatalf("vouch: got %d, want 303", resp.StatusCode)
+			t.Fatalf("follow: got %d, want 303", resp.StatusCode)
 		}
-	}
-	vouches, err := st.ListVouches(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(vouches) != 1 || vouches[0].UserID != "bobby" {
-		t.Fatalf("ListVouches = %+v, want one from bobby", vouches)
-	}
-
-	del := deleteNoRedirect(t, ts, bob.sessionCreds(), "/me/vouches/"+id)
-	del.Body.Close()
-	if del.StatusCode != http.StatusSeeOther {
-		t.Fatalf("unvouch: got %d, want 303", del.StatusCode)
-	}
-	if v, _ := st.ListVouches(context.Background(), id); len(v) != 0 {
-		t.Fatalf("vouch survived removal: %+v", v)
-	}
-}
-
-// TestFollowSetsAndAdjustsTheBar: the same call starts a Follow and
-// changes its Bar, because raising it is the same act as choosing it.
-func TestFollowSetsAndAdjustsTheBar(t *testing.T) {
-	ts, st := newStrandServer(t)
-	putStrand(t, st, "music", true, false)
-	alice := createUser(t, ts, "alice")
-
-	resp := postForm(t, ts, alice.sessionCreds(), "/me/follows/music", url.Values{})
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusSeeOther {
-		t.Fatalf("follow: got %d, want 303", resp.StatusCode)
 	}
 	follows, err := st.ListFollows(context.Background(), "alice")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(follows) != 1 || follows[0].Bar != store.DefaultBar {
-		t.Fatalf("ListFollows = %+v, want one at the default bar", follows)
-	}
-
-	raise := postForm(t, ts, alice.sessionCreds(), "/me/follows/music", url.Values{"bar": {"3"}})
-	raise.Body.Close()
-	follows, _ = st.ListFollows(context.Background(), "alice")
-	if len(follows) != 1 || follows[0].Bar != 3 {
-		t.Fatalf("after raising: %+v, want a single follow at bar 3", follows)
-	}
-
-	bad := postForm(t, ts, alice.sessionCreds(), "/me/follows/music", url.Values{"bar": {"99"}})
-	bad.Body.Close()
-	if bad.StatusCode != http.StatusBadRequest {
-		t.Errorf("out-of-range bar: got %d, want 400", bad.StatusCode)
+	if len(follows) != 1 || follows[0].Strand != "music" {
+		t.Fatalf("ListFollows = %+v, want a single follow of music", follows)
 	}
 
 	del := deleteNoRedirect(t, ts, alice.sessionCreds(), "/me/follows/music")

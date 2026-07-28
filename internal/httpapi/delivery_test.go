@@ -12,16 +12,16 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
-// settleAired backdates an Airing past the settling window so the next
-// read freezes its Vouch count. Time is the one thing these tests
-// cannot wait for.
-func settleAired(t *testing.T, st store.Store, id string) {
+// backdateAired ages an Airing by hand. Time is the one thing these
+// tests cannot wait for, and the horizon is now the only bound on
+// delivery besides Mute (ADR 0027).
+func backdateAired(t *testing.T, st store.Store, id string, age time.Duration) {
 	t.Helper()
 	a, err := st.GetAiring(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.AiredAt = time.Now().UTC().Add(-store.SettleWindow - time.Hour)
+	a.AiredAt = time.Now().UTC().Add(-age)
 	if err := st.PutAiring(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
@@ -49,14 +49,12 @@ func feedXML(t *testing.T, ts *httptest.Server, a account) string {
 	return string(b)
 }
 
-// deliveryFixture: alice airs an episode on music, bobby vouches for it,
+// deliveryFixture: alice airs an episode on music and carol follows it.
 // and carol follows the strand. Returns the airing id.
-func deliveryFixture(t *testing.T, ts *httptest.Server, st store.Store, alice, bobby, carol account, bar string) string {
+func deliveryFixture(t *testing.T, ts *httptest.Server, st store.Store, alice, carol account) string {
 	t.Helper()
 	id := airedEpisode(t, ts, st, alice, "lounge", "music")
-	postForm(t, ts, bobby.sessionCreds(), "/me/vouches/"+id, url.Values{}).Body.Close()
-	settleAired(t, st, id)
-	postForm(t, ts, carol.sessionCreds(), "/me/follows/music", url.Values{"bar": {bar}}).Body.Close()
+	postForm(t, ts, carol.sessionCreds(), "/me/follows/music", url.Values{}).Body.Close()
 	return id
 }
 
@@ -67,9 +65,8 @@ func TestFollowDeliversIntoThePersonalFeed(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
-	id := deliveryFixture(t, ts, st, alice, bobby, carol, "1")
+	id := deliveryFixture(t, ts, st, alice, carol)
 
 	xml := feedXML(t, ts, carol)
 	if !strings.Contains(xml, "lounge") {
@@ -97,58 +94,27 @@ func TestFollowDeliversIntoThePersonalFeed(t *testing.T) {
 	}
 }
 
-// TestDeliveryRespectsTheBar: the Bar is the whole reason a Follow is
-// not a firehose.
-func TestDeliveryRespectsTheBar(t *testing.T) {
+// TestDeliveryStopsAtTheHorizon: a new follower gets a month of
+// backfill, not the whole archive. With the Bar and Settling gone
+// (ADR 0027) this is the only bound left on what a Follow drags in.
+func TestDeliveryStopsAtTheHorizon(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
-	deliveryFixture(t, ts, st, alice, bobby, carol, "1")
+	id := deliveryFixture(t, ts, st, alice, carol)
 
+	// No settling window to wait out: it delivers the moment it airs.
 	if !strings.Contains(feedXML(t, ts, carol), "lounge") {
-		t.Fatal("one vouch did not clear a bar of one")
+		t.Fatal("a freshly aired episode did not deliver")
 	}
-	// Raising the Bar filters retroactively — you asked for less.
-	postForm(t, ts, carol.sessionCreds(), "/me/follows/music", url.Values{"bar": {"2"}}).Body.Close()
+	backdateAired(t, st, id, store.DeliveryHorizon-time.Hour)
+	if !strings.Contains(feedXML(t, ts, carol), "lounge") {
+		t.Fatal("an airing inside the horizon stopped delivering")
+	}
+	backdateAired(t, st, id, store.DeliveryHorizon+time.Hour)
 	if strings.Contains(feedXML(t, ts, carol), "lounge") {
-		t.Fatal("raising the bar to two did not drop a one-vouch episode")
-	}
-	// Zero is the firehose.
-	postForm(t, ts, carol.sessionCreds(), "/me/follows/music", url.Values{"bar": {"0"}}).Body.Close()
-	if !strings.Contains(feedXML(t, ts, carol), "lounge") {
-		t.Fatal("a bar of zero did not take an aired episode")
-	}
-}
-
-// TestUnsettledIsNotDelivered: nothing may be inserted into a
-// listener's past, so an Airing delivers only after its day is up.
-func TestUnsettledIsNotDelivered(t *testing.T) {
-	ts, st := newStrandServer(t)
-	putStrand(t, st, "music", true, false)
-	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
-	carol := createUser(t, ts, "carol")
-
-	id := airedEpisode(t, ts, st, alice, "lounge", "music")
-	postForm(t, ts, bobby.sessionCreds(), "/me/vouches/"+id, url.Values{}).Body.Close()
-	postForm(t, ts, carol.sessionCreds(), "/me/follows/music", url.Values{"bar": {"1"}}).Body.Close()
-
-	if strings.Contains(feedXML(t, ts, carol), "lounge") {
-		t.Fatal("an airing delivered before it settled")
-	}
-	// The feed poll is also what settles it (ADR 0016's pattern).
-	settleAired(t, st, id)
-	if !strings.Contains(feedXML(t, ts, carol), "lounge") {
-		t.Fatal("a settled airing above the bar did not deliver")
-	}
-	a, err := st.GetAiring(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !a.Settled || a.VouchesAtSettle != 1 {
-		t.Errorf("the feed poll did not settle the airing: %+v", a)
+		t.Fatal("an airing past the horizon is still delivering")
 	}
 }
 
@@ -159,9 +125,8 @@ func TestUnAiringRemovesADelivery(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
-	deliveryFixture(t, ts, st, alice, bobby, carol, "1")
+	deliveryFixture(t, ts, st, alice, carol)
 
 	if !strings.Contains(feedXML(t, ts, carol), "lounge") {
 		t.Fatal("not delivered to begin with")
@@ -178,9 +143,8 @@ func TestMuteBeatsFollow(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
-	deliveryFixture(t, ts, st, alice, bobby, carol, "1")
+	deliveryFixture(t, ts, st, alice, carol)
 
 	if !strings.Contains(feedXML(t, ts, carol), "lounge") {
 		t.Fatal("not delivered to begin with")
@@ -198,11 +162,8 @@ func TestOwnAiredEpisodeIsNotDeliveredTwice(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
-	id := airedEpisode(t, ts, st, alice, "lounge", "music")
-	postForm(t, ts, bobby.sessionCreds(), "/me/vouches/"+id, url.Values{}).Body.Close()
-	settleAired(t, st, id)
-	postForm(t, ts, alice.sessionCreds(), "/me/follows/music", url.Values{"bar": {"1"}}).Body.Close()
+	airedEpisode(t, ts, st, alice, "lounge", "music")
+	postForm(t, ts, alice.sessionCreds(), "/me/follows/music", url.Values{}).Body.Close()
 
 	if n := strings.Count(feedXML(t, ts, alice), "<item>"); n != 1 {
 		t.Fatalf("alice's feed has %d items, want exactly 1", n)
@@ -216,9 +177,8 @@ func TestShareWinsOverDelivery(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
-	deliveryFixture(t, ts, st, alice, bobby, carol, "1")
+	deliveryFixture(t, ts, st, alice, carol)
 	share(t, ts, alice, "alice", "lounge", "carol").Body.Close()
 
 	xml := feedXML(t, ts, carol)
@@ -240,9 +200,8 @@ func TestFollowedRowOnTheDashboard(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
-	id := deliveryFixture(t, ts, st, alice, bobby, carol, "1")
+	id := deliveryFixture(t, ts, st, alice, carol)
 
 	page := dashboardHTML(t, ts, carol.sessionCreds())
 	if !strings.Contains(page, "from the") || !strings.Contains(page, `href="/strands/music"`) {
@@ -281,9 +240,8 @@ func TestFollowedFeedVariant(t *testing.T) {
 	ts, st := newStrandServer(t)
 	putStrand(t, st, "music", true, false)
 	alice := createUser(t, ts, "alice")
-	bobby := createUser(t, ts, "bobby")
 	carol := createUser(t, ts, "carol")
-	deliveryFixture(t, ts, st, alice, bobby, carol, "1")
+	deliveryFixture(t, ts, st, alice, carol)
 	publishEpisode(t, ts, carol, "mine-only", `{"title":"Mine Only"}`, "MP3!").Body.Close()
 
 	resp := do(t, "GET", ts.URL+"/me/feed?filter=followed", carol.sessionCreds(), nil, "")

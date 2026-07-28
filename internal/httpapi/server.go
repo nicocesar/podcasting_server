@@ -325,11 +325,8 @@ func New(cfg Config) (http.Handler, error) {
 	// browser — never something a leaked API Key can do (ADR 0018).
 	mux.HandleFunc("POST /me/episodes/{slug}/air", s.session(s.handleAir))
 	mux.HandleFunc("POST /me/episodes/{slug}/unair", s.session(s.handleUnair))
-	mux.HandleFunc("POST /me/vouches/{airing}", s.session(s.handleVouch))
-	mux.HandleFunc("DELETE /me/vouches/{airing}", s.session(s.handleUnvouch))
 	// Browsers cannot send DELETE from a form, and these controls live on
 	// a page, so each removal has a POST spelling too.
-	mux.HandleFunc("POST /me/vouches/{airing}/remove", s.session(s.handleUnvouch))
 	mux.HandleFunc("POST /me/follows/{strand}/unfollow", s.session(s.handleUnfollow))
 	mux.HandleFunc("PUT /me/follows/{strand}", s.session(s.handleFollow))
 	mux.HandleFunc("POST /me/follows/{strand}", s.session(s.handleFollow))

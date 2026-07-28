@@ -1,9 +1,8 @@
 package store
 
 // The public side of the station: the Strand canon (ADR 0017), the
-// Airings that put Episodes on it (ADR 0018), and the Vouches and
-// Follows that decide what a Strand delivers into a Personal Feed
-// (ADR 0019).
+// Airings that put Episodes on it (ADR 0018), and the Follows that
+// deliver a Strand into a Personal Feed (ADR 0019, ADR 0027).
 
 import (
 	"crypto/rand"
@@ -26,26 +25,11 @@ const (
 
 var strandIDPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// SettleWindow is the day between Airing and eligibility, during which
-// Vouches accumulate. When it closes the count is frozen and the
-// delivery question is answered once (ADR 0019): nothing may be
-// inserted into a listener's past, so a late Vouch shows but does not
-// deliver.
-const SettleWindow = 24 * time.Hour
-
 // DeliveryHorizon bounds how far back a Follow reaches, so a new
 // follower gets a month of backfill rather than the whole archive
-// landing on their phone at once.
+// landing on their phone at once. It is the only bound on delivery
+// besides Mute (ADR 0027).
 const DeliveryHorizon = 30 * 24 * time.Hour
-
-// DefaultBar is the Bar a new Follow starts at: deliver what somebody
-// vouched for. Zero is the firehose and is a deliberate choice, never a
-// default that arrives by forgetting to set the field.
-const DefaultBar = 1
-
-// MaxBar is as high as a Bar goes. Beyond a handful of Vouches a Bar
-// stops filtering and starts silencing, which unfollowing does better.
-const MaxBar = 10
 
 // StrandFeedItems caps a Strand Feed. Podcast clients re-read the whole
 // document on every poll, so an uncapped public feed grows without
@@ -178,43 +162,13 @@ type Airing struct {
 	// and Strand Feed query, which is the only query the public makes.
 	Strand  string    `json:"strand" datastore:"strand"`
 	AiredAt time.Time `json:"aired_at" datastore:"aired_at"`
-
-	// Settled closes the window Vouches accrue in, freezing
-	// VouchesAtSettle. Delivery asks only about the frozen number, so a
-	// later un-Vouch cannot retract an Episode from feeds that already
-	// carry it: a feed that flaps is worse than one that is wrong.
-	// Vouches keep accruing for display, so a Strand Page may show four
-	// on an Episode that entered feeds at one.
-	Settled         bool `json:"settled" datastore:"settled,noindex"`
-	VouchesAtSettle int  `json:"vouches_at_settle" datastore:"vouches_at_settle,noindex"`
 }
 
-// Settleable reports whether the Airing's Vouch window has closed and
-// its count has not yet been frozen. Settling needs no scheduler: as
-// with Beats (ADR 0016), the work happens on the traffic that reads it.
-func (a Airing) Settleable(now time.Time) bool {
-	return !a.Settled && now.Sub(a.AiredAt) >= SettleWindow
-}
-
-// Delivers reports whether a follower with this Bar receives the
-// Airing. Only a settled Airing delivers, and only inside the horizon —
-// so a new follower gets a month of backfill, not the whole archive.
-func (a Airing) Delivers(bar int, now time.Time) bool {
-	if !a.Settled || now.Sub(a.AiredAt) > DeliveryHorizon {
-		return false
-	}
-	return a.VouchesAtSettle >= bar
-}
-
-// Vouch is one signed-in User putting their name to one Aired Episode
-// (ADR 0019). Public and attributed, and never for one's own Episode.
-// Deliberately not a vote: there is no ranking, no score and no
-// ordering by it. At the size of this station a Vouch says "this one is
-// worth your time", and one of them carries further than a tally would.
-type Vouch struct {
-	AiringID string    `json:"airing" datastore:"airing_id"`
-	UserID   string    `json:"user" datastore:"user_id"`
-	At       time.Time `json:"at" datastore:"at,noindex"`
+// Delivers reports whether a follower receives the Airing: everything
+// Aired on a followed Strand, inside the horizon — so a new follower
+// gets a month of backfill, not the whole archive (ADR 0027).
+func (a Airing) Delivers(now time.Time) bool {
+	return now.Sub(a.AiredAt) <= DeliveryHorizon
 }
 
 // Follow is a User's standing choice to have a Strand's Aired Episodes
@@ -227,20 +181,5 @@ type Follow struct {
 	UserID string `json:"-" datastore:"user_id"`
 	Strand string `json:"strand" datastore:"strand"`
 
-	// Bar is how many Vouches an Episode must carry to be delivered:
-	// zero for everything Aired, one for whatever somebody vouched for,
-	// higher for a Strand that has become noisy. Per Follow, so one
-	// Strand can be a firehose for one listener and a trickle for
-	// another.
-	Bar int `json:"bar" datastore:"bar,noindex"`
-
 	At time.Time `json:"at" datastore:"at,noindex"`
-}
-
-// ValidateBar reports why b is unacceptable as a Bar, or nil.
-func ValidateBar(b int) error {
-	if b < 0 || b > MaxBar {
-		return fmt.Errorf("bar must be 0 to %d", MaxBar)
-	}
-	return nil
 }

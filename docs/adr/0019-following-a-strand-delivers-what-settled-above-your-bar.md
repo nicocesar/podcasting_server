@@ -4,8 +4,12 @@ Date: 2026-07-25
 
 ## Status
 
-Accepted (extends ADR 0006's reference model with a third kind, and
-completes the Mute definition it left as a feed-only control)
+Accepted, amended by ADR 0027 (which strikes the Vouch, the Bar and
+Settling; the Follow, the 30-day horizon and Mute-filters-everywhere
+stand as decided here)
+
+Originally: accepted (extends ADR 0006's reference model with a third
+kind, and completes the Mute definition it left as a feed-only control)
 
 ## Context
 

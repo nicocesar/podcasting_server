@@ -614,7 +614,7 @@ type Store interface {
 	ListBeats(ctx context.Context, userID string) ([]Beat, error)
 	DeleteBeat(ctx context.Context, userID, id string) error
 
-	// --- the public side: strands, airings, vouches, follows ---
+	// --- the public side: strands, airings, follows ---
 
 	// PutStrand stores or replaces a canon entry. The ID is immutable
 	// by convention, not by this call: it addresses the public feed, so
@@ -635,8 +635,7 @@ type Store interface {
 	OpenStrandCover(ctx context.Context, id string) (io.ReadCloser, string, error)
 	OpenStrandCoverThumb(ctx context.Context, id string) (io.ReadCloser, string, error)
 
-	// PutAiring stores or replaces an Airing, which is also how a
-	// settled Vouch count is frozen onto one.
+	// PutAiring stores or replaces an Airing.
 	PutAiring(ctx context.Context, a Airing) error
 	// GetAiring resolves the public identifier. This is the only way
 	// the public surface reaches an Episode: no Airing, no bytes.
@@ -645,9 +644,8 @@ type Store interface {
 	// Owner's Dashboard can say whether it is on the air. ErrNotFound
 	// when it is private.
 	GetAiringByEpisode(ctx context.Context, ownerID, slug string) (Airing, error)
-	// DeleteAiring un-Airs, removing the Vouches along with it. A
-	// re-Air mints a new identifier, so links killed by an un-Air stay
-	// dead.
+	// DeleteAiring un-Airs. A re-Air mints a new identifier, so links
+	// killed by an un-Air stay dead.
 	DeleteAiring(ctx context.Context, id string) error
 	// ListAirings returns one Strand's Airings newest-first — the
 	// Strand Page, the Strand Feed, and the delivery query all read
@@ -657,17 +655,7 @@ type Store interface {
 	// their own view of what they have on the air.
 	ListAiringsByOwner(ctx context.Context, ownerID string) ([]Airing, error)
 
-	// AddVouch records one User putting their name to one Aired
-	// Episode. Vouching twice is idempotent, not an error.
-	AddVouch(ctx context.Context, v Vouch) error
-	RemoveVouch(ctx context.Context, airingID, userID string) error
-	// ListVouches returns who vouched for an Airing, oldest first. A
-	// Vouch is public and attributed, so this drives display as well as
-	// the count frozen at settling.
-	ListVouches(ctx context.Context, airingID string) ([]Vouch, error)
-
-	// PutFollow stores or replaces a User's Follow of a Strand, which
-	// is also how the Bar is changed.
+	// PutFollow stores or replaces a User's Follow of a Strand.
 	PutFollow(ctx context.Context, f Follow) error
 	DeleteFollow(ctx context.Context, userID, strand string) error
 	// ListFollows returns the User's Follows ordered by Strand.
