@@ -110,7 +110,7 @@
     <div class="table-scroll">
       <table class="spend-table">
         <thead>
-          <tr><th>Topic</th><th>Who</th><th>When</th><th class="spend-amount">Cost</th></tr>
+          <tr><th>Topic</th><th>Who</th><th>When</th><th class="spend-amount">Anthropic</th><th class="spend-amount">ElevenLabs</th></tr>
         </thead>
         <tbody>
           {{range .Episodes}}
@@ -124,11 +124,23 @@
             <td class="spend-amount">
               {{with .Dollars}}${{.}}{{else}}<span class="muted">pending</span>{{end}}
             </td>
+            {{/* A meter reading, not a price — see the note under the
+                 table. Blank means the episode owed ElevenLabs nothing,
+                 which is most of them: the free engines do the voicing
+                 unless a generation asks otherwise. */}}
+            <td class="spend-amount muted">{{with .ElevenLabs}}{{.}}{{else}}—{{end}}</td>
           </tr>
           {{end}}
         </tbody>
       </table>
     </div>
+    <p class="muted" style="font-size:.85rem">The two columns are not the
+    same kind of number. <strong>Anthropic</strong> is what they billed.
+    <strong>ElevenLabs</strong> is what the episode drew from the
+    allowance above, in their units — ElevenLabs sells a monthly bundle
+    rather than charging per request, so there is no per-episode invoice
+    to quote, and dividing the plan's price by its credits would be the
+    price table this page exists to avoid.</p>
     {{end}}
   </section>
 

@@ -61,18 +61,25 @@ func costKind(costType, tokenType string) string {
 
 // episodeCost is one Generation priced at the day's effective rates.
 type episodeCost struct {
-	User          string             `json:"user"`
-	ID            string             `json:"id"`
-	Topic         string             `json:"topic"`
-	Stage         string             `json:"stage"`
-	EpisodeSlug   string             `json:"episode_slug,omitempty"`
-	CreatedAt     time.Time          `json:"created_at"`
-	SessionsCount int                `json:"sessions_count"`
-	Tokens        map[string]int64   `json:"tokens"`
-	TTSEngine     string             `json:"tts_engine,omitempty"`
-	TTSCharacters int                `json:"tts_characters,omitempty"`
-	CostUSD       *float64           `json:"cost_usd"` // null while pending
-	BreakdownUSD  map[string]float64 `json:"breakdown_usd,omitempty"`
+	User          string           `json:"user"`
+	ID            string           `json:"id"`
+	Topic         string           `json:"topic"`
+	Stage         string           `json:"stage"`
+	EpisodeSlug   string           `json:"episode_slug,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	SessionsCount int              `json:"sessions_count"`
+	Tokens        map[string]int64 `json:"tokens"`
+	TTSEngine     string           `json:"tts_engine,omitempty"`
+	TTSCharacters int              `json:"tts_characters,omitempty"`
+	// The ElevenLabs meters, in their own units. They carry no dollars
+	// and never will from here: ElevenLabs sells a monthly allowance,
+	// not per-request billing, so a figure in this row would be our
+	// arithmetic rather than their invoice (ADR 0026).
+	MusicMillis  int                `json:"music_millis,omitempty"`
+	MusicCalls   int                `json:"music_calls,omitempty"`
+	MusicModel   string             `json:"music_model,omitempty"`
+	CostUSD      *float64           `json:"cost_usd"` // null while pending
+	BreakdownUSD map[string]float64 `json:"breakdown_usd,omitempty"`
 	// Pricing is "reconciled" (all consumed token kinds had a posted
 	// rate for the day) or "pending" (the cost report has not caught
 	// up; retry later).
@@ -148,6 +155,56 @@ func (s *server) pricedEpisodes(ctx context.Context, ledger map[string]*dayLedge
 	return episodes, nil
 }
 
+// ElevenLabs is what this Generation drew from the ElevenLabs
+// allowance, in ElevenLabs' own units: characters for a voiced episode,
+// composed duration for an ambient one. Empty when the episode owes
+// them nothing — the free engines voice most episodes, and that is the
+// answer to "why is this row blank".
+//
+// Deliberately not dollars. The Cost column beside it is Anthropic's
+// posted figure; this is a meter reading. Rendering both as currency
+// would imply the same provenance for two very different numbers.
+func (e *episodeCost) ElevenLabs() string {
+	switch {
+	case e.MusicMillis > 0:
+		s := formatDuration(e.MusicMillis)
+		if e.MusicCalls > 1 {
+			s += fmt.Sprintf(" · %d calls", e.MusicCalls)
+		}
+		return s
+	case e.TTSEngine == "elevenlabs" && e.TTSCharacters > 0:
+		return fmt.Sprintf("%s chars", commas(int64(e.TTSCharacters)))
+	}
+	return ""
+}
+
+// formatDuration renders composed audio the way the meter footer does:
+// seconds under a minute, minutes above it.
+func formatDuration(ms int) string {
+	sec := ms / 1000
+	if sec < 60 {
+		return fmt.Sprintf("%ds composed", sec)
+	}
+	return fmt.Sprintf("%dm %02ds composed", sec/60, sec%60)
+}
+
+// commas groups thousands: a six-figure character count is unreadable
+// otherwise, and these numbers are read against a plan's allowance.
+func commas(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // Dollars is the cost as a person reads it, or "" while the day is
 // still pending. The template cannot do this itself: CostUSD is a
 // *float64 so that "not priced yet" is distinguishable from "free", and
@@ -177,6 +234,7 @@ func priceGeneration(g store.Generation, ledger map[string]*dayLedger) *episodeC
 			"cache_write": g.CacheWriteTokens,
 		},
 		TTSEngine: g.TTSEngine, TTSCharacters: g.TTSCharacters,
+		MusicMillis: g.MusicMillis, MusicCalls: g.MusicCalls, MusicModel: g.MusicModel,
 		BreakdownUSD: map[string]float64{},
 		Pricing:      "reconciled",
 	}

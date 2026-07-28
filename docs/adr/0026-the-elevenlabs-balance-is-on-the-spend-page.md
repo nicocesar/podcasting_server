@@ -71,6 +71,26 @@ The error classifier learns the two distinctions this uncovered:
 - The threshold is a constant, not configuration. If 10% proves wrong
   for the plan's shape, changing it is a one-line edit, and a knob
   nobody tunes is worse than a number in the code.
-- Credit spent per Episode is still not attributed the way dollars are
-  in `pricedEpisodes`. The account total is the question that was
-  actually being asked; per-episode credit is left open.
+- Credit spent per Episode is not attributed the way dollars are in
+  `pricedEpisodes`. The account total is the question that was actually
+  being asked. *(Superseded the same day — see the addendum.)*
+
+## Addendum, same day: per-episode ElevenLabs, in units not dollars
+
+The by-episode table's one Cost column had only ever meant Anthropic,
+which was invisible until the balance ran dry: an ambient episode showed
+its agent cost of a few cents and nothing about the music that actually
+failed. The column is now labelled **Anthropic**, and a second column,
+**ElevenLabs**, reports what the episode drew from the allowance —
+characters for a voiced episode, composed duration for an ambient one,
+blank for the free engines that voice most of them.
+
+Both numbers were already stored per Generation (`TTSCharacters`,
+`MusicMillis`, `MusicCalls`); only the display was missing.
+
+The second column is **not** dollars, and cannot honestly be. ElevenLabs
+sells a monthly allowance rather than billing per request, so there is
+no per-episode invoice to quote. A figure would have to be (plan price ÷
+plan credits) × credits used — a price table, and a misleading one: an
+allowance costs the same whether it is spent or not, so a quiet month
+would report near-zero "cost" against an unchanged bill.

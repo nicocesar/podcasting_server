@@ -45,9 +45,12 @@ type creditView struct {
 	Configured bool
 	Tier       string
 	Status     string
-	Used       int64
-	Limit      int64
-	Remaining  int64
+	// Used, Limit and Remaining are grouped for reading: these are
+	// five- and six-figure numbers compared against each other, and
+	// "39381 of 40000" is a puzzle where "39,381 of 40,000" is not.
+	Used      string
+	Limit     string
+	Remaining string
 	// UsedPercent drives the bar, the same shape the daily spend bars
 	// use so the page reads as one thing.
 	UsedPercent int
@@ -75,9 +78,9 @@ func (s *server) elevenCredits(ctx context.Context) creditView {
 		Configured:  true,
 		Tier:        sub.Tier,
 		Status:      sub.Status,
-		Used:        sub.Used,
-		Limit:       sub.Limit,
-		Remaining:   sub.Remaining(),
+		Used:        commas(sub.Used),
+		Limit:       commas(sub.Limit),
+		Remaining:   commas(sub.Remaining()),
 		UsedPercent: sub.UsedPercent(),
 		Low:         sub.Low(),
 		Exhausted:   sub.Exhausted(),

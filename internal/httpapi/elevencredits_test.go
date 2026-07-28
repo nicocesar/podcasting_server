@@ -106,8 +106,8 @@ func TestSpendPageShowsElevenLabsBalance(t *testing.T) {
 	page := adminHTML(t, ts, ts.URL+"/admin/costs", admin.sessionCreds())
 	for _, want := range []string{
 		"ElevenLabs credits",
-		"60000",         // remaining
-		"100000",        // limit
+		"60,000",        // remaining, grouped: read against the limit
+		"100,000",       // limit
 		"creator",       // tier
 		"resets 29 Aug", // formatted reset date
 	} {
@@ -120,7 +120,7 @@ func TestSpendPageShowsElevenLabsBalance(t *testing.T) {
 		t.Error("healthy balance raised a warning")
 	}
 	// Credits are not dollars, and the page must not pretend otherwise.
-	if strings.Contains(page, "$60000") {
+	if strings.Contains(page, "$60,000") {
 		t.Error("credits rendered as dollars")
 	}
 }
@@ -207,5 +207,38 @@ func TestUnreadableBalanceIsNotZero(t *testing.T) {
 	}
 	if strings.Contains(page, "Out of credit") {
 		t.Error("a failed read was reported as exhaustion")
+	}
+}
+
+// TestPerEpisodeElevenLabsColumn: the by-episode table gained a second
+// column because the first one only ever meant Anthropic. A composed
+// episode reports duration, a voiced one characters, and an episode on
+// a free engine reports nothing at all.
+func TestPerEpisodeElevenLabsColumn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ep   episodeCost
+		want string
+	}{
+		{"ambient", episodeCost{MusicMillis: 185_000, MusicCalls: 3}, "3m 05s composed · 3 calls"},
+		{"short ambient", episodeCost{MusicMillis: 42_000, MusicCalls: 1}, "42s composed"},
+		{"voiced by elevenlabs", episodeCost{TTSEngine: "elevenlabs", TTSCharacters: 12345}, "12,345 chars"},
+		{"voiced by a free engine", episodeCost{TTSEngine: "edge-tts", TTSCharacters: 12345}, ""},
+		{"nothing yet", episodeCost{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.ep.ElevenLabs(); got != tc.want {
+				t.Errorf("ElevenLabs() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestElevenLabsColumnIsNeverDollars guards the line ADR 0026 draws: the
+// two columns come from different places and only one is an invoice.
+func TestElevenLabsColumnIsNeverDollars(t *testing.T) {
+	ep := episodeCost{MusicMillis: 60_000, MusicCalls: 1, TTSEngine: "elevenlabs", TTSCharacters: 900}
+	if strings.Contains(ep.ElevenLabs(), "$") {
+		t.Errorf("meter reading rendered as currency: %q", ep.ElevenLabs())
 	}
 }
