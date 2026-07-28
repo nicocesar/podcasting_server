@@ -37,6 +37,45 @@
     <span class="muted">over {{.Days}} days</span>
   </p>
 
+  {{/* The other vendor's meter. It earns a place on a page about
+       Anthropic's bill because it is the one that stops the station:
+       an exhausted balance takes music off entirely and demotes speech
+       to the fallback engines, and until now it announced itself as a
+       401 buried in a failed generation's trace. */}}
+  <section class="panel">
+    <p class="eyebrow">ElevenLabs credits</p>
+    {{if not .Credits.Configured}}
+    <p class="muted">No <code>ELEVENLABS_API_KEY</code> on this server, so
+    there is no balance to read. Speech runs on the free engines and the
+    ambient program is hidden.</p>
+    {{else if .Credits.Error}}
+    <p class="error">{{.Credits.Error}}</p>
+    {{else}}
+      {{if .Credits.Exhausted}}
+      <p class="warn"><strong>Out of credit.</strong> Music cannot be
+      composed at all, and a generation that asks for the ElevenLabs
+      voice falls back to another engine. Both come back when the plan is
+      topped up.</p>
+      {{else if .Credits.Low}}
+      <p class="warn"><strong>Running low.</strong> Music stops entirely
+      when this reaches zero — it has no second provider.</p>
+      {{end}}
+    <p class="spend-total">
+      <span class="spend-figure">{{.Credits.Remaining}}</span>
+      <span class="muted">credits left of {{.Credits.Limit}}{{with .Credits.Resets}} · resets {{.}}{{end}}</span>
+    </p>
+    <span class="credit-track">
+      <span class="credit-bar{{if .Credits.Low}} low{{end}}" style="width:{{.Credits.UsedPercent}}%"></span>
+    </span>
+    <p class="muted" style="font-size:.85rem">Plan
+    <code>{{.Credits.Tier}}</code>{{with .Credits.Status}} · {{.}}{{end}} ·
+    {{.Credits.Used}} used this period. Credits, not dollars: ElevenLabs
+    bills one character allowance that both speech and music draw on, and
+    this page will not invent a rate to convert it — the same reason the
+    figures above come from Anthropic's own billing.</p>
+    {{end}}
+  </section>
+
   <section class="panel">
     <p class="eyebrow">By day</p>
     {{if not .ByDay}}

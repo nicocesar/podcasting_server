@@ -75,7 +75,13 @@ func TestHints(t *testing.T) {
 		want   string
 	}{
 		{"paid plan", 402, `{"detail":{"code":"paid_plan_required","message":"Upgrade."}}`,
-			"the ElevenLabs plan is out of credit"},
+			"ElevenLabs credits are exhausted"},
+		// The failure that started this: an empty balance answers 401
+		// with a "status", not a "code", and no mention of a key. The
+		// old message sent the operator hunting a bad secret.
+		{"out of credit", 401,
+			`{"detail":{"status":"quota_exceeded","message":"This request exceeds your quota of 100000. You have 0 credits remaining, while 91 credits are required for this request."}}`,
+			"ElevenLabs credits are exhausted"},
 		{"bad key", 401, `{"detail":{"message":"Invalid API key."}}`, "check ELEVENLABS_API_KEY"},
 		{"plain rate limit", 429, `{"detail":{"message":"Slow down."}}`, "rate limited; retry shortly"},
 	} {
@@ -121,5 +127,52 @@ func TestLongMessageIsCapped(t *testing.T) {
 	}
 	if !strings.Contains(got, "…") {
 		t.Errorf("truncation not marked:\n%s", got)
+	}
+}
+
+// TestQuotaIsNotABadKey guards the distinction that misled us: both are
+// 401s, and only one is fixed by touching the key.
+func TestQuotaIsNotABadKey(t *testing.T) {
+	quota := HTTPError("music", 401,
+		[]byte(`{"detail":{"status":"quota_exceeded","message":"This request exceeds your quota of 100000."}}`))
+	badKey := HTTPError("music", 401, []byte(`{"detail":{"status":"invalid_api_key","message":"Invalid API key."}}`))
+
+	var q, b *APIError
+	if !errors.As(quota, &q) || !errors.As(badKey, &b) {
+		t.Fatal("expected *APIError from both")
+	}
+	if !q.Quota() {
+		t.Error("quota_exceeded should report Quota()")
+	}
+	if b.Quota() {
+		t.Error("a rejected key is not a quota problem")
+	}
+	if strings.Contains(quota.Error(), "ELEVENLABS_API_KEY") {
+		t.Errorf("out-of-credit still blames the key:\n%s", quota.Error())
+	}
+	if !strings.Contains(badKey.Error(), "ELEVENLABS_API_KEY") {
+		t.Errorf("bad key should still point at the key:\n%s", badKey.Error())
+	}
+}
+
+// TestMissingPermissionIsNotABadKey is the failure that met the first
+// real call to /v1/user/subscription: a valid key without the user_read
+// scope. Telling the operator to "check ELEVENLABS_API_KEY" would send
+// them hunting a typo in a key that works fine everywhere else.
+func TestMissingPermissionIsNotABadKey(t *testing.T) {
+	body := `{"detail":{"type":"authentication_error","code":"unauthorized",` +
+		`"message":"The API key you used is missing the permission user_read to execute this operation.",` +
+		`"status":"missing_permissions","request_id":"e33272383f89e4085e0dc41998089d83"}}`
+	got := HTTPError("subscription", 401, []byte(body)).Error()
+
+	if !strings.Contains(got, "user_read") {
+		t.Errorf("does not name the missing permission:\n%s", got)
+	}
+	if strings.Contains(got, "check ELEVENLABS_API_KEY") {
+		t.Errorf("blames the key for a permissions problem:\n%s", got)
+	}
+	var e *APIError
+	if errors.As(HTTPError("subscription", 401, []byte(body)), &e) && e.Quota() {
+		t.Error("a permissions error is not an exhausted balance")
 	}
 }

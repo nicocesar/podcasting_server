@@ -30,6 +30,7 @@ import (
 
 	"github.com/nicocesar/podcasting_server/internal/audio"
 	"github.com/nicocesar/podcasting_server/internal/coverart"
+	"github.com/nicocesar/podcasting_server/internal/elevenlabs"
 	"github.com/nicocesar/podcasting_server/internal/feed"
 	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/store"
@@ -84,6 +85,13 @@ type Config struct {
 	// Empty means report the whole organization, which is what every
 	// deployment did before workspaces were split out.
 	AnthropicWorkspaceID string
+	// ElevenLabsKey is the same ELEVENLABS_API_KEY the speech and music
+	// clients use, here only to read the account's remaining credit for
+	// the Spend page. Empty → the page says the balance is unavailable
+	// rather than guessing at one.
+	ElevenLabsKey string
+	// ElevenLabsBaseURL overrides the ElevenLabs host (tests only).
+	ElevenLabsBaseURL string
 	// Version is the release this build calls itself: the hand-bumped
 	// number in cmd/server/version.txt.
 	Version string
@@ -104,6 +112,8 @@ type server struct {
 	log           *slog.Logger
 	generator     *generation.Runner
 	adminAPI      *anthropicAdmin
+	elevenAPI     *elevenlabs.Client // nil without a key
+	credits       creditCache
 	version       string
 	commit        string
 	builtAt       string
@@ -148,6 +158,7 @@ func New(cfg Config) (http.Handler, error) {
 		log:           cfg.Logger,
 		generator:     cfg.Generator,
 		adminAPI:      newAnthropicAdmin(cfg.AnthropicAdminKey, cfg.AnthropicAdminBaseURL),
+		elevenAPI:     elevenlabs.NewClientAt(cfg.ElevenLabsKey, cfg.ElevenLabsBaseURL),
 		version:       cfg.Version,
 		workspaceID:   cfg.AnthropicWorkspaceID,
 		commit:        cfg.Commit,

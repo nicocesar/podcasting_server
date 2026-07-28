@@ -21,6 +21,10 @@ type APIError struct {
 	// Code and Message are ElevenLabs' own, when the body parses.
 	Code    string
 	Message string
+	// Reason is their "status" string, which is often the specific one
+	// while Code stays generic: a key without a scope is code
+	// "unauthorized", reason "missing_permissions".
+	Reason string
 	// RequestID is what their support asks for first.
 	RequestID string
 	// Raw is the (capped) body, kept for the unparseable case.
@@ -56,16 +60,39 @@ func (e *APIError) Error() string {
 // nothing rather than guessing at the operator's account.
 func (e *APIError) hint() string {
 	switch {
+	// Out of credit answers 401, the same status a bad key does. It is
+	// the likeliest failure on a busy month and the one whose fix is
+	// nothing to do with the key, so it is tested first.
+	case e.Quota():
+		return "ElevenLabs credits are exhausted; top up the plan (music stops entirely, speech falls back to another engine)"
+	// A scoped key: the secret is valid, it just may not do this. Worth
+	// its own sentence, since "check ELEVENLABS_API_KEY" would send the
+	// operator looking for a typo in a key that is perfectly good.
+	case e.Reason == "missing_permissions":
+		return "this API key lacks a permission the call needs (user_read reads the credit balance); grant it where the key was issued"
 	case e.Code == "concurrent_limit_exceeded":
 		return "another generation is already running on this key; wait for it to finish and retry"
 	case e.Status == 429:
 		return "rate limited; retry shortly"
 	case e.Status == 401 || e.Status == 403:
 		return "check ELEVENLABS_API_KEY"
-	case e.Code == "paid_plan_required" || e.Status == 402:
-		return "the ElevenLabs plan is out of credit"
 	}
 	return ""
+}
+
+// Quota reports an exhausted balance rather than a rejected key. The
+// two are both 401s and read alike; only this tells the operator to add
+// credit instead of hunting a bad secret.
+func (e *APIError) Quota() bool {
+	switch e.Code {
+	case "quota_exceeded", "paid_plan_required":
+		return true
+	}
+	switch e.Reason {
+	case "quota_exceeded", "paid_plan_required":
+		return true
+	}
+	return e.Status == 402 || strings.Contains(strings.ToLower(e.Message), "exceeds your quota")
 }
 
 // errorBody covers the shapes ElevenLabs answers with. Their API is
@@ -78,8 +105,12 @@ type errorBody struct {
 }
 
 type errorDetail struct {
-	Type      string `json:"type"`
-	Code      string `json:"code"`
+	Type string `json:"type"`
+	Code string `json:"code"`
+	// Status is where the important ones actually live: an exhausted
+	// balance is 401 with status "quota_exceeded" and no code at all.
+	// Reading only "code" made that indistinguishable from a bad key.
+	Status    string `json:"status"`
 	Message   string `json:"message"`
 	RequestID string `json:"request_id"`
 }
@@ -102,12 +133,16 @@ func HTTPError(surface string, status int, body []byte) error {
 	if len(eb.Detail) > 0 {
 		var d errorDetail
 		if err := json.Unmarshal(eb.Detail, &d); err == nil {
-			e.Code, e.RequestID = d.Code, d.RequestID
+			e.Code, e.Reason, e.RequestID = d.Code, d.Status, d.RequestID
 			if d.Message != "" {
 				e.Message = d.Message
 			}
-			if e.Code == "" {
-				e.Code = d.Type
+			// Fall back through the other two names the same idea goes
+			// by, so "quota_exceeded" is never lost to an empty Code.
+			for _, alt := range []string{d.Status, d.Type} {
+				if e.Code == "" {
+					e.Code = alt
+				}
 			}
 		} else {
 			// "detail" as a bare string: the whole message.

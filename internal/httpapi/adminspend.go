@@ -57,6 +57,10 @@ type spendPage struct {
 	// because that is the difference between "what this server cost" and
 	// "what everything on this key cost" (ADR 0024).
 	Workspace string
+	// Credits is the other meter: ElevenLabs' remaining balance, which
+	// no Anthropic report knows about and which fails louder than an
+	// overspend when it runs out.
+	Credits creditView
 	// Error is a reporting failure, shown on the page instead of a 502:
 	// the admin can do nothing about an upstream hiccup except look
 	// again later, and a blank error page tells them less than this.
@@ -81,6 +85,10 @@ func (s *server) handleAdminSpend(w http.ResponseWriter, r *http.Request) {
 		days = n
 	}
 	page := spendPage{Days: days, Workspace: s.workspaceID}
+	// Read before the Anthropic branch below: the two vendors are
+	// configured independently, and a server with no ANTHROPIC_ADMIN_KEY
+	// still wants to know its music is about to stop.
+	page.Credits = s.elevenCredits(r.Context())
 	if s.adminAPI == nil {
 		page.Error = "Cost reporting is not configured on this server. Set ANTHROPIC_ADMIN_KEY to read what Anthropic charged."
 		s.render(w, r, http.StatusOK, s.tmplAdminSpend, page)

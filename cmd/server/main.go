@@ -246,6 +246,7 @@ func run(log *slog.Logger) error {
 		Generator:            generator,
 		AnthropicAdminKey:    adminKey,
 		AnthropicWorkspaceID: workspaceID,
+		ElevenLabsKey:        os.Getenv("ELEVENLABS_API_KEY"),
 		Version:              version,
 		Commit:               commit,
 		BuiltAt:              builtAt,

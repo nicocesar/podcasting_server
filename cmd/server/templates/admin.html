@@ -5,6 +5,18 @@
   <p class="muted">The operator's surfaces. Everything here is guarded
   server-side — this page is a door, not the lock.</p>
 
+  {{/* The one thing this page reads. A balance that runs out stops the
+       station quietly, so it is worth a line on the way past. */}}
+  {{if .Credits.Low}}
+  <p class="warn">{{if .Credits.Exhausted}}<strong>ElevenLabs is out of
+  credit.</strong> Music cannot be composed and the ElevenLabs voice is
+  unavailable; generations fall back to another engine.{{else}}
+  <strong>ElevenLabs credits are running low</strong> —
+  {{.Credits.Remaining}} left of {{.Credits.Limit}}. Music has no second
+  provider and stops entirely at zero.{{end}}
+  <a href="/admin/costs">See the balance</a>.</p>
+  {{end}}
+
   <div class="admin-index">
     <a class="panel admin-entry" href="/admin/strands">
       <svg class="icon" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-image"/></svg>

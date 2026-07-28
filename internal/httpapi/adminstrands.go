@@ -65,9 +65,14 @@ func (s *server) handleAdminStrands(w http.ResponseWriter, r *http.Request, u st
 // and Spend, and a pointer to where moderation actually lives. It reads
 // nothing and decides nothing — every surface it names guards itself.
 func (s *server) handleAdminIndex(w http.ResponseWriter, r *http.Request) {
+	// One exception to "reads nothing": the ElevenLabs balance, so a
+	// low one is seen on the way past rather than found later in a
+	// failed generation's trace. It is cached, so this costs nothing
+	// most of the time.
 	s.render(w, r, http.StatusOK, s.tmplAdmin, struct {
 		CostsConfigured bool
-	}{CostsConfigured: s.adminAPI != nil})
+		Credits         creditView
+	}{CostsConfigured: s.adminAPI != nil, Credits: s.elevenCredits(r.Context())})
 }
 
 func (s *server) renderAdminStrands(w http.ResponseWriter, r *http.Request, u store.User, msg string, status int) {

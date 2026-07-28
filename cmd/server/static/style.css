@@ -1009,6 +1009,25 @@ footer.colophon {
   background: var(--accent);
 }
 
+/* The credit meter fills as the allowance is spent, so a nearly-full
+   bar is the bad news — the opposite of the spend bars above, which is
+   why it carries a track behind it and turns red near the end. */
+.credit-track {
+  display: block;
+  height: 0.55rem;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--muted) 25%, transparent);
+  overflow: hidden;
+}
+.credit-bar {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.credit-bar.low { background: var(--live); }
+
 /* ── Build stamp ───────────────────────────────────────────────────────
    What you are running, for the day something is wrong. Barely there on
    purpose: it must cost nothing to ignore, and it follows the theme
