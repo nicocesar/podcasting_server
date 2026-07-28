@@ -1052,12 +1052,18 @@ footer.colophon {
    allowed to widen the table, because a table wider than its container
    scrolls horizontally and the cost column — the reason you opened the
    page — is the first thing to go. Full text is in the tooltip. */
+/* The topic takes whatever the other columns leave, and ellipsizes
+   there. max-width:0 is the lever: it stops the cell asking for room to
+   fit its text, so width:100% resolves against the row's leftover space
+   instead. A fixed cap in rem cannot do this — it was 22rem for four
+   columns, and adding the ElevenLabs column pushed the table into the
+   horizontal scroll its wrapper allows. This way another column narrows
+   the title instead, at any viewport, with no breakpoint to maintain.
+   The full topic stays in the cell's tooltip either way. */
 .spend-topic {
-  max-width: 22rem;
+  width: 100%;
+  max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   cursor: help;
-}
-@media (max-width: 40rem) {
-  .spend-topic { max-width: 11rem; }
 }

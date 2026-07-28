@@ -178,14 +178,16 @@ func (e *episodeCost) ElevenLabs() string {
 	return ""
 }
 
-// formatDuration renders composed audio the way the meter footer does:
-// seconds under a minute, minutes above it.
+// formatDuration renders composed audio: seconds under a minute,
+// minutes above it. No unit word — the column header names the vendor
+// and a duration reads as a duration, while the extra word was wide
+// enough to push the table into a horizontal scroll on a phone.
 func formatDuration(ms int) string {
 	sec := ms / 1000
 	if sec < 60 {
-		return fmt.Sprintf("%ds composed", sec)
+		return fmt.Sprintf("%ds", sec)
 	}
-	return fmt.Sprintf("%dm %02ds composed", sec/60, sec%60)
+	return fmt.Sprintf("%dm %02ds", sec/60, sec%60)
 }
 
 // commas groups thousands: a six-figure character count is unreadable

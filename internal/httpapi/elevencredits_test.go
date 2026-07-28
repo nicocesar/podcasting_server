@@ -220,8 +220,8 @@ func TestPerEpisodeElevenLabsColumn(t *testing.T) {
 		ep   episodeCost
 		want string
 	}{
-		{"ambient", episodeCost{MusicMillis: 185_000, MusicCalls: 3}, "3m 05s composed · 3 calls"},
-		{"short ambient", episodeCost{MusicMillis: 42_000, MusicCalls: 1}, "42s composed"},
+		{"ambient", episodeCost{MusicMillis: 185_000, MusicCalls: 3}, "3m 05s · 3 calls"},
+		{"short ambient", episodeCost{MusicMillis: 42_000, MusicCalls: 1}, "42s"},
 		{"voiced by elevenlabs", episodeCost{TTSEngine: "elevenlabs", TTSCharacters: 12345}, "12,345 chars"},
 		{"voiced by a free engine", episodeCost{TTSEngine: "edge-tts", TTSCharacters: 12345}, ""},
 		{"nothing yet", episodeCost{}, ""},
