@@ -84,6 +84,7 @@ main {
 }
 main:has(.dash) { max-width: 68rem; }   /* dashboard + settings breathe */
 main:has(.shell-wide) { max-width: 44rem; }
+main:has(.shell-index) { max-width: 58rem; }  /* the strand shelf wants room */
 
 /* ── Type ──────────────────────────────────────────────────────────── */
 h1, h2 {
@@ -971,6 +972,115 @@ footer.colophon {
   margin: 0 0 0.5rem;
   font-size: 0.85rem;
 }
+
+/* ── Strand index: the shelf ───────────────────────────────────────
+   A podcast is recognised by its art, so the art leads and the words
+   follow. No card sits on a rule of its own — the border is the card,
+   which is the whole difference between a shelf and a list. */
+.strand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16.5rem, 1fr));
+  gap: clamp(0.85rem, 2vw, 1.35rem);
+  margin-top: 1.5rem;
+}
+
+.strand-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  transition: transform 0.08s ease, border-color 0.08s ease;
+}
+.strand-card:hover,
+.strand-card:focus-within { transform: translate(-2px, -2px); border-color: var(--accent); }
+
+.strand-cover {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.strand-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 0.85rem 0.95rem 0.75rem;
+}
+.strand-card h2 {
+  font-size: 1.15rem;
+  margin: 0 0 0.3rem;
+}
+/* The title is the card: its ::after is the sheet you actually click. */
+.strand-card h2 a { color: inherit; text-decoration: none; }
+.strand-card h2 a::after { content: ""; position: absolute; inset: 0; }
+
+/* Two lines, then an ellipsis: a card that grows with its blurb makes
+   the row it sits in grow too, and the shelf stops being a shelf. */
+.strand-desc {
+  margin: 0 0 0.85rem;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+.strand-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin: auto 0 0;              /* pinned to the floor, so cards align */
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+.strand-count {
+  font: 600 0.7rem/1 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+/* The feed URL, for whoever already has a podcast app open. It has to
+   climb above the title's sheet to be reachable at all. */
+.strand-rss {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  padding: 0.3rem;
+  margin: -0.3rem;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.strand-rss:hover { color: var(--accent); background: var(--bg); }
+
+/* On a phone a full-bleed square is one strand per screenful, which is
+   a slideshow, not a shelf. Below the grid's first breakpoint the card
+   lies down: small art on the left, the words beside it. */
+@media (max-width: 33rem) {
+  .strand-card { flex-direction: row; align-items: stretch; }
+  .strand-cover {
+    width: 6rem;
+    flex: none;
+    border-bottom: 0;
+    border-right: 1px solid var(--border);
+  }
+  .strand-body { padding: 0.7rem 0.85rem; min-width: 0; }
+  .strand-card h2 { font-size: 1.05rem; }
+  .strand-desc { margin-bottom: 0.6rem; }
+}
+
+.lede { max-width: 34rem; margin-bottom: 0; }
 
 /* ── Spend ─────────────────────────────────────────────────────────── */
 .spend-total { margin: 1rem 0 0; display: flex; align-items: baseline; gap: 0.6rem; }

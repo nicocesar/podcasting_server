@@ -1,8 +1,8 @@
 {{define "title"}}Strands{{end}}
 {{define "content"}}
-<article class="card shell-wide">
+<article class="shell-index">
   <h1>Strands</h1>
-  <p class="muted">What the station puts out in public. Each strand is its own
+  <p class="muted lede">What the station puts out in public. Each strand is its own
   podcast feed — subscribe to one and new episodes arrive on their own.</p>
 
   {{if not .Strands}}
@@ -12,16 +12,28 @@
   {{else}}
   <div class="strand-grid">
     {{range .Strands}}
-    <a class="panel strand-card" href="/strands/{{.ID}}">
-      <img class="strand-art" src="/strands/{{.ID}}/cover?s=thumb" alt="" width="120" height="120" loading="lazy">
-      <div>
-        <h2>{{.Title}}</h2>
-        {{if .Description}}<p class="muted">{{.Description}}</p>{{end}}
-        <p class="eyebrow">
-          {{if eq .Episodes 1}}1 episode{{else}}{{.Episodes}} episodes{{end}}
+    {{/* Not one big <a>: the card carries a second destination (the raw
+         feed), so the title is the link and its ::after covers the card.
+         Anything that must stay clickable lifts itself above that sheet. */}}
+    <article class="strand-card">
+      <img class="strand-cover" src="/strands/{{.ID}}/cover?s=thumb" alt=""
+           width="512" height="512" loading="lazy">
+      <div class="strand-body">
+        <h2><a href="/strands/{{.ID}}">{{.Title}}</a></h2>
+        {{if .Description}}<p class="strand-desc">{{.Description}}</p>{{end}}
+        <p class="strand-meta">
+          <span class="strand-count">
+            {{if eq .Episodes 1}}1 episode{{else}}{{.Episodes}} episodes{{end}}
+          </span>
+          <a class="strand-rss" href="/strands/{{.ID}}/feed.xml"
+             title="RSS feed for {{.Title}}">
+            <svg class="icon" width="15" height="15" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rss"/></svg>
+            <span class="sr-only">RSS feed for {{.Title}}</span>
+          </a>
         </p>
       </div>
-    </a>
+    </article>
     {{end}}
   </div>
   {{end}}
