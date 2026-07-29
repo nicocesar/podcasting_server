@@ -100,9 +100,15 @@ func (s *Store) UpsertUser(ctx context.Context, u store.User) error {
 }
 
 // ignoreFieldMismatch drops datastore.ErrFieldMismatch: entities written
-// before a schema change may carry properties the User struct no longer
-// has (e.g. read_hash/cover_secret from before ADR 0008); they are noise,
-// not errors.
+// before a schema change may carry properties their struct no longer has
+// (read_hash/cover_secret from before ADR 0008; settled, vouches_at_settle
+// and bar from before ADR 0027); they are noise, not errors.
+//
+// Every read of a kind that has ever lost a field must go through this.
+// Dropping a field without it takes the surface down on the first read of
+// an entity written before the change, and no test here can catch that:
+// fsstore is JSON and ignores unknown keys, while Datastore is strict
+// about properties with nowhere to go.
 func ignoreFieldMismatch(err error) error {
 	var fm *datastore.ErrFieldMismatch
 	if errors.As(err, &fm) {

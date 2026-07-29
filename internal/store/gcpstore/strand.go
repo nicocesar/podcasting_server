@@ -139,7 +139,10 @@ func (s *Store) PutAiring(ctx context.Context, a store.Airing) error {
 
 func (s *Store) GetAiring(ctx context.Context, id string) (store.Airing, error) {
 	var a store.Airing
-	if err := s.ds.Get(ctx, airingKey(id), &a); err != nil {
+	// Airings written before ADR 0027 still carry settled and
+	// vouches_at_settle; the struct dropped them, so reading an old
+	// entity is a field mismatch rather than an error.
+	if err := ignoreFieldMismatch(s.ds.Get(ctx, airingKey(id), &a)); err != nil {
 		if errors.Is(err, datastore.ErrNoSuchEntity) {
 			return store.Airing{}, store.ErrNotFound
 		}
@@ -180,7 +183,7 @@ func (s *Store) ListAiringsByOwner(ctx context.Context, ownerID string) ([]store
 func (s *Store) listAirings(ctx context.Context, q *datastore.Query) ([]store.Airing, error) {
 	var out []store.Airing
 	keys, err := s.ds.GetAll(ctx, q, &out)
-	if err != nil {
+	if err = ignoreFieldMismatch(err); err != nil {
 		return nil, err
 	}
 	for i, k := range keys {
@@ -206,7 +209,8 @@ func (s *Store) PutFollow(ctx context.Context, f store.Follow) error {
 func (s *Store) DeleteFollow(ctx context.Context, userID, strand string) error {
 	key := followKey(userID, strand)
 	var f store.Follow
-	if err := s.ds.Get(ctx, key, &f); err != nil {
+	// Follows written before ADR 0027 still carry bar (see GetAiring).
+	if err := ignoreFieldMismatch(s.ds.Get(ctx, key, &f)); err != nil {
 		if errors.Is(err, datastore.ErrNoSuchEntity) {
 			return store.ErrNotFound
 		}
@@ -221,7 +225,7 @@ func (s *Store) ListFollows(ctx context.Context, userID string) ([]store.Follow,
 	}
 	var out []store.Follow
 	q := datastore.NewQuery(kindFollow).FilterField("user_id", "=", userID)
-	if _, err := s.ds.GetAll(ctx, q, &out); err != nil {
+	if _, err := s.ds.GetAll(ctx, q, &out); ignoreFieldMismatch(err) != nil {
 		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Strand < out[j].Strand })
@@ -229,13 +233,4 @@ func (s *Store) ListFollows(ctx context.Context, userID string) ([]store.Follow,
 		out = []store.Follow{}
 	}
 	return out, nil
-}
-
-// deleteQuery removes every entity a keys-only query matches.
-func (s *Store) deleteQuery(ctx context.Context, q *datastore.Query) error {
-	keys, err := s.ds.GetAll(ctx, q, nil)
-	if err != nil {
-		return err
-	}
-	return s.deleteKeys(ctx, keys)
 }
