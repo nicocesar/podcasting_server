@@ -358,6 +358,7 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("POST /me/generate/{template}", s.auth(s.generating(s.handleGenerateStart)))
 	mux.HandleFunc("GET /me/generations/{id}", s.auth(s.generating(s.handleGeneration)))
 	mux.HandleFunc("POST /me/generations/{id}/retry", s.auth(s.generating(s.handleGenerationRetry)))
+	mux.HandleFunc("POST /me/generations/{id}/dismiss", s.auth(s.generating(s.handleGenerationDismiss)))
 	// Cast extraction backfill for a story episode the checkbox missed.
 	mux.HandleFunc("POST /me/episodes/{slug}/characters", s.auth(s.generating(s.handleEpisodeCharacters)))
 
@@ -1581,6 +1582,10 @@ func (s *server) handleGetSettings(w http.ResponseWriter, r *http.Request, u sto
 
 // dashboardGenerations lists the caller's Generations still worth a row:
 // in flight or failed (done ones are already visible as episodes).
+//
+// A failure stays until the User clears it. That is deliberate — the
+// row is the only visible way to reach Retry — but it does mean the
+// panel needs a way to empty, or one bad run sits there for good.
 func (s *server) dashboardGenerations(r *http.Request, u store.User) ([]generationView, error) {
 	if s.generator == nil {
 		return nil, nil
@@ -1591,7 +1596,7 @@ func (s *server) dashboardGenerations(r *http.Request, u store.User) ([]generati
 	}
 	views := []generationView{}
 	for _, g := range gens {
-		if g.Stage == store.GenDone {
+		if g.Stage == store.GenDone || g.Dismissed {
 			continue
 		}
 		views = append(views, s.generationView(g))

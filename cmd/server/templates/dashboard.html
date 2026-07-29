@@ -53,6 +53,17 @@
         <span class="onair">On air — {{.StageLabel}}</span>
         {{end}}
         <a class="button quiet" href="/me/generations/{{.ID}}"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-arrow"/></svg>View</a>
+        {{if eq .Stage "failed"}}
+        {{/* Without this a failure has no way off the panel: it is not
+             done, so nothing filters it out, and it sits under "In
+             flight" forever. Retry stays on the View page — this is the
+             other answer, for a run you are never going to retry. */}}
+        <form method="post" action="/me/generations/{{.ID}}/dismiss">
+          <input type="hidden" name="return" value="{{$.ReturnTo}}">
+          <button class="quiet" type="submit"
+                  title="Clear this off the dashboard. The run is kept — you can still open and retry it from its own page."><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Dismiss</button>
+        </form>
+        {{end}}
       </div>
       {{end}}
     </section>

@@ -231,6 +231,10 @@ func (r *Runner) Retry(ctx context.Context, g store.Generation) (store.Generatio
 	g.Error = ""
 	g.Active = true
 	g.VoicedChunks = 0
+	// Retrying un-dismisses. Otherwise a run cleared off the Dashboard
+	// and then retried from its own page would be live, spending money,
+	// and filtered out of the one panel that would have said so.
+	g.Dismissed = false
 	if g.Script != "" {
 		g.Stage = store.GenVoicing
 	} else {

@@ -973,6 +973,69 @@ footer.colophon {
   font-size: 0.85rem;
 }
 
+/* ── Strand page: the masthead ─────────────────────────────────────
+   .strand-head was in the markup for a long time with no rule behind
+   it, so the art stacked on top of the words and the page opened with
+   a 120px square and nothing beside it. */
+.strand-head {
+  display: flex;
+  gap: clamp(1rem, 3vw, 1.5rem);
+  align-items: flex-start;
+  margin-bottom: 2rem;
+}
+.strand-head .strand-art {
+  width: clamp(7rem, 22vw, 11rem);
+  height: auto;
+  aspect-ratio: 1;
+  flex: none;
+  border-radius: 10px;
+}
+.strand-head-words { flex: 1; min-width: 0; }
+.strand-head-words h1 { margin-bottom: 0.35rem; }
+.strand-head-words .description { margin: 0 0 0.9rem; }
+
+/* Back to the shelf. Quiet enough to ignore, present enough that the
+   only public page with no chrome of its own is not a dead end. */
+.crumb {
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+}
+.crumb a { color: var(--muted); text-decoration: none; }
+.crumb a:hover { color: var(--accent); }
+
+/* Retired: a standing fact, so it wears the off-air ink as a badge
+   rather than borrowing a section header's rule. */
+.badge-off {
+  display: inline-block;
+  margin: 0 0 0.9rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--live);
+  border-radius: 999px;
+  font: 600 0.75rem/1.2 var(--font-body);
+  color: var(--live);
+}
+
+.strand-acts {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+/* The disclosure opens under the whole row, not inside its own column,
+   so a long feed URL has the page width to break across. */
+.strand-acts .subscribe { margin: 0; }
+.strand-acts .subscribe[open] { flex: 1 1 100%; }
+
+/* An aired episode's blurb sits inside a card, so it does not need the
+   1.5rem of air .description leaves under a page-level one. */
+.ep-desc { margin: 0.6rem 0 0; font-size: 0.9rem; }
+.episode .ep-title { margin-bottom: 0.1rem; }
+
+@media (max-width: 33rem) {
+  .strand-head { gap: 0.9rem; }
+  .strand-head .strand-art { width: 5.5rem; }
+}
+
 /* ── Strand index: the shelf ───────────────────────────────────────
    A podcast is recognised by its art, so the art leads and the words
    follow. No card sits on a rule of its own — the border is the card,

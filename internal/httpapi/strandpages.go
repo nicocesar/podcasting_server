@@ -46,7 +46,11 @@ type airedView struct {
 	Airing  store.Airing
 	Episode store.Episode
 	Author  string
-	Player  playerView
+	// Duration is the same string the Dashboard's episode cards carry,
+	// from the same humanDuration — the two surfaces render the same
+	// card and must not disagree about what "12 min" looks like.
+	Duration string
+	Player   playerView
 }
 
 // strandPage is the template data for /strands/{strand}.
@@ -168,9 +172,10 @@ func (s *server) airedViews(r *http.Request, st store.Strand, viewer store.User,
 			return nil, err
 		}
 		v := airedView{
-			Airing:  a,
-			Episode: ep,
-			Author:  owner.Title,
+			Airing:   a,
+			Episode:  ep,
+			Author:   owner.Title,
+			Duration: humanDuration(ep.DurationSec),
 			Player: playerView{
 				AudioURL: "/strands/" + st.ID + "/" + a.ID + ".mp3",
 				Title:    ep.Title,

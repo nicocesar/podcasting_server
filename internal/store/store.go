@@ -341,6 +341,13 @@ type Generation struct {
 	// Active indexes the resume scan: true until done or failed.
 	Active bool   `json:"-" datastore:"active"`
 	Error  string `json:"error,omitempty" datastore:"error,noindex"`
+	// Dismissed means the User has read this failure and cleared it off
+	// their Dashboard. A failed Generation is kept, not deleted — it is
+	// still retryable and still carries the meters an admin bills from —
+	// so this hides a row rather than dropping a record. Plain JSON
+	// rather than json:"-" so the fs backend persists it from the
+	// embedded struct without a line in generationRecord.
+	Dismissed bool `json:"dismissed,omitempty" datastore:"dismissed,noindex"`
 
 	// Checkpoints.
 	SessionID    string `json:"-" datastore:"session_id,noindex"` // managed-agent session

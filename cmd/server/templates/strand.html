@@ -1,52 +1,76 @@
 {{define "title"}}{{.Strand.Title}} — Strands{{end}}
+{{/* The transport the rest of the site has. Without this the strand page
+     was the one place that shipped raw <audio controls> — the ADR 0013
+     fallback showing through on the only page strangers ever see. */}}
+{{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
 {{define "content"}}
-<article class="card shell-wide">
+<article class="shell-wide">
+
+  <p class="crumb"><a href="/strands">← All strands</a></p>
 
   <header class="strand-head">
-    <img class="strand-art" src="/strands/{{.Strand.ID}}/cover?s=thumb" alt="" width="160" height="160">
-    <div>
+    <img class="strand-art" src="/strands/{{.Strand.ID}}/cover?s=thumb" alt=""
+         width="512" height="512">
+    <div class="strand-head-words">
       <h1>{{.Strand.Title}}</h1>
-      {{if .Strand.Description}}<p class="muted">{{.Strand.Description}}</p>{{end}}
+      {{if .Strand.Description}}<p class="description">{{.Strand.Description}}</p>{{end}}
       {{if .Strand.Retired}}
-      <p class="eyebrow">Retired — no new episodes, but the feed keeps working.</p>
+      {{/* A standing fact about the strand, so it is a badge, not a
+           section header — an .eyebrow here drew a rule across the page
+           for a sentence that heads nothing. */}}
+      <p class="badge-off">Retired — no new episodes, but the feed keeps working.</p>
       {{end}}
+
+      {{/* Both ways in, on one line: the podcast app and the account.
+           The disclosure is the Dashboard's, from the same CSS. */}}
+      <div class="strand-acts">
+        <details class="subscribe">
+          <summary><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-rss"/></svg>Subscribe</summary>
+          <div>
+            <p class="muted" style="font-size:.85rem;margin-top:0">Paste this
+            into any podcast app. New episodes arrive on their own.</p>
+            <p style="margin-bottom:0"><code class="feed-url">{{.FeedURL}}</code></p>
+          </div>
+        </details>
+
+        {{if .SignedIn}}
+          {{if .Following}}
+          <form method="post" action="/me/follows/{{.Strand.ID}}/unfollow">
+            <input type="hidden" name="return" value="{{.ReturnTo}}">
+            <button class="quiet" type="submit"
+                    title="Stop delivering this strand into your own feed"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Following</button>
+          </form>
+          {{else if not .Strand.Retired}}
+          <form method="post" action="/me/follows/{{.Strand.ID}}">
+            <input type="hidden" name="return" value="{{.ReturnTo}}">
+            <button class="quiet" type="submit"
+                    title="Everything aired here lands in your own feed"><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-user-plus"/></svg>Follow</button>
+          </form>
+          {{end}}
+        {{end}}
+      </div>
     </div>
   </header>
 
-  <section class="panel">
-    <p class="eyebrow">Subscribe</p>
-    <p class="muted" style="font-size:.9rem">Paste this into any podcast app.
-    New episodes arrive on their own.</p>
-    <p><code class="feed-url">{{.FeedURL}}</code></p>
-
-    {{if .SignedIn}}
-      {{if .Following}}
-      <p class="muted" style="font-size:.9rem">You follow this strand —
-      everything aired here lands in your feed.</p>
-      <form method="post" action="/me/follows/{{.Strand.ID}}/unfollow">
-        <input type="hidden" name="return" value="{{.ReturnTo}}">
-        <button class="quiet" type="submit">Unfollow</button>
-      </form>
-      {{else if not .Strand.Retired}}
-      <form method="post" action="/me/follows/{{.Strand.ID}}">
-        <input type="hidden" name="return" value="{{.ReturnTo}}">
-        <button type="submit">Follow — into my own feed</button>
-      </form>
-      {{end}}
-    {{end}}
-  </section>
+  {{/* The one .eyebrow left on this page, doing the job it was built for:
+       heading a section, where the rule it draws is the point. */}}
+  <p class="eyebrow">Episodes · {{len .Episodes}}</p>
 
   {{if not .Episodes}}
-  <section class="panel">
-    <p class="muted">Nothing on this strand yet.</p>
-  </section>
+  <div class="episode">
+    <p class="muted" style="margin:0">Nothing on this strand yet.</p>
+  </div>
   {{else}}
   {{range .Episodes}}
-  <section class="panel aired" id="airing-{{.Airing.ID}}">
-    <h2>{{.Episode.Title}}</h2>
-    <p class="eyebrow">{{.Author}} · {{.Episode.PublishedAt.Format "2 Jan 2006"}}</p>
+  {{/* The Dashboard's episode card, from the same classes — an aired
+       episode and a feed episode are one object seen from two sides,
+       and they should not look like two different things. */}}
+  <article class="episode" id="airing-{{.Airing.ID}}">
+    <h2 class="ep-title">{{.Episode.Title}}</h2>
+    <p class="ep-meta">{{.Episode.PublishedAt.Format "2 Jan 2006"}}{{with .Duration}} · {{.}}{{end}}</p>
+    <p class="ep-credit">by <strong>{{.Author}}</strong></p>
     {{template "player" .Player}}
-    {{if .Episode.Description}}<p class="muted">{{.Episode.Description}}</p>{{end}}
+    {{if .Episode.Description}}<p class="description ep-desc">{{.Episode.Description}}</p>{{end}}
 
     {{if $.Admin}}
     <p class="actions">
@@ -57,11 +81,11 @@
       <form method="post" action="/admin/airings/{{.Airing.ID}}/unair">
         <input type="hidden" name="return" value="{{$.ReturnTo}}#airing-{{.Airing.ID}}">
         <button class="quiet danger" type="submit"
-                title="End this airing. The episode stays in its owner's feed; only the publicness stops.">Take off the air</button>
+                title="End this airing. The episode stays in its owner's feed; only the publicness stops."><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Take off the air</button>
       </form>
     </p>
     {{end}}
-  </section>
+  </article>
   {{end}}
   {{end}}
 </article>

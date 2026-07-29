@@ -603,3 +603,36 @@ func (s *server) handleGenerationRetry(w http.ResponseWriter, r *http.Request, u
 	}
 	s.writeJSON(w, http.StatusOK, s.generationView(g))
 }
+
+// handleGenerationDismiss clears a failed Generation off the caller's
+// Dashboard. The record survives — still retryable at its own URL, still
+// carrying the meters an admin bills from (ADR 0011) — so this is a read
+// receipt, not a delete.
+//
+// Only a failure can be dismissed. An in-flight run would come back on
+// the next poll anyway, and letting one be hidden would mean a
+// Generation still spending money with no row saying so.
+func (s *server) handleGenerationDismiss(w http.ResponseWriter, r *http.Request, u store.User) {
+	g, ok := s.loadGeneration(w, r, u)
+	if !ok {
+		return
+	}
+	if g.Stage != store.GenFailed {
+		http.Error(w, "only a failed generation can be dismissed", http.StatusConflict)
+		return
+	}
+	// Already dismissed is success, not a conflict: a double-submitted
+	// form should land on the Dashboard, not on an error page.
+	if !g.Dismissed {
+		g.Dismissed = true
+		if err := s.store.PutGeneration(r.Context(), g); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		http.Redirect(w, r, returnTo(r, "/me"), http.StatusSeeOther)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, s.generationView(g))
+}
