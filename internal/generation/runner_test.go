@@ -322,6 +322,11 @@ func TestPipelineHappyPath(t *testing.T) {
 func TestStoriesPipeline(t *testing.T) {
 	st := testStore(t)
 	api := newFakeAPI()
+	// A story the agent invented, submitted with the empty sources list
+	// its own prompt asks for. This is the ordinary Story Time delivery,
+	// and nothing in the pipeline may treat it as a defect.
+	api.submissions = []string{`{"title":"The Fox Who Waited","summary":"A patient fox.","language":"en","script":"` +
+		strings.Repeat("The fox waited by the river. ", 200) + `","sources":[]}`}
 	r := testRunner(st, api, fakeEngine{name: "fake"})
 
 	g := newGeneration()

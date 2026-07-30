@@ -31,6 +31,14 @@ type Template struct {
 	// composition plan (submit_music).
 	SubmitToolName string
 
+	// RequiresSources rejects a submission that cites nothing. True for
+	// the programs built on research, where an empty list means the agent
+	// skipped the work. False for Story Time, whose own prompt tells it to
+	// submit an empty list when it invented the tale — rejecting that
+	// would loop the agent against its own instructions until the session
+	// timed out.
+	RequiresSources bool
+
 	// IsMusic marks a template whose audio is composed rather than
 	// voiced. It routes the runner past TTS entirely and suppresses the
 	// voice, gender, and provider fields on the form — there is no
@@ -84,6 +92,7 @@ var templates = map[string]Template{
 		SystemPrompt:    systemPrompt,
 		Tools:           append(agentTools[:len(agentTools):len(agentTools)], submitTool),
 		SubmitToolName:  submitToolName,
+		RequiresSources: true,
 		HasFreshness:    true,
 		DerivesInterval: true,
 		TopicLabel:      "Topic",
@@ -215,6 +224,7 @@ Writing rules:
 
 Output contract:
 When the story is ready, deliver it by calling the submit_episode tool exactly once, filling every field as its schema describes. The summary should tell a parent what the story is about; list sources only if web research actually informed the story, otherwise submit an empty sources list. Never paste the story text, or any JSON version of it, into a chat message — only the tool call counts as delivery.
+Before you submit, make sure the script field holds the finished story: the complete text at full length, never a placeholder, an outline, a summary, or a draft you meant to fill in later. The submission is final — it is voiced and published as sent, and there is no second call to correct it.
 If the tool result rejects the submission, it explains what is wrong: fix exactly that and call submit_episode again with the full corrected story.`
 
 // ambientSystemPrompt is the composer agent's behavior. Like the other

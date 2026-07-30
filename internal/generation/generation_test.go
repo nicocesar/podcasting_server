@@ -36,7 +36,7 @@ func TestParseScript(t *testing.T) {
 }
 
 func TestParseSubmission(t *testing.T) {
-	sc, err := ParseSubmission([]byte(`{"title":"T","summary":"S","language":"en","script":"Hello there.","sources":[{"title":"A","url":"https://a.example"}]}`), 0)
+	sc, err := ParseSubmission([]byte(`{"title":"T","summary":"S","language":"en","script":"Hello there.","sources":[{"title":"A","url":"https://a.example"}]}`), 0, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestParseSubmission(t *testing.T) {
 		t.Fatalf("parsed %+v", sc)
 	}
 	for _, bad := range []string{`{"title":"only"}`, `{"script":"only"}`, `[1,2]`} {
-		if _, err := ParseSubmission([]byte(bad), 0); err == nil {
+		if _, err := ParseSubmission([]byte(bad), 0, true); err == nil {
 			t.Fatalf("ParseSubmission(%s) succeeded, want error", bad)
 		}
 	}
@@ -77,7 +77,7 @@ func TestParseSubmissionRejectsEmptySubmission(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseSubmission([]byte(tc.input), tc.minutes)
+			_, err := ParseSubmission([]byte(tc.input), tc.minutes, true)
 			if err == nil {
 				t.Fatal("submission accepted, want rejection")
 			}
@@ -88,6 +88,23 @@ func TestParseSubmissionRejectsEmptySubmission(t *testing.T) {
 	}
 }
 
+// Story Time invents its tales, and its own prompt tells it to submit an
+// empty sources list when no research was involved. A blanket sources
+// requirement would reject every such story, and since the agent would
+// keep resubmitting what it was told to, the run could only end at the
+// session timeout. The requirement is the news template's, not a rule.
+func TestParseSubmissionAllowsSourcelessFiction(t *testing.T) {
+	input := `{"title":"T","summary":"S","language":"en","script":"` +
+		strings.Repeat("word ", 800) + `","sources":[]}`
+	if _, err := ParseSubmission([]byte(input), 5, false); err != nil {
+		t.Fatalf("sourceless story rejected: %v", err)
+	}
+	// The same submission is still rejected where sources are the point.
+	if _, err := ParseSubmission([]byte(input), 5, true); err == nil {
+		t.Fatal("sourceless research episode accepted")
+	}
+}
+
 // Short of the target but recognisably the episode: the length check is
 // a substance floor, not the ten-percent style rule the prompt asks for,
 // so a merely undersized script still lands.
@@ -95,7 +112,7 @@ func TestParseSubmissionAcceptsUndersizedScript(t *testing.T) {
 	// 600 words against a 750-word (5-minute) budget.
 	input := `{"title":"T","summary":"S","language":"en","script":"` +
 		strings.Repeat("word ", 600) + `","sources":[{"title":"A","url":"https://a.example"}]}`
-	if _, err := ParseSubmission([]byte(input), 5); err != nil {
+	if _, err := ParseSubmission([]byte(input), 5, true); err != nil {
 		t.Fatalf("600 words against a 750-word budget rejected: %v", err)
 	}
 }

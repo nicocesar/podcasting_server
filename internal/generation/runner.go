@@ -406,7 +406,7 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 				// would drop those entries on the floor every time it did
 				// not accept — which is exactly when they matter.
 				var done bool
-				g, done, err = r.judgeSubmission(ctx, g, use, &translationRequested)
+				g, done, err = r.judgeSubmission(ctx, g, tpl, use, &translationRequested)
 				if done || err != nil {
 					return g, err
 				}
@@ -463,8 +463,8 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 // is re-judged without re-answering — that is the crash-recovery path
 // (accepted but not yet checkpointed) and the already-rejected path
 // (waiting for the resubmission) in one.
-func (r *Runner) judgeSubmission(ctx context.Context, g store.Generation, use *ToolUse, translationRequested *bool) (store.Generation, bool, error) {
-	script, perr := ParseSubmission(use.Input, g.LengthMinutes)
+func (r *Runner) judgeSubmission(ctx context.Context, g store.Generation, tpl Template, use *ToolUse, translationRequested *bool) (store.Generation, bool, error) {
+	script, perr := ParseSubmission(use.Input, g.LengthMinutes, tpl.RequiresSources)
 	if perr != nil {
 		if !use.Answered {
 			r.trace(&g, store.LevelNotice, "script.rejected",

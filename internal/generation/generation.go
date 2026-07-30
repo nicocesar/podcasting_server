@@ -269,7 +269,12 @@ const lengthFloor = 0.5
 // against the requested length. The platform only delivers well-formed
 // JSON here; this validates the contract on top. Errors are written to
 // be read by the agent: each one says what to fix.
-func ParseSubmission(input []byte, lengthMinutes int) (Script, error) {
+//
+// requireSources comes from the template (RequiresSources), not from a
+// blanket rule: Story Time is told to submit an empty list for a tale it
+// invented, and a check that outranked the agent's own prompt would
+// reject every such story until the session timed out.
+func ParseSubmission(input []byte, lengthMinutes int, requireSources bool) (Script, error) {
 	var sc Script
 	if err := json.Unmarshal(input, &sc); err != nil {
 		return Script{}, fmt.Errorf("submission does not match the contract: %w", err)
@@ -287,7 +292,7 @@ func ParseSubmission(input []byte, lengthMinutes int) (Script, error) {
 			"the script is %d words but the request is for about %d (a %d-minute episode) — submit the full episode text, not a placeholder or an outline",
 			got, want, lengthMinutes))
 	}
-	if len(sc.Sources) == 0 {
+	if requireSources && len(sc.Sources) == 0 {
 		problems = append(problems, "the submission has no sources — list every source that informed the episode")
 	}
 	if len(problems) > 0 {
