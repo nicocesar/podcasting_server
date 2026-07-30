@@ -36,7 +36,7 @@ func TestParseScript(t *testing.T) {
 }
 
 func TestParseSubmission(t *testing.T) {
-	sc, err := ParseSubmission([]byte(`{"title":"T","summary":"S","language":"en","script":"Hello there.","sources":[{"title":"A","url":"https://a.example"}]}`))
+	sc, err := ParseSubmission([]byte(`{"title":"T","summary":"S","language":"en","script":"Hello there.","sources":[{"title":"A","url":"https://a.example"}]}`), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,9 +44,59 @@ func TestParseSubmission(t *testing.T) {
 		t.Fatalf("parsed %+v", sc)
 	}
 	for _, bad := range []string{`{"title":"only"}`, `{"script":"only"}`, `[1,2]`} {
-		if _, err := ParseSubmission([]byte(bad)); err == nil {
+		if _, err := ParseSubmission([]byte(bad), 0); err == nil {
 			t.Fatalf("ParseSubmission(%s) succeeded, want error", bad)
 		}
+	}
+}
+
+// A submission with nothing in it must not reach the checkpoint: once
+// acceptScript stores it, Retry resumes from the stored Script and the
+// episode is unrecoverable without a whole new run. Both cases below are
+// taken from the andon-fm session, where the agent submitted a
+// placeholder, was told it was accepted, and only then noticed.
+func TestParseSubmissionRejectsEmptySubmission(t *testing.T) {
+	sourced := `,"sources":[{"title":"A","url":"https://a.example"}]}`
+	for _, tc := range []struct {
+		name    string
+		input   string
+		minutes int
+		want    string
+	}{
+		{
+			name:    "placeholder script",
+			input:   `{"title":"T","summary":"S","language":"en","script":"PLACEHOLDER"` + sourced,
+			minutes: 5,
+			want:    "1 words",
+		},
+		{
+			name:    "no sources",
+			input:   `{"title":"T","summary":"S","language":"en","script":"` + strings.Repeat("word ", 800) + `","sources":[]}`,
+			minutes: 5,
+			want:    "no sources",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseSubmission([]byte(tc.input), tc.minutes)
+			if err == nil {
+				t.Fatal("submission accepted, want rejection")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// Short of the target but recognisably the episode: the length check is
+// a substance floor, not the ten-percent style rule the prompt asks for,
+// so a merely undersized script still lands.
+func TestParseSubmissionAcceptsUndersizedScript(t *testing.T) {
+	// 600 words against a 750-word (5-minute) budget.
+	input := `{"title":"T","summary":"S","language":"en","script":"` +
+		strings.Repeat("word ", 600) + `","sources":[{"title":"A","url":"https://a.example"}]}`
+	if _, err := ParseSubmission([]byte(input), 5); err != nil {
+		t.Fatalf("600 words against a 750-word budget rejected: %v", err)
 	}
 }
 

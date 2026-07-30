@@ -256,15 +256,42 @@ func ParseMusicSubmission(input []byte, lengthMinutes int) (Composition, error) 
 	return c, nil
 }
 
-// ParseSubmission decodes a submit_episode tool input. The platform only
-// delivers well-formed JSON here; this validates the contract on top.
-func ParseSubmission(input []byte) (Script, error) {
+// lengthFloor is the fraction of the requested word budget a script must
+// reach to be accepted. Deliberately far below the "within ten percent"
+// the system prompt asks for: this is not a style check but a substance
+// one, and the only thing worth a rejection round here is a submission
+// that plainly is not the episode — a placeholder, a stub, an outline.
+// Accepting one is unrecoverable, since acceptScript checkpoints it and
+// Retry then resumes from the stored Script rather than the agent.
+const lengthFloor = 0.5
+
+// ParseSubmission decodes a submit_episode tool input and checks it
+// against the requested length. The platform only delivers well-formed
+// JSON here; this validates the contract on top. Errors are written to
+// be read by the agent: each one says what to fix.
+func ParseSubmission(input []byte, lengthMinutes int) (Script, error) {
 	var sc Script
 	if err := json.Unmarshal(input, &sc); err != nil {
 		return Script{}, fmt.Errorf("submission does not match the contract: %w", err)
 	}
 	if sc.Title == "" || sc.Script == "" {
 		return Script{}, fmt.Errorf("submission is missing title or script")
+	}
+	// Every defect in one rejection: a submission that is a stub tends to
+	// be short and sourceless at once, and reporting them one at a time
+	// costs a round-trip per problem.
+	var problems []string
+	want := lengthMinutes * wordsPerMinute
+	if got := len(strings.Fields(sc.Script)); want > 0 && float64(got) < float64(want)*lengthFloor {
+		problems = append(problems, fmt.Sprintf(
+			"the script is %d words but the request is for about %d (a %d-minute episode) — submit the full episode text, not a placeholder or an outline",
+			got, want, lengthMinutes))
+	}
+	if len(sc.Sources) == 0 {
+		problems = append(problems, "the submission has no sources — list every source that informed the episode")
+	}
+	if len(problems) > 0 {
+		return Script{}, fmt.Errorf("%s", strings.Join(problems, "; and "))
 	}
 	return sc, nil
 }
@@ -335,6 +362,7 @@ Writing rules:
 
 Output contract:
 When the episode is ready, deliver it by calling the submit_episode tool exactly once, filling every field as its schema describes. Never paste the episode text, or any JSON version of it, into a chat message — only the tool call counts as delivery.
+Before you submit, make sure the script field holds the finished episode: the complete spoken text at full length, never a placeholder, an outline, a summary, or a draft you meant to fill in later. The submission is final — it is voiced and published as sent, and there is no second call to correct it.
 If the tool result rejects the submission, it explains what is wrong: fix exactly that and call submit_episode again with the full corrected episode.`
 
 // userMessage is the per-session task: the request parameters the form

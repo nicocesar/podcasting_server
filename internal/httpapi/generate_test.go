@@ -44,7 +44,12 @@ func (instantAPI) LastToolUse(_ context.Context, sessionID, name string) (*gener
 	// composition plan for the ambient one. A submission on the wrong
 	// shape is rejected and resubmitted forever, so this has to match the
 	// tool actually being polled for.
-	input := []byte(`{"title":"Generated","summary":"A summary.","script":"Spoken words.","sources":[]}`)
+	// Padded to the word budget and given a source: ParseSubmission
+	// rejects a stub as a placeholder, and a rejected submission is
+	// resubmitted forever.
+	input := []byte(`{"title":"Generated","summary":"A summary.","script":"` +
+		strings.Repeat("Spoken words here. ", 400) +
+		`","sources":[{"title":"A source","url":"https://a.example"}]}`)
 	if name == "submit_music" {
 		input = []byte(`{"title":"Composed","summary":"A summary.","movements":[{"prompt":"warm rhodes, 60bpm","duration_ms":300000}]}`)
 	}

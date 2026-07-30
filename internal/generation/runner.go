@@ -464,7 +464,7 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 // (accepted but not yet checkpointed) and the already-rejected path
 // (waiting for the resubmission) in one.
 func (r *Runner) judgeSubmission(ctx context.Context, g store.Generation, use *ToolUse, translationRequested *bool) (store.Generation, bool, error) {
-	script, perr := ParseSubmission(use.Input)
+	script, perr := ParseSubmission(use.Input, g.LengthMinutes)
 	if perr != nil {
 		if !use.Answered {
 			r.trace(&g, store.LevelNotice, "script.rejected",

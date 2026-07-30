@@ -17,13 +17,36 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/tts"
 )
 
-const scriptInput = `{"title":"Fusion This Week","summary":"The state of fusion.","language":"en","script":"Hello. Fusion news. Goodbye.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}`
+// The fixture scripts are padded to the word budget newGeneration asks
+// for: ParseSubmission rejects a script far short of it, so a token
+// three-word script would be bounced as a placeholder before any of
+// these tests reached the behavior they are about.
+var (
+	scriptText  = "Hello. Fusion news. Goodbye. " + strings.Repeat("Fusion progresses steadily. ", 200)
+	spanishText = "Hola. Noticias de fusión. Adiós. " + strings.Repeat("La fusión avanza sin pausa. ", 200)
 
-const spanishInput = `{"title":"La fusión esta semana","summary":"El estado de la fusión.","language":"es","script":"Hola. Noticias de fusión. Adiós.","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}`
+	scriptInput = `{"title":"Fusion This Week","summary":"The state of fusion.","language":"en","script":"` +
+		scriptText + `","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}`
+
+	spanishInput = `{"title":"La fusión esta semana","summary":"El estado de la fusión.","language":"es","script":"` +
+		spanishText + `","sources":[{"title":"Igniter","url":"https://i.example","published":"2026-07-07"}]}`
+)
 
 // legacyScriptReply is the pre-tool contract: the episode as a fenced
 // json block in a chat message.
-const legacyScriptReply = "Done.\n```json\n" + scriptInput + "\n```"
+var legacyScriptReply = "Done.\n```json\n" + scriptInput + "\n```"
+
+// voicedChars is what the TTS meter should read for the fixture script:
+// the characters the engine was actually handed, which is the chunks and
+// not the raw text — tts.Split trims at chunk boundaries. The assertion
+// worth making is that the meter counts them exactly once.
+func voicedChars() int {
+	n := 0
+	for _, chunk := range tts.Split(scriptText) {
+		n += utf8.RuneCountInString(chunk)
+	}
+	return n
+}
 
 type toolResult struct {
 	id      string
@@ -260,8 +283,9 @@ func TestPipelineHappyPath(t *testing.T) {
 	}
 	defer a.Content.Close()
 	audio, _ := io.ReadAll(a.Content)
-	if string(audio) != "MP3!" {
-		t.Errorf("audio = %q", audio)
+	// One "MP3!" per chunk the engine was handed, concatenated in order.
+	if want := strings.Repeat("MP3!", len(tts.Split(scriptText))); string(audio) != want {
+		t.Errorf("audio = %q, want %q", audio, want)
 	}
 	// Sessions are kept by default so prompts can be improved from the
 	// Console traces.
@@ -285,7 +309,7 @@ func TestPipelineHappyPath(t *testing.T) {
 		t.Errorf("session meters = %d sessions, %d/%d/%d/%d tokens",
 			g.SessionsCount, g.InputTokens, g.OutputTokens, g.CacheReadTokens, g.CacheWriteTokens)
 	}
-	wantChars := utf8.RuneCountInString("Hello. Fusion news. Goodbye.")
+	wantChars := voicedChars()
 	if g.TTSEngine != "fake" || g.TTSAttempts != 1 || g.TTSCharacters != wantChars {
 		t.Errorf("tts meters = engine %q, %d attempts, %d chars (want fake, 1, %d)",
 			g.TTSEngine, g.TTSAttempts, g.TTSCharacters, wantChars)
@@ -424,6 +448,48 @@ func TestDeleteSessionsOptIn(t *testing.T) {
 	}
 }
 
+// TestPlaceholderSubmissionIsRejected is the regression test for the
+// andon-fm episode: the agent's first submit_episode carried a one-word
+// placeholder script and no sources, the runner accepted it, and the
+// episode published as eight seconds of someone saying "placeholder".
+// The agent noticed and resubmitted the real episode immediately — but
+// acceptScript had already checkpointed, so the good call was never even
+// read. Rejecting the stub is what keeps the second call reachable.
+func TestPlaceholderSubmissionIsRejected(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	placeholder := `{"title":"Fusion This Week","summary":"The state of fusion.","language":"en","script":"PLACEHOLDER","sources":[]}`
+	api.submissions = []string{placeholder, scriptInput}
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+
+	g := newGeneration()
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenDone)
+
+	res := api.results["sess-1"]
+	if len(res) != 2 || !res[0].isError || res[1].isError {
+		t.Fatalf("tool results = %+v, want a rejection then an ack", res)
+	}
+	// The rejection has to name the defect, or the agent cannot fix it.
+	if !strings.Contains(res[0].text, "1 words") {
+		t.Errorf("rejection does not say how short the script was:\n%s", res[0].text)
+	}
+	// What published is the real episode, not the placeholder.
+	if strings.Contains(g.Script, "PLACEHOLDER") {
+		t.Fatalf("the placeholder was checkpointed: %s", g.Script)
+	}
+	ep, err := st.GetEpisode(context.Background(), "alice", g.EpisodeSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ep.Description, "https://i.example") {
+		t.Errorf("published episode has no sources: %q", ep.Description)
+	}
+}
+
 // TestWrongLanguageGetsTranslated: the agent researches in Spanish and
 // submits a Spanish script; the runner rejects the submission with a
 // translation instruction and voices the English resubmission.
@@ -555,7 +621,7 @@ func TestTTSFailureThenRetrySkipsResearch(t *testing.T) {
 		t.Errorf("session meters after retry = %d sessions, %d input tokens (want 1, 100)",
 			g.SessionsCount, g.InputTokens)
 	}
-	if wantChars := utf8.RuneCountInString("Hello. Fusion news. Goodbye."); g.TTSCharacters != wantChars {
+	if wantChars := voicedChars(); g.TTSCharacters != wantChars {
 		t.Errorf("tts characters = %d, want %d (counted once)", g.TTSCharacters, wantChars)
 	}
 }
