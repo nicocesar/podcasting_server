@@ -717,8 +717,7 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 		s.fail(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
-	w.Write(body)
+	serveFeed(w, r, body)
 
 	// The heartbeat that matters (ADR 0016): a podcast client polling for
 	// new audio is the one sign of life that arrives while its owner is
@@ -726,6 +725,32 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 	// which also means this poll gets yesterday's Episodes and the next
 	// one gets what this heartbeat starts.
 	s.heartbeat(u)
+}
+
+// serveFeed writes a rendered feed under an ETag, so the next poll costs
+// a bare 304 instead of the whole document. A client refreshes on a timer
+// and the archive only grows, so almost every one of those polls is
+// asking a question whose answer is "nothing new".
+//
+// The validator is a hash of the bytes actually rendered, not a date
+// taken from the newest Episode. An edit that retitles an Episode without
+// adding one changes the feed but not that date, and a Last-Modified
+// built on it would answer the edited feed with a stale 304 — so no
+// Last-Modified is offered at all, and a client that sends only
+// If-Modified-Since simply revalidates in full rather than being told
+// something untrue.
+//
+// ServeContent also supplies Content-Length, which the plain Write this
+// replaced did not: the response used to go out chunked, so clients could
+// not show progress or size.
+func serveFeed(w http.ResponseWriter, r *http.Request, body []byte) {
+	// Set before ServeContent, which only fills a Content-Type in when one
+	// is missing — left to it, the .xml name would win and podcast clients
+	// would be handed text/xml instead of the RSS type they expect.
+	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
+	sum := sha256.Sum256(body)
+	w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:])+`"`)
+	http.ServeContent(w, r, "feed.xml", time.Time{}, bytes.NewReader(body))
 }
 
 // handleEpisodeFile splits one address into two representations of the

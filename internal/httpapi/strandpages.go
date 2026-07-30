@@ -219,9 +219,8 @@ func (s *server) handleStrandFeed(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	w.Header().Set("Cache-Control", publicCache)
-	w.Write(body)
+	serveFeed(w, r, body)
 }
 
 // handleStrandCover serves the Strand's art — the identity a podcast
