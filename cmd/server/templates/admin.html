@@ -17,6 +17,43 @@
   <a href="/admin/costs">See the balance</a>.</p>
   {{end}}
 
+  {{/* The clock (ADR 0028). This card exists because a deployment with
+       no scheduler job pointed at it looks exactly like a station where
+       nothing was due: beats never fire, stalled runs are never resumed,
+       and no other surface says a word about it. */}}
+  <div class="panel">
+    <h2>The tick</h2>
+    {{if .Tick.Ever}}
+      <p{{if .Tick.Stale}} class="warn"{{end}}>
+        {{if .Tick.Stale}}<strong>The clock has stopped.</strong> The{{else}}The{{end}}
+        last pass landed <time datetime="{{.Tick.At}}">{{.Tick.At}}</time>.
+      </p>
+      <p class="muted">
+        {{.Tick.LiveUsers}} of {{.Tick.TotalUsers}} listeners inside the
+        liveness window · fired {{.Tick.BeatsFired}} beat{{if ne .Tick.BeatsFired 1}}s{{end}} ·
+        resumed {{.Tick.Resumed}} generation{{if ne .Tick.Resumed 1}}s{{end}}{{if .Tick.Truncated}} ·
+        <strong>hit the beat budget</strong>, the rest are deferred to the next pass{{end}}
+      </p>
+      {{/* A pass reports success even when something went wrong partway
+           through, because the caller retries a failure and a retry
+           re-fires generations. So this line is the only place a survived
+           error is ever seen. */}}
+      {{if .Tick.Error}}<p class="warn">The last pass reported: {{.Tick.Error}}</p>{{end}}
+    {{else}}
+      <p class="warn"><strong>No tick has ever run on this deployment.</strong>
+      Beats will not fire and a generation Cloud Run stalls will not be
+      picked up until the process restarts.</p>
+    {{end}}
+    {{if not .Tick.Configured}}
+    <p class="muted"><code>TICK_TOKEN</code> is not set, so no scheduler can
+    call this deployment. The button below still works.</p>
+    {{end}}
+    <form method="post" action="/tick">
+      <input type="hidden" name="return" value="/admin">
+      <button class="quiet" type="submit">Run a pass now</button>
+    </form>
+  </div>
+
   <div class="admin-index">
     <a class="panel admin-entry" href="/admin/strands">
       <svg class="icon" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-image"/></svg>

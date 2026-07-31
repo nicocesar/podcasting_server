@@ -85,7 +85,7 @@ type Runner struct {
 
 	mu       sync.Mutex
 	running  map[string]bool   // "{user}/{id}" → a goroutine owns it
-	firing   map[string]bool   // "{user}/{beat}" → a heartbeat is firing it
+	firing   map[string]bool   // "{user}/{beat}" → a Tick is firing it
 	agentIDs map[string]string // agent name → ID, cached after provision
 	envID    string
 }
@@ -145,10 +145,28 @@ func (r *Runner) Bootstrap(ctx context.Context) {
 				"template", id, "err", err)
 		}
 	}
+	if _, err := r.ResumeAll(ctx); err != nil {
+		r.log.Error("generation: resume scan failed", "err", err)
+	}
+}
+
+// ResumeAll re-Kicks every Active Generation in the store and reports how
+// many it found.
+//
+// This is ADR 0009's resume scan, and it now has two drivers: Bootstrap,
+// which catches what a previous instance left unfinished, and the Tick
+// (ADR 0028), which is the first dependable one it has ever had — before
+// that, an unattended Generation stalled by Cloud Run waited on its
+// owner's podcast client to wake up. Not liveness gated: a stalled run
+// has already been paid for, and abandoning it because its owner has been
+// quiet would waste the spend rather than save it.
+//
+// Kick no-ops on anything this process is already running, so on a warm
+// instance the whole pass is one query.
+func (r *Runner) ResumeAll(ctx context.Context) (int, error) {
 	gens, err := r.store.ListActiveGenerations(ctx)
 	if err != nil {
-		r.log.Error("generation: resume scan failed", "err", err)
-		return
+		return 0, err
 	}
 	for _, g := range gens {
 		// Traced, not just logged: a run that was interrupted and picked
@@ -156,6 +174,7 @@ func (r *Runner) Bootstrap(ctx context.Context) {
 		r.trace(&g, store.LevelNotice, "run.resumed", "resuming after restart", "stage", g.Stage)
 		r.Kick(g)
 	}
+	return len(gens), nil
 }
 
 // AvailableTemplates lists the templates this instance can actually

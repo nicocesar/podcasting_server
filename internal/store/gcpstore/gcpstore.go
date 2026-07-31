@@ -3,13 +3,20 @@
 // cover bytes in a GCS bucket, audio served via short-lived V4 signed URLs.
 //
 // Datastore layout: kind "User" keyed by user ID with an indexed
-// cover_secret; kind "Episode" keyed by "{ownerID}/{slug}" with an indexed
-// owner_id; kind "Share" keyed by "{userID}/{ownerID}/{slug}" with indexed
-// user_id, owner_id, and slug; kind "Beat" keyed by "{userID}/{id}" with
-// an indexed user_id. All queries are equality-only, so no composite
-// indexes are required; sorting happens in memory. Beats deliberately
-// have no indexed due date: they are examined per owner on that owner's
-// own traffic, never swept globally (ADR 0016).
+// cover_secret and an indexed last_seen_at; kind "Episode" keyed by
+// "{ownerID}/{slug}" with an indexed owner_id; kind "Share" keyed by
+// "{userID}/{ownerID}/{slug}" with indexed user_id, owner_id, and slug;
+// kind "Beat" keyed by "{userID}/{id}" with an indexed user_id; kind
+// "Tick", a single entity keyed "last", entirely unindexed.
+//
+// Queries are equality-only apart from one inequality on last_seen_at —
+// the liveness gate (ADR 0028) — which a built-in single-property index
+// serves, and which carries an Order on that same property because
+// Datastore requires the first sort order to match the inequality. So
+// there are still no composite indexes and no index.yaml, and sorting
+// otherwise happens in memory. Beats still deliberately have no indexed
+// due date: the Tick reaches them through the liveness gate, one owner
+// at a time, never sweeping them globally.
 //
 // GCS layout: users/{ownerID}/{slug}.mp3 and users/{ownerID}/cover.
 package gcpstore
@@ -39,8 +46,13 @@ const (
 	kindGeneration = "Generation"
 	kindBeat       = "Beat"
 	kindAPIKey     = "APIKey"
+	kindTick       = "Tick"
 	signedURLTTL   = 15 * time.Minute
 )
+
+// tickKeyName is fixed: TickStatus is a signal, not a log, so there is
+// one entity and it is overwritten.
+const tickKeyName = "last"
 
 type Store struct {
 	ds     *datastore.Client
@@ -85,6 +97,8 @@ func generationKey(userID, id string) *datastore.Key {
 func beatKey(userID, id string) *datastore.Key {
 	return datastore.NameKey(kindBeat, userID+"/"+id, nil)
 }
+
+func tickKey() *datastore.Key { return datastore.NameKey(kindTick, tickKeyName, nil) }
 
 func audioObject(ownerID, slug string) string { return "users/" + ownerID + "/" + slug + ".mp3" }
 func coverObject(ownerID string) string       { return "users/" + ownerID + "/cover" }
@@ -177,6 +191,61 @@ func (s *Store) ListUsers(ctx context.Context) ([]store.User, error) {
 		users = []store.User{}
 	}
 	return users, nil
+}
+
+// ListUsersSeenSince is the liveness gate (ADR 0028). The only inequality
+// filter in this package: it needs no index.yaml, because Datastore keeps
+// a single-property index for every property that is not noindex, and a
+// query with one inequality and no composite predicate is served by it.
+//
+// The Order is not decoration — Datastore requires the first sort order
+// to be the inequality property. It happens to be the order wanted
+// anyway: least-recently-seen first, so a Tick that runs out of budget
+// serves the User closest to falling dormant before the one who has been
+// polling all afternoon.
+//
+// A User written before ADR 0028 has no last_seen_at property at all and
+// is therefore absent from the index, so no cutoff can return them. That
+// is what makes the first Tick after deploy quiet.
+func (s *Store) ListUsersSeenSince(ctx context.Context, cutoff time.Time, limit int) ([]store.User, error) {
+	var users []store.User
+	q := datastore.NewQuery(kindUser).
+		FilterField("last_seen_at", ">=", cutoff).
+		Order("last_seen_at")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	keys, err := s.ds.GetAll(ctx, q, &users)
+	if err = ignoreFieldMismatch(err); err != nil {
+		return nil, err
+	}
+	for i, k := range keys {
+		users[i].ID = k.Name
+	}
+	if users == nil {
+		users = []store.User{}
+	}
+	return users, nil
+}
+
+// TouchUser writes the liveness timestamp and nothing else, in a
+// transaction. Read-modify-write alone would only narrow the race with a
+// concurrent profile edit; the transaction closes it. At one write per
+// user per hour there is nothing to contend over.
+func (s *Store) TouchUser(ctx context.Context, userID string, t time.Time) error {
+	_, err := s.ds.RunInTransaction(ctx, func(tx *datastore.Transaction) error {
+		var u store.User
+		if err := ignoreFieldMismatch(tx.Get(userKey(userID), &u)); err != nil {
+			if errors.Is(err, datastore.ErrNoSuchEntity) {
+				return store.ErrNotFound
+			}
+			return err
+		}
+		u.LastSeenAt = t
+		_, err := tx.Put(userKey(userID), &u)
+		return err
+	})
+	return err
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id string) error {
@@ -404,6 +473,24 @@ func (s *Store) DeleteBeat(ctx context.Context, userID, id string) error {
 		return err
 	}
 	return s.ds.Delete(ctx, beatKey(userID, id))
+}
+
+// --- tick ---
+
+func (s *Store) PutTickStatus(ctx context.Context, ts store.TickStatus) error {
+	_, err := s.ds.Put(ctx, tickKey(), &ts)
+	return err
+}
+
+func (s *Store) GetTickStatus(ctx context.Context) (store.TickStatus, error) {
+	var ts store.TickStatus
+	if err := ignoreFieldMismatch(s.ds.Get(ctx, tickKey(), &ts)); err != nil {
+		if errors.Is(err, datastore.ErrNoSuchEntity) {
+			return store.TickStatus{}, store.ErrNotFound
+		}
+		return store.TickStatus{}, err
+	}
+	return ts, nil
 }
 
 // --- episodes ---

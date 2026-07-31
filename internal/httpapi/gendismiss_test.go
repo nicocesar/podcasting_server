@@ -129,8 +129,8 @@ func TestInFlightGenerationCannotBeDismissed(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 
 	// Active deliberately left false. Opening the Dashboard runs the
-	// Beat heartbeat, which re-Kicks every Active Generation it finds —
-	// so an Active fixture would have the runner pick this record up and
+	// resume pass, which re-Kicks every Active Generation it finds — so
+	// an Active fixture would have the runner pick this record up and
 	// drive it for real, which is not what is under test here. The gate
 	// being tested reads Stage, not Active.
 	err := st.PutGeneration(context.Background(), store.Generation{

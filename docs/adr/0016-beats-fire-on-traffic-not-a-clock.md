@@ -4,8 +4,13 @@ Date: 2026-07-24
 
 ## Status
 
-Accepted (extends ADR 0009's checkpointed worker; relies on ADR 0002's
-republish semantics and ADR 0010's session-only rule)
+Accepted, reversed by ADR 0028 (which moves firing to a scheduled Tick
+and keeps this ADR's spending property as a Liveness Window; the Beat
+itself, the cadence-from-the-Freshness-Window rule, the gap rule, the
+pause-at-three and the five-per-User cap all stand as decided here)
+
+Originally: accepted (extends ADR 0009's checkpointed worker; relies on
+ADR 0002's republish semantics and ADR 0010's session-only rule)
 
 ## Context
 

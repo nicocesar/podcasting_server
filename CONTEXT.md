@@ -292,11 +292,30 @@ A Topic a User has the station cover on an ongoing basis: a standing
 request that produces a new Episode into their Personal Feed at a fixed
 cadence, until they pause or cancel it. A Beat holds a frozen copy of
 everything a Generation needs, so every Episode it makes is the same
-request asked again. It is dormant between Episodes — it comes round when
-the User's Personal Feed is polled or their Dashboard opened, so a Beat
-nobody is listening to falls quiet, and one that has been quiet a while
-covers the whole gap when it wakes.
+request asked again. It is dormant between Episodes — the Tick is what
+comes round for it, and only while its owner is inside the Liveness
+Window, so a Beat nobody is listening to falls quiet, and one that has
+been quiet a while covers the whole gap when it wakes.
 _Avoid_: schedule, cron job, recurrence, series, subscription
+
+**Tick**:
+The one request that does the work nobody asked for: an hourly call to
+`POST /tick` that fires the due Beats of Users who have been seen lately
+and re-Kicks every Generation left unfinished. Cloud Scheduler makes it
+with `TICK_TOKEN`; an admin can make it from the admin page. It claims a
+bounded slice of work and reports success even when behind, because the
+caller retries a failure and a retry that re-fires Generations costs
+real money.
+_Avoid_: cron, the scheduler, heartbeat, the job
+
+**Liveness Window**:
+How recently a User must have been seen — a feed poll, the Dashboard,
+the Beats page — for the Tick to fire their Beats. Seven days by
+default. It is what keeps spend following listening now that traffic no
+longer fires anything itself: an account nobody opens stops generating,
+and one poll brings it back. It bounds dormant accounts, not idle
+clients; a phone in a drawer still polls.
+_Avoid_: activity timeout, TTL, expiry, last login
 
 **Freshness Window**:
 The trailing time span (one day to one year) a Generation is anchored in:

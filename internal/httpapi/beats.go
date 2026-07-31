@@ -99,9 +99,11 @@ func beatValues(b store.Beat) generationRequest {
 	}
 }
 
-// handleBeats lists the user's Beats. It is also a heartbeat: landing on
-// the page that shows a Beat as overdue should be the moment it stops
-// being overdue.
+// handleBeats lists the user's Beats, showing when each one is next due.
+// Landing here no longer fires anything — since ADR 0028 that is the
+// Tick's job, and a page a Beat's owner happens to open is not a clock.
+// It does record that they were here, and revive a stalled run while
+// somebody is watching.
 func (s *server) handleBeats(w http.ResponseWriter, r *http.Request, u store.User) {
 	views, err := s.beatViews(r, u)
 	if err != nil {
@@ -109,7 +111,8 @@ func (s *server) handleBeats(w http.ResponseWriter, r *http.Request, u store.Use
 		return
 	}
 	s.render(w, r, http.StatusOK, s.tmplBeats, beatsPage{User: u, Beats: views, Max: maxBeatsPerUser, ReturnTo: r.URL.RequestURI()})
-	s.heartbeat(u)
+	s.seen(u)
+	s.resume(u)
 }
 
 // beatViews renders the user's Beats for display, newest-first as the
@@ -326,15 +329,3 @@ func (s *server) handleBeatCancel(w http.ResponseWriter, r *http.Request, u stor
 	http.Redirect(w, r, returnTo(r, "/me/beats"), http.StatusSeeOther)
 }
 
-// heartbeat brings the user's Beats up to date, off the request path.
-//
-// This is the entire scheduling mechanism (ADR 0016). It runs detached:
-// the response is already on its way, and the Generations it starts are
-// on their own Background context, so nothing here can slow a feed poll
-// down or be cancelled by it finishing.
-func (s *server) heartbeat(u store.User) {
-	if s.generator == nil {
-		return
-	}
-	go s.generator.Heartbeat(u.ID)
-}

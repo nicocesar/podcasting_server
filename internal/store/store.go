@@ -56,7 +56,7 @@ var reservedUsernames = func() map[string]bool {
 		"admin", "api", "auth", "beats", "callback", "cover", "episode", "episodes",
 		"f", "feed", "generate", "generations", "google", "healthz", "image",
 		"invite", "invites", "login", "logout", "me", "settings", "share",
-		"static", "strand", "strands", "usage", "user", "users",
+		"static", "strand", "strands", "tick", "usage", "user", "users",
 		// Roles and system identities not to be impersonated.
 		"about", "abuse", "anonymous", "everyone", "guest", "help", "host",
 		"mail", "moderator", "mod", "null", "official", "owner", "postmaster",
@@ -130,6 +130,25 @@ type User struct {
 	// password change or "log out everywhere") kills all outstanding
 	// sessions on their next request.
 	CredentialVersion int64 `json:"-" datastore:"credential_version,noindex"`
+
+	// LastSeenAt is the liveness timestamp (ADR 0028): the Tick fires a
+	// User's due Beats only if they were seen inside the Liveness Window.
+	// Written on the feed poll and on the attended pages, coarsened so a
+	// value already inside the hour is not rewritten.
+	//
+	// Deliberately not noindex, and the only property in this system
+	// carrying an inequality filter — without the index there is no way
+	// to ask who has been here lately except by reading every User.
+	//
+	// A timestamp and not a "work to do" flag, because level-triggered
+	// state has no drain step and no clear step: re-running a Tick after
+	// a crash is free, and no wakeup is ever lost.
+	//
+	// Zero means never seen, which is what every User written before ADR
+	// 0028 looks like and what a freshly provisioned account looks like.
+	// Both are correctly dormant until somebody actually shows up with
+	// them; do not be tempted to stamp this at creation.
+	LastSeenAt time.Time `json:"last_seen_at,omitzero" datastore:"last_seen_at"`
 
 	// Blocks: users whose Shares are rejected at share time.
 	// Mutes: owners whose Episodes are hidden from this feed at render
@@ -457,9 +476,12 @@ const BeatFailureLimit = 3
 // 0011). A Beat rebuilds an identical request every firing, and pruning
 // old Generations can never orphan one.
 //
-// A Beat has no clock of its own. Nothing in this server fires on a
-// timer; a Beat is examined when its owner's feed is polled or their
-// Dashboard opened (ADR 0016), so a Beat nobody listens to falls quiet.
+// A Beat has no clock of its own, and no stored due date either: DueAt
+// is derived from LastFiredAt and IntervalDays every time it is asked.
+// The Tick is what examines it (ADR 0028), and only for owners seen
+// inside the Liveness Window — so a Beat is still reached one owner at a
+// time, never swept globally, and a Beat nobody listens to still falls
+// quiet.
 type Beat struct {
 	UserID string `json:"user" datastore:"user_id"`
 	ID     string `json:"id" datastore:"-"` // unguessable; key is "{UserID}/{ID}"
@@ -528,6 +550,46 @@ func (b Beat) GapDays(t time.Time) int {
 	return min(max(days, b.IntervalDays), MaxBeatGapDays)
 }
 
+// TickStatus is what the last Tick did (ADR 0028). Exactly one exists —
+// this is a signal, not a log.
+//
+// It exists because a deployment can be perfectly healthy and have no
+// scheduler job pointed at it, and that failure is invisible from every
+// other surface: Beats simply never fire, and stalled Generations are
+// never resumed until the process restarts. This is the record the admin
+// page reads to say when the clock last reached us.
+//
+// Every field is noindex. Nothing queries this; one key reads it.
+type TickStatus struct {
+	// At is when the pass started, DurationMS how long it took.
+	At         time.Time `json:"at" datastore:"at,noindex"`
+	DurationMS int64     `json:"duration_ms" datastore:"duration_ms,noindex"`
+
+	// LiveUsers is how many Users the Liveness Window admitted — the
+	// Tick's entire working set, since a dormant User's Beats are never
+	// examined at all.
+	LiveUsers int `json:"live_users" datastore:"live_users,noindex"`
+
+	// BeatsFired counts Generations the Tick started; Resumed counts
+	// Active Generations it re-Kicked, most of which were already running
+	// and no-oped.
+	BeatsFired int `json:"beats_fired" datastore:"beats_fired,noindex"`
+	Resumed    int `json:"resumed" datastore:"resumed,noindex"`
+
+	// Truncated means the Beat budget ran out. The firings it skipped are
+	// deferred, not lost: their clocks did not advance, so they are still
+	// due next Tick and their windows widen by the gap rule.
+	Truncated bool `json:"truncated,omitempty" datastore:"truncated,noindex"`
+
+	// Trigger is who asked: "scheduler" or "admin".
+	Trigger string `json:"trigger" datastore:"trigger,noindex"`
+
+	// Error is the first failure the pass survived. A Tick that fired
+	// anything reports success by design, so without this the failure
+	// would be visible only in the logs.
+	Error string `json:"error,omitempty" datastore:"error,noindex"`
+}
+
 // Audio is how a backend hands episode audio to the HTTP layer. Exactly
 // one of RedirectURL or Content is set: production redirects the client to
 // a short-lived signed URL, local development serves the file directly.
@@ -551,6 +613,26 @@ type Store interface {
 	GetUserByGoogleSub(ctx context.Context, sub string) (User, error)
 	// ListUsers returns all users ordered by ID.
 	ListUsers(ctx context.Context) ([]User, error)
+	// ListUsersSeenSince returns the Users whose LastSeenAt is at or
+	// after cutoff — the liveness gate the Tick fires Beats behind (ADR
+	// 0028) — least-recently-seen first, at most limit of them. A limit
+	// of zero or less means no limit.
+	//
+	// Named for the cutoff rather than for "live" because which cutoff
+	// counts as live is the caller's policy, not the store's.
+	//
+	// The ordering is the fairness rule for a Tick that runs out of
+	// budget: the User closest to falling dormant is served before the
+	// one who has been polling all afternoon. A User who has never been
+	// seen at all is never returned, whatever the cutoff.
+	ListUsersSeenSince(ctx context.Context, cutoff time.Time, limit int) ([]User, error)
+	// TouchUser records that the User was seen at t, and nothing else.
+	//
+	// Deliberately not UpsertUser: that writes a whole User struct, so a
+	// liveness write racing a profile edit would put back the title the
+	// reader happened to be holding. This writes the one field, and
+	// leaves UpdatedAt alone — being seen is not an edit.
+	TouchUser(ctx context.Context, userID string, t time.Time) error
 	// DeleteUser removes the user, their episodes, audio, cover, the
 	// shares in their feed, every share of their episodes in other
 	// feeds, the invites they minted, and their API keys.
@@ -615,11 +697,22 @@ type Store interface {
 	// PutBeat stores or replaces a Beat.
 	PutBeat(ctx context.Context, b Beat) error
 	GetBeat(ctx context.Context, userID, id string) (Beat, error)
-	// ListBeats returns the user's beats newest-first. There is
-	// deliberately no all-users variant: Beats are examined per owner on
-	// that owner's traffic, never swept globally (ADR 0016).
+	// ListBeats returns the user's beats newest-first. There is still
+	// deliberately no all-users variant and no due-date query: the Tick
+	// reaches Beats through the liveness gate, one owner at a time, so a
+	// Beat's due time stays derived rather than stored and indexed (ADR
+	// 0028, keeping ADR 0016's shape for a new reason).
 	ListBeats(ctx context.Context, userID string) ([]Beat, error)
 	DeleteBeat(ctx context.Context, userID, id string) error
+
+	// PutTickStatus records the outcome of a Tick, replacing the previous
+	// one. There is one record, not a history: the question it answers is
+	// "did the clock reach us recently", and a log of that is a bigger
+	// feature than the signal is worth.
+	PutTickStatus(ctx context.Context, ts TickStatus) error
+	// GetTickStatus returns the last Tick, ErrNotFound when none has ever
+	// run — which on a fresh deployment is the interesting answer.
+	GetTickStatus(ctx context.Context) (TickStatus, error)
 
 	// --- the public side: strands, airings, follows ---
 

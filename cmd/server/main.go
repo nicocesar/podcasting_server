@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,22 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envInt reads a whole-number setting, warning rather than failing on
+// nonsense. A typo in a knob whose zero value means "take the default"
+// must not silently mean "budget zero, fire nothing".
+func envInt(log *slog.Logger, key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		log.Warn("config: ignoring unreadable value", "key", key, "value", raw, "using", fallback)
+		return fallback
+	}
+	return n
 }
 
 // hostname reduces a base URL to the bare domain spoken in episode credits
@@ -233,6 +250,25 @@ func run(log *slog.Logger) error {
 		log.Info("cost reporting: enabled", "workspace", workspaceID)
 	}
 
+	// TICK_TOKEN is the credential Cloud Scheduler carries to POST /tick,
+	// which is what fires Beats and resumes stalled Generations (ADR
+	// 0028). Both the scheduler job and this variable are manual steps
+	// outside the image-only deploy, so a deployment can be perfectly
+	// healthy and have no clock at all — /admin says when the last Tick
+	// landed, because nothing else would show it.
+	tickToken := strings.TrimSpace(os.Getenv("TICK_TOKEN"))
+	tickOpts := generation.TickOptions{
+		LivenessWindow: time.Duration(envInt(log, "TICK_LIVENESS_HOURS", 0)) * time.Hour,
+		BeatBudget:     envInt(log, "TICK_BEAT_BUDGET", 0),
+	}
+	if tickToken == "" {
+		log.Info("tick: header credential disabled (TICK_TOKEN not set); POST /tick takes an admin session only")
+	} else {
+		log.Info("tick: enabled",
+			"liveness_window", cmp.Or(tickOpts.LivenessWindow, generation.DefaultLivenessWindow),
+			"beat_budget", cmp.Or(tickOpts.BeatBudget, generation.DefaultBeatBudget))
+	}
+
 	version := strings.TrimSpace(string(versionByte))
 	handler, err := httpapi.New(httpapi.Config{
 		Store:                st,
@@ -244,6 +280,8 @@ func run(log *slog.Logger) error {
 		Assets:               assetsFS,
 		Logger:               log,
 		Generator:            generator,
+		TickToken:            tickToken,
+		Tick:                 tickOpts,
 		AnthropicAdminKey:    adminKey,
 		AnthropicWorkspaceID: workspaceID,
 		ElevenLabsKey:        os.Getenv("ELEVENLABS_API_KEY"),

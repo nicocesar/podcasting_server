@@ -92,7 +92,9 @@ looks, delivery and Strand Page alike.
 - Delivery no longer writes. `settleDue` made a feed poll and a Strand
   Page read into write paths across replicas; both are now pure reads.
   ADR 0016's ride-on-traffic pattern still stands for Beats, which is
-  where it started.
+  where it started. (No longer true as of ADR 0028: Beats moved to a
+  scheduled Tick, and traffic now records liveness rather than firing
+  anything. Delivery being a pure read is unaffected.)
 - The horizon is now the only bound on what a Follow drags in besides
   Mute, so it carries more weight than it used to and is tested directly.
 - Nothing takes the Vouch's place. If the station grows into needing

@@ -1,9 +1,10 @@
 package generation
 
-// Beats: recurring Generations, fired by traffic rather than by a clock
-// (ADR 0016). Nothing in this server ticks — an idle Cloud Run service
-// has no process at all — so a Beat is examined when its owner's Personal
-// Feed is polled or their Dashboard opened. The Heartbeat is that moment.
+// Beats: recurring Generations, fired by the Tick (ADR 0028) and gated on
+// their owner's liveness. Traffic used to be the clock (ADR 0016); it now
+// only records that somebody was here, and the Tick decides when to act on
+// that. A Beat is still reached one owner at a time, never swept globally,
+// so its due time stays a derived function rather than an indexed field.
 
 import (
 	"context"
@@ -14,36 +15,38 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/store"
 )
 
-// heartbeatTimeout bounds the store work a heartbeat does. Generously
-// above what a handful of reads and writes needs: the goroutine is
-// detached from the request, so nothing is waiting on it, but it must not
-// leak either.
-const heartbeatTimeout = 30 * time.Second
+// resumeTimeout bounds the store work a detached resume pass does.
+// Generously above what a handful of reads needs: nothing is waiting on
+// the goroutine, but it must not leak either.
+const resumeTimeout = 30 * time.Second
 
-// Heartbeat brings one user's Beats up to date and revives their stalled
-// Generations. Callers hand it a user ID from a request they were already
-// serving and let it run in a goroutine — it never touches the response,
-// and the runs it starts are on their own Background context (see run),
-// so the request finishing cannot cancel them.
+// FireDue starts a Generation for each of one user's due Beats, at most
+// budget of them. It reports how many it started and whether the budget
+// stopped it with work still due.
 //
-// This is the whole scheduler. Its honest limits: a Beat whose owner
-// never polls never fires, and an Episode it starts lands in the *next*
-// poll, not the one that triggered it.
-func (r *Runner) Heartbeat(userID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), heartbeatTimeout)
-	defer cancel()
-
-	r.fireDueBeats(ctx, userID)
-	r.resumeStalled(ctx, userID)
-}
-
-// fireDueBeats starts one Generation per due Beat.
-func (r *Runner) fireDueBeats(ctx context.Context, userID string) {
+// The budget is the Tick's bounded slice (ADR 0028). Firing only *starts*
+// a Generation — fire claims the Beat, writes the checkpoint and hands
+// off to Kick — so this bounds spend committed to, not episodes finished,
+// which is both the number ADR 0016 worried about and the only quantity a
+// request-shaped caller can bound. A budget of zero or less fires nothing
+// and is not an error.
+//
+// What the budget skips is deferred, never lost: an unfired Beat's clock
+// does not advance, so it is still due on the next pass and its window
+// widens by the gap rule.
+//
+// A Beat that fails to fire is logged and skipped, and the first error is
+// returned once the rest have had their turn: one bad Beat must not cost
+// its owner the others.
+func (r *Runner) FireDue(ctx context.Context, userID string, budget int) (fired int, truncated bool, err error) {
+	if budget <= 0 {
+		return 0, false, nil
+	}
 	beats, err := r.store.ListBeats(ctx, userID)
 	if err != nil {
-		r.log.Error("beats: list failed", "user", userID, "err", err)
-		return
+		return 0, false, err
 	}
+	var firstErr error
 	now := time.Now().UTC()
 	for _, b := range beats {
 		if !b.Due(now) {
@@ -55,40 +58,60 @@ func (r *Runner) fireDueBeats(ctx context.Context, userID string) {
 			// another instance may have the composer configured.
 			continue
 		}
-		if err := r.fire(ctx, b, now); err != nil {
+		// Checked here rather than at the top of the loop so truncation is
+		// exact: it means a Beat that would have fired did not, never
+		// merely that the list ran on past the budget.
+		if fired >= budget {
+			truncated = true
+			break
+		}
+		started, err := r.fire(ctx, b, now)
+		if err != nil {
 			r.log.Error("beats: fire failed", "user", userID, "beat", b.ID, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if started {
+			fired++
 		}
 	}
+	return fired, truncated, firstErr
 }
 
 // fire starts the Beat's Generation, advancing its clock first so the
-// firing is claimed before any slow work begins.
+// firing is claimed before any slow work begins. It reports whether a
+// Generation was actually started: declining the claim and finding the
+// Beat no longer due are both ordinary outcomes, not errors, but neither
+// is a firing, and the Tick's budget and its status record both count
+// firings.
 //
 // The claim has two layers. In this process, claimBeat serializes
-// firings of one Beat and the Beat is re-read inside it, so the six
-// simultaneous requests a browser and a podcast client can produce
+// firings of one Beat and the Beat is re-read inside it, so concurrent
+// Ticks — the hourly one and an admin pressing "run a pass now" —
 // resolve to exactly one Episode. Across replicas it is the persisted
 // clock alone, which is the same best-effort race Kick documents — and
 // the same worst case: duplicated work and a suffixed slug from freeSlug.
-func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time) error {
+func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time) (bool, error) {
 	if !r.claimBeat(b) {
-		return nil
+		return false, nil
 	}
 	defer r.releaseBeat(b)
 	// Re-read under the claim: whoever held it before this may have just
 	// fired, in which case the stored clock now says not due.
 	fresh, err := r.store.GetBeat(ctx, b.UserID, b.ID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !fresh.Due(now) {
-		return nil
+		return false, nil
 	}
 	b = fresh
 
 	id, err := randomID()
 	if err != nil {
-		return err
+		return false, err
 	}
 	g := store.Generation{
 		UserID:         b.UserID,
@@ -124,13 +147,13 @@ func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time) error {
 
 	b.LastFiredAt = now
 	if err := r.store.PutBeat(ctx, b); err != nil {
-		return err
+		return false, err
 	}
 	if err := r.store.PutGeneration(ctx, g); err != nil {
-		return err
+		return false, err
 	}
 	r.Kick(g)
-	return nil
+	return true, nil
 }
 
 // claimBeat takes the in-process right to fire b, or reports that
@@ -154,22 +177,33 @@ func (r *Runner) releaseBeat(b store.Beat) {
 	r.mu.Unlock()
 }
 
-// resumeStalled re-Kicks the user's unfinished Generations. Kick no-ops
-// on anything this process is already running, so on a warm instance this
-// costs one store read; on a fresh one it is what picks a run back up
-// after Cloud Run reclaimed the instance that started it. A Beat's
-// Generation has no browser polling it, so this is its only rescue.
-func (r *Runner) resumeStalled(ctx context.Context, userID string) {
-	gens, err := r.store.ListGenerations(ctx, userID)
-	if err != nil {
-		r.log.Error("beats: resume scan failed", "user", userID, "err", err)
-		return
-	}
-	for _, g := range gens {
-		if g.Active {
-			r.Kick(g)
+// ResumeUser re-Kicks one user's unfinished Generations, detached from
+// the request that asked for it.
+//
+// The attended surfaces call this — the Dashboard and the Beats page,
+// where a person may be watching a stalled run and the next Tick is up to
+// an hour away. It fires nothing: since ADR 0028 traffic does not fire
+// Beats, and landing on a page no longer makes an overdue Beat un-overdue.
+//
+// Kick no-ops on anything this process is already running, so on a warm
+// instance this costs one store read; on a fresh one it is what picks a
+// run back up after Cloud Run reclaimed the instance that started it.
+func (r *Runner) ResumeUser(userID string) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), resumeTimeout)
+		defer cancel()
+
+		gens, err := r.store.ListGenerations(ctx, userID)
+		if err != nil {
+			r.log.Error("beats: resume scan failed", "user", userID, "err", err)
+			return
 		}
-	}
+		for _, g := range gens {
+			if g.Active {
+				r.Kick(g)
+			}
+		}
+	}()
 }
 
 // recordBeatOutcome folds a finished run back into the Beat that started

@@ -6,6 +6,7 @@
 //
 //	root/
 //	├── invites.json                all invites, keyed by token
+//	├── tick.json                   what the last Tick did (ADR 0028)
 //	├── alice/                      user ID
 //	│   ├── user.json               user + feed metadata
 //	│   ├── shares.json             shares in alice's feed (may be absent)
@@ -34,6 +35,7 @@ const (
 	sharesFile  = "shares.json"
 	invitesFile = "invites.json"
 	apiKeysFile = "apikeys.json"
+	tickFile    = "tick.json"
 )
 
 type Store struct {
@@ -151,6 +153,43 @@ func (s *Store) ListUsers(ctx context.Context) ([]store.User, error) {
 	}
 	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
 	return users, nil
+}
+
+func (s *Store) ListUsersSeenSince(ctx context.Context, cutoff time.Time, limit int) ([]store.User, error) {
+	all, err := s.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	live := []store.User{}
+	for _, u := range all {
+		// The IsZero check mirrors what Datastore does for free: an
+		// entity without the property is not in its index. Without it a
+		// cutoff far enough in the past would return never-seen users
+		// here and not in gcpstore, and the two backends would disagree
+		// about who is live.
+		if u.LastSeenAt.IsZero() || u.LastSeenAt.Before(cutoff) {
+			continue
+		}
+		live = append(live, u)
+	}
+	// Least-recently-seen first, matching the ordering gcpstore gets from
+	// the index it has to order by anyway.
+	sort.Slice(live, func(i, j int) bool { return live[i].LastSeenAt.Before(live[j].LastSeenAt) })
+	if limit > 0 && len(live) > limit {
+		live = live[:limit]
+	}
+	return live, nil
+}
+
+func (s *Store) TouchUser(ctx context.Context, userID string, t time.Time) error {
+	u, err := s.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	u.LastSeenAt = t
+	// Deliberately not UpsertUser: that stamps UpdatedAt, and being seen
+	// is not an edit.
+	return writeJSON(filepath.Join(s.userDir(userID), userFile), newUserRecord(u))
 }
 
 func (s *Store) DeleteUser(ctx context.Context, id string) error {
@@ -772,6 +811,24 @@ func (s *Store) DeleteBeat(_ context.Context, userID, id string) error {
 		return store.ErrNotFound
 	}
 	return err
+}
+
+// --- tick ---
+
+// tick.json sits at the root beside invites.json. Safe there because
+// ListUsers only descends into directories, so a stray file is never
+// mistaken for a user.
+
+func (s *Store) PutTickStatus(_ context.Context, ts store.TickStatus) error {
+	return writeJSON(filepath.Join(s.root, tickFile), ts)
+}
+
+func (s *Store) GetTickStatus(_ context.Context) (store.TickStatus, error) {
+	var ts store.TickStatus
+	if err := readJSON(filepath.Join(s.root, tickFile), &ts); err != nil {
+		return store.TickStatus{}, err
+	}
+	return ts, nil
 }
 
 // --- audio & cover ---

@@ -224,3 +224,64 @@ unofficial edge-tts protocol rotated:
 ```sh
 EDGE_TTS_SMOKE=1 go test ./internal/tts -run EdgeSmoke -v
 ```
+
+## 12. The Tick (required for Beats)
+
+Beats do not fire on their own, and a Generation that Cloud Run stalls is
+not picked up on its own either. Both are the job of `POST /tick`, which
+Cloud Scheduler calls hourly (ADR 0028). **A deployment without this step
+looks completely healthy and quietly never fires a Beat** — which is why
+`/admin` carries a card saying when the last pass landed, and warns when
+the answer is "never".
+
+`TICK_TOKEN` is the credential the scheduler carries. It is deliberately
+not `ADMIN_TOKEN`: that secret bootstraps user provisioning and admin
+appointment, and a scheduler job has no business holding it.
+
+```sh
+openssl rand -hex 24 | tr -d '\n' | \
+  gcloud secrets create podcast-tick-token --data-file=-
+
+gcloud secrets add-iam-policy-binding podcast-tick-token \
+  --member=serviceAccount:${SA} --role=roles/secretmanager.secretAccessor
+
+gcloud run services update podcasting-server --region=us-central1 \
+  --update-secrets=TICK_TOKEN=podcast-tick-token:latest
+
+gcloud scheduler jobs create http podcast-tick \
+  --location=us-central1 \
+  --schedule="0 * * * *" \
+  --uri="https://YOUR-SERVICE-URL/tick" \
+  --http-method=POST \
+  --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret=podcast-tick-token)" \
+  --attempt-deadline=300s
+```
+
+Both the secret and the scheduler job are **manual, one-time steps
+outside the deploy**: `cloudbuild.yaml` swaps the container image and
+nothing else, so env vars, secrets and the runtime service account live
+on the Cloud Run service and a deploy can never clobber them — nor set
+them up for you.
+
+Two optional knobs, both with sensible defaults:
+
+- `TICK_LIVENESS_HOURS` (default 168, i.e. seven days) — how recently a
+  user must have been seen for their Beats to fire. Generous on purpose:
+  too short stops somebody's briefing for having their phone off over a
+  weekend, and says nothing about why.
+- `TICK_BEAT_BUDGET` (default 20) — the most Beat firings one pass will
+  start. What it skips is deferred, not lost.
+
+To run a pass by hand — on a laptop, or to check the wiring — press
+**Run a pass now** on `/admin`, or:
+
+```sh
+curl -X POST -H "Authorization: Bearer $TICK_TOKEN" https://YOUR-SERVICE-URL/tick
+```
+
+It answers the status as JSON: how many users were inside the liveness
+window, how many Beats fired, how many generations were resumed. Note it
+answers `200` even when a pass hit an error partway through — Cloud
+Scheduler retries a non-2xx, and a retry that re-fires Generations costs
+real money, so a failure that arrives after the first firing is reported
+in the `error` field rather than in the status code.

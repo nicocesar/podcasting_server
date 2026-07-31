@@ -157,11 +157,11 @@ func TestBeatCap(t *testing.T) {
 	waitAllSettled(t, st, "alice")
 }
 
-// TestHeartbeatFiresDueBeat: a feed poll is the whole scheduler. Age the
-// Beat's clock past its interval, fetch the feed, and exactly one new
-// Generation must appear — carrying the Beat's id and a window stretched
-// to the real gap.
-func TestHeartbeatFiresDueBeat(t *testing.T) {
+// TestTickFiresDueBeatForLiveUser: the Tick is the scheduler now. Age the
+// Beat's clock past its interval, mark the owner live, run a pass, and
+// exactly one new Generation must appear — carrying the Beat's id and a
+// window stretched to the real gap.
+func TestTickFiresDueBeatForLiveUser(t *testing.T) {
 	ts, st := newGeneratingServerStore(t, nil)
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
@@ -180,14 +180,18 @@ func TestHeartbeatFiresDueBeat(t *testing.T) {
 	}
 	before, _ := st.ListGenerations(ctx, "alice")
 
-	// The podcast client checks the feed.
-	u, _ := st.GetUser(ctx, "alice")
-	resp = do(t, "GET", ts.URL+"/f/"+u.FeedToken+"/feed.xml", "", nil, "")
-	resp.Body.Close()
+	markSeen(t, st, "alice", time.Now().UTC())
+	status := tick(t, ts)
+	if status.BeatsFired != 1 {
+		t.Errorf("BeatsFired = %d, want 1 (%+v)", status.BeatsFired, status)
+	}
+	if status.LiveUsers != 1 {
+		t.Errorf("LiveUsers = %d, want 1", status.LiveUsers)
+	}
 
 	// The Beat's own first Episode also carries its id — it is the first
 	// thing the Beat produced — so take the newest match, which is the one
-	// this heartbeat started. ListGenerations is newest-first.
+	// this pass started. ListGenerations is newest-first.
 	fired := waitForGenerations(t, st, "alice", len(before)+1)
 	var g store.Generation
 	for _, cand := range fired {
@@ -213,11 +217,11 @@ func TestHeartbeatFiresDueBeat(t *testing.T) {
 	waitAllSettled(t, st, "alice")
 }
 
-// TestHeartbeatFiresOnceUnderConcurrency: a browser and a podcast client
-// can arrive at the same instant. Advancing the clock before kicking is
-// the claim that makes that safe — two heartbeats must not become two
-// Episodes.
-func TestHeartbeatFiresOnceUnderConcurrency(t *testing.T) {
+// TestTickFiresOnceUnderConcurrency: the hourly job and an admin pressing
+// "run a pass now" can arrive at the same instant. Advancing the clock
+// before kicking is the claim that makes that safe — six passes must not
+// become six Episodes.
+func TestTickFiresOnceUnderConcurrency(t *testing.T) {
 	ts, st := newGeneratingServerStore(t, nil)
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
@@ -234,12 +238,12 @@ func TestHeartbeatFiresOnceUnderConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := st.ListGenerations(ctx, "alice")
+	markSeen(t, st, "alice", time.Now().UTC())
 
-	u, _ := st.GetUser(ctx, "alice")
 	var wg sync.WaitGroup
 	for range 6 {
 		wg.Go(func() {
-			r := do(t, "GET", ts.URL+"/f/"+u.FeedToken+"/feed.xml", "", nil, "")
+			r := do(t, "POST", ts.URL+"/tick", "bearer:"+tickToken, nil, "")
 			r.Body.Close()
 		})
 	}
@@ -248,13 +252,13 @@ func TestHeartbeatFiresOnceUnderConcurrency(t *testing.T) {
 
 	after, _ := st.ListGenerations(ctx, "alice")
 	if len(after) != len(before)+1 {
-		t.Errorf("six simultaneous polls made %d generations, want 1 (total %d → %d)",
+		t.Errorf("six simultaneous ticks made %d generations, want 1 (total %d → %d)",
 			len(after)-len(before), len(before), len(after))
 	}
 }
 
-// TestBeatNotDueDoesNotFire: the common case — a feed polled every hour
-// must not produce an Episode every hour.
+// TestBeatNotDueDoesNotFire: the common case — a Tick every hour must not
+// produce an Episode every hour.
 func TestBeatNotDueDoesNotFire(t *testing.T) {
 	ts, st := newGeneratingServerStore(t, nil)
 	alice := createUser(t, ts, "alice")
@@ -265,16 +269,17 @@ func TestBeatNotDueDoesNotFire(t *testing.T) {
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
 	before, _ := st.ListGenerations(ctx, "alice")
+	markSeen(t, st, "alice", time.Now().UTC())
 
-	u, _ := st.GetUser(ctx, "alice")
 	for range 3 {
-		r := do(t, "GET", ts.URL+"/f/"+u.FeedToken+"/feed.xml", "", nil, "")
-		r.Body.Close()
+		if status := tick(t, ts); status.BeatsFired != 0 {
+			t.Errorf("a beat that is not due fired: %+v", status)
+		}
 	}
 	waitAllSettled(t, st, "alice")
 
 	if after, _ := st.ListGenerations(ctx, "alice"); len(after) != len(before) {
-		t.Errorf("polling a beat that is not due made %d extra generations", len(after)-len(before))
+		t.Errorf("ticking a beat that is not due made %d extra generations", len(after)-len(before))
 	}
 }
 
@@ -530,8 +535,9 @@ func TestStoriesBeatPicksItsOwnCadence(t *testing.T) {
 }
 
 // waitForGenerations waits until the user has at least n generations,
-// returning them. The heartbeat is detached from the request that
-// triggered it, so a test cannot simply read straight after the response.
+// returning them. A Tick is synchronous but Kick is not, and a generate
+// request answers before its run finishes, so a test cannot simply read
+// straight after the response.
 func waitForGenerations(t *testing.T, st *fsstore.Store, user string, n int) []store.Generation {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -552,7 +558,9 @@ func waitForGenerations(t *testing.T, st *fsstore.Store, user string, n int) []s
 
 // waitAllSettled lets every in-flight run finish, so a test never leaves
 // a goroutine writing into a temp directory being torn down. It also
-// gives a detached heartbeat time to have done whatever it was going to.
+// gives anything already in flight time to have done whatever it was
+// going to — which is what makes "nothing fired" assertions mean
+// something rather than passing vacuously.
 func waitAllSettled(t *testing.T, st *fsstore.Store, user string) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
@@ -568,8 +576,8 @@ func waitAllSettled(t *testing.T, st *fsstore.Store, user string) {
 			}
 		}
 		if !active {
-			// One more beat of grace for a heartbeat that has read the
-			// beats but not yet written a Generation.
+			// One more beat of grace for a pass that has read the beats
+			// but not yet written a Generation.
 			time.Sleep(50 * time.Millisecond)
 			gens, _ = st.ListGenerations(context.Background(), user)
 			for _, g := range gens {

@@ -73,6 +73,17 @@ type Config struct {
 	// Generator runs built-in Generations (ADR 0009). Nil disables the
 	// /me/generate surface (503) and hides it from the Dashboard.
 	Generator *generation.Runner
+	// TickToken is the credential Cloud Scheduler carries to POST /tick
+	// (Authorization: Bearer), the clock behind Beats and the resume pass
+	// (ADR 0028). Deliberately its own secret and not AdminToken, which
+	// bootstraps user provisioning and admin appointment — a scheduler job
+	// has no business holding that. Empty leaves /tick reachable by an
+	// admin session only, which is the laptop story and the admin page's
+	// "run a pass now" button.
+	TickToken string
+	// Tick is the Tick's policy: Liveness Window, Beat budget, user scan
+	// limit. A zero value takes generation's defaults.
+	Tick generation.TickOptions
 	// AnthropicAdminKey (sk-ant-admin01-...) unlocks GET /admin/costs and
 	// GET /admin/usage, which proxy Anthropic's Usage & Cost Admin API —
 	// the real-dollar counterpart of the per-Generation meters. Empty →
@@ -107,6 +118,9 @@ type server struct {
 	store         store.Store
 	baseURL       string
 	adminHash     [32]byte
+	tickHash      [32]byte
+	tickEnabled   bool // TICK_TOKEN configured; false means admin sessions only
+	tickOptions   generation.TickOptions
 	sessionSecret []byte
 	google        *googleOIDC // nil: password-only
 	log           *slog.Logger
@@ -154,6 +168,9 @@ func New(cfg Config) (http.Handler, error) {
 		store:         cfg.Store,
 		baseURL:       strings.TrimSuffix(cfg.BaseURL, "/"),
 		adminHash:     sha256.Sum256([]byte(cfg.AdminToken)),
+		tickHash:      sha256.Sum256([]byte(cfg.TickToken)),
+		tickEnabled:   cfg.TickToken != "",
+		tickOptions:   cfg.Tick,
 		sessionSecret: []byte(cfg.SessionSecret),
 		log:           cfg.Logger,
 		generator:     cfg.Generator,
@@ -362,15 +379,27 @@ func New(cfg Config) (http.Handler, error) {
 	// Cast extraction backfill for a story episode the checkbox missed.
 	mux.HandleFunc("POST /me/episodes/{slug}/characters", s.auth(s.generating(s.handleEpisodeCharacters)))
 
-	// Beats (ADR 0016): the Generations a User asked to keep happening.
-	// Session-only — a Beat spends money unattended, so a leaked API Key
-	// must not be able to leave one running.
+	// Beats (ADR 0016, fired by the Tick since ADR 0028): the Generations
+	// a User asked to keep happening. Session-only — a Beat spends money
+	// unattended, so a leaked API Key must not be able to leave one
+	// running.
 	mux.HandleFunc("GET /me/beats", s.session(s.generating(s.handleBeats)))
 	mux.HandleFunc("GET /me/beats/{id}/edit", s.session(s.generating(s.handleBeatEdit)))
 	mux.HandleFunc("POST /me/beats/{id}", s.session(s.generating(s.handleBeatUpdate)))
 	mux.HandleFunc("POST /me/beats/{id}/pause", s.session(s.generating(s.handleBeatPause)))
 	mux.HandleFunc("POST /me/beats/{id}/resume", s.session(s.generating(s.handleBeatResume)))
 	mux.HandleFunc("POST /me/beats/{id}/cancel", s.session(s.generating(s.handleBeatCancel)))
+
+	// The Tick (ADR 0028): the one request that does the work nobody
+	// asked for — firing due Beats for Users seen lately, and resuming
+	// Generations that Cloud Run stalled. Cloud Scheduler calls it hourly
+	// with TICK_TOKEN; an admin can call it from the admin page, which is
+	// also how it works on a laptop with no scheduler.
+	//
+	// tickAuth and not adminUser: adminUser wraps s.auth and so admits API
+	// Keys, and a credential that could make the station spend on a timer
+	// is exactly what ADR 0010 keeps out of a Generator's reach.
+	mux.HandleFunc("POST /tick", s.tickAuth(s.handleTick))
 
 	// Admin, on two credentials by design.
 	//
@@ -719,12 +748,12 @@ func (s *server) handleFeed(w http.ResponseWriter, r *http.Request, u store.User
 	}
 	serveFeed(w, r, body)
 
-	// The heartbeat that matters (ADR 0016): a podcast client polling for
-	// new audio is the one sign of life that arrives while its owner is
-	// asleep. Fired after the response, so the feed is never held up —
-	// which also means this poll gets yesterday's Episodes and the next
-	// one gets what this heartbeat starts.
-	s.heartbeat(u)
+	// The sign of life that matters (ADR 0028): a podcast client polling
+	// for new audio is the one request that arrives while its owner is
+	// asleep, and it is what keeps their Beats inside the Liveness Window.
+	// It fires nothing and resumes nothing — the Tick does both, hourly —
+	// so this poll stays a read, with at most one coarsened write behind it.
+	s.seen(u)
 }
 
 // serveFeed writes a rendered feed under an ETag, so the next poll costs
@@ -1141,6 +1170,10 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		s.fail(w, err)
 		return
 	}
+	// The JSON form is the Management API, which an API Key reaches: a
+	// Generator checking its own account, not a person. It returns before
+	// the liveness write at the bottom on purpose — a bot polling /me
+	// must not be able to hold its owner's Beats open forever (ADR 0028).
 	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
 		s.writeJSON(w, http.StatusOK, struct {
 			store.User
@@ -1312,9 +1345,11 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		Beats:           beats,
 		subscribeBox:    s.subscribeBox(r, u),
 	})
-	// Opening the Dashboard catches your Beats up, so a feed you are
-	// looking at is never quietly overdue.
-	s.heartbeat(u)
+	// Opening the Dashboard says you are still here, and picks up a run
+	// Cloud Run stalled rather than making you wait for the next Tick.
+	// It does not catch your Beats up: firing is the Tick's job now.
+	s.seen(u)
+	s.resume(u)
 }
 
 // episodeView is an Episode plus the display strings the Dashboard

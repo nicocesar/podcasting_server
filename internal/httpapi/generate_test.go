@@ -99,6 +99,15 @@ func newGeneratingServerWith(t *testing.T, composer generation.Composer) *httpte
 // not expose, such as a Beat's clock.
 func newGeneratingServerStore(t *testing.T, composer generation.Composer) (*httptest.Server, *fsstore.Store) {
 	t.Helper()
+	return newGeneratingServerTick(t, composer, generation.TickOptions{})
+}
+
+// newGeneratingServerTick is newGeneratingServerStore with the Tick's
+// policy under the test's control — a budget of one, a liveness window of
+// an hour. Separate rather than a wider signature, so the callers that do
+// not care about the clock are untouched.
+func newGeneratingServerTick(t *testing.T, composer generation.Composer, opt generation.TickOptions) (*httptest.Server, *fsstore.Store) {
+	t.Helper()
 	st, err := fsstore.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -106,6 +115,8 @@ func newGeneratingServerStore(t *testing.T, composer generation.Composer) (*http
 	handler, err := New(Config{
 		Store:         st,
 		AdminToken:    adminToken,
+		TickToken:     tickToken,
+		Tick:          opt,
 		SessionSecret: "test-session-secret",
 		Assets:        os.DirFS("../../cmd/server"),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),

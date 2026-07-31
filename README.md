@@ -33,9 +33,15 @@ the Publishing Contract below.
   setting `ANTHROPIC_API_KEY` (SETUP.md §11); progress is checkpointed
   and resumes across restarts.
 - **Beats** (ADR 0016): a generation you asked to keep happening, on a
-  cadence, managed at `/me/beats`. There is no scheduler — a Beat comes
-  round when the owner's feed is polled or their dashboard opened, so the
-  podcast client's hourly fetch is what makes the morning briefing.
+  cadence, managed at `/me/beats`.
+- **The Tick** (ADR 0028): one endpoint, `POST /tick`, that Cloud
+  Scheduler calls hourly — it fires due Beats and picks up generations
+  Cloud Run stalled. Traffic no longer fires anything; it records that
+  the owner was here, and a Beat fires only for someone seen in the last
+  week. So spend still follows listening, but the work no longer depends
+  on a podcast client waking up at the right moment. Set `TICK_TOKEN` and
+  point a scheduler at it (SETUP.md §12); `/admin` shows when the last
+  pass landed.
 - HTML pages are `html/template` files under `cmd/server/templates`
   (layout + pages + `fragments/`), shipped in the binary via `go:embed` —
   editing them means rebuild + redeploy.
