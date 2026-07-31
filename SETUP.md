@@ -210,7 +210,7 @@ gcloud secrets add-iam-policy-binding podcast-anthropic-key \
 gcloud services enable texttospeech.googleapis.com
 
 # Wire both into the service
-gcloud run services update podcasting-server --region=us-central1 \
+gcloud run services update podcasting-server --region=${REGION} \
   --update-secrets=ANTHROPIC_API_KEY=podcast-anthropic-key:latest
 ```
 
@@ -245,17 +245,30 @@ openssl rand -hex 24 | tr -d '\n' | \
 gcloud secrets add-iam-policy-binding podcast-tick-token \
   --member=serviceAccount:${SA} --role=roles/secretmanager.secretAccessor
 
-gcloud run services update podcasting-server --region=us-central1 \
+gcloud run services update podcasting-server --region=${REGION} \
   --update-secrets=TICK_TOKEN=podcast-tick-token:latest
 
+export URL=$(gcloud run services describe podcasting-server \
+  --region=${REGION} --format='value(status.url)')
+
 gcloud scheduler jobs create http podcast-tick \
-  --location=us-central1 \
+  --location=${REGION} \
   --schedule="0 * * * *" \
-  --uri="https://YOUR-SERVICE-URL/tick" \
+  --time-zone=Etc/UTC \
+  --uri="${URL}/tick" \
   --http-method=POST \
   --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret=podcast-tick-token)" \
-  --attempt-deadline=300s
+  --attempt-deadline=180s
 ```
+
+The deadline must clear the two minutes a pass allows itself. It rarely
+matters — a pass is bounded store I/O and the Generations it starts run
+on their own contexts, well outside the request.
+
+Note that the token is stored in the scheduler job's configuration, so
+anyone who can read the job can read the secret. That is the trade a
+shared secret makes; `roles/cloudscheduler.viewer` is the permission to
+be careful with.
 
 Both the secret and the scheduler job are **manual, one-time steps
 outside the deploy**: `cloudbuild.yaml` swaps the container image and
