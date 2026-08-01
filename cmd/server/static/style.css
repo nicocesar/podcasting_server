@@ -491,6 +491,22 @@ details.subscribe > div {
 .air-form { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
 .air-row .muted { font-size: 0.85rem; margin: 0; }
 
+/* Mid-press. htmx puts .htmx-request on the form for as long as the
+   round trip lasts: the control keeps its size and just goes quiet, so
+   nothing under it jumps while the server answers. */
+.air-row form.htmx-request { opacity: 0.55; }
+.air-row form.htmx-request button { cursor: progress; }
+
+/* Why the press did nothing. Only ever appears on a control that posted
+   in place — a full-page post gets a status code instead. It takes the
+   whole width so the control below it keeps its own line. */
+.air-error {
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  color: var(--live);
+  margin: 0;
+}
+
 /* Live and public. This is the one state the ON AIR red is for — a
    listener outside the station can hear this, and nothing else on the
    dashboard is true of. */

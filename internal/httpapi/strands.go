@@ -11,6 +11,7 @@ package httpapi
 // public is a decision a person makes in a browser.
 
 import (
+	"bytes"
 	"errors"
 	"net/http"
 	"time"
@@ -142,7 +143,7 @@ func (s *server) handleAir(w http.ResponseWriter, r *http.Request, u store.User)
 	// public surface by forwarding it to themselves first (ADR 0006
 	// lets anyone forward; ADR 0018 does not let anyone air).
 	if ep.AirBarred {
-		http.Error(w, "the station removed this episode from the air", http.StatusForbidden)
+		s.airFail(w, r, u, slug, "the station removed this episode from the air", http.StatusForbidden)
 		return
 	}
 
@@ -151,12 +152,12 @@ func (s *server) handleAir(w http.ResponseWriter, r *http.Request, u store.User)
 		strand = ep.Strand
 	}
 	if strand == "" {
-		http.Error(w, "this episode has no strand yet — choose one to air it", http.StatusUnprocessableEntity)
+		s.airFail(w, r, u, slug, "this episode has no strand yet — choose one to air it", http.StatusUnprocessableEntity)
 		return
 	}
 	st, err := s.store.GetStrand(r.Context(), strand)
 	if errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "no such strand", http.StatusUnprocessableEntity)
+		s.airFail(w, r, u, slug, "no such strand", http.StatusUnprocessableEntity)
 		return
 	}
 	if err != nil {
@@ -164,7 +165,7 @@ func (s *server) handleAir(w http.ResponseWriter, r *http.Request, u store.User)
 		return
 	}
 	if st.Dormant() {
-		http.Error(w, "that strand is not taking episodes", http.StatusUnprocessableEntity)
+		s.airFail(w, r, u, slug, "that strand is not taking episodes", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -176,7 +177,7 @@ func (s *server) handleAir(w http.ResponseWriter, r *http.Request, u store.User)
 			s.afterAiring(w, r, u, slug)
 			return
 		}
-		http.Error(w, "this episode is already on another strand — take it off the air first", http.StatusConflict)
+		s.airFail(w, r, u, slug, "this episode is already on another strand — take it off the air first", http.StatusConflict)
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
 		s.fail(w, err)
@@ -295,10 +296,88 @@ func (s *server) handleUnfollow(w http.ResponseWriter, r *http.Request, u store.
 	http.Redirect(w, r, returnTo(r, "/strands/"+strand), http.StatusSeeOther)
 }
 
+// airRowFor rebuilds the airing control for one of u's own Episodes,
+// exactly as the Dashboard and the Episode Page build it. Airing changes
+// nothing but the Airing, so re-reading is the cheapest way to be sure
+// the control the reader is left looking at is the truth rather than
+// what the handler hoped it had done.
+func (s *server) airRowFor(r *http.Request, u store.User, slug, msg string) (airRowView, error) {
+	ep, err := s.store.GetEpisode(r.Context(), u.ID, slug)
+	if err != nil {
+		return airRowView{}, err
+	}
+	strands, err := s.awakeStrands(r)
+	if err != nil {
+		return airRowView{}, err
+	}
+	row := airRowView{
+		Slug:            ep.Slug,
+		AirBarred:       ep.AirBarred,
+		SuggestedStrand: ep.Strand,
+		Strands:         strands,
+		// The address the press came from, so the row that replaces this
+		// one still knows where a JavaScript-less press would land.
+		ReturnTo: returnTo(r, "/me/episodes/"+u.ID+"/"+slug),
+		Error:    msg,
+	}
+	if a, err := s.store.GetAiringByEpisode(r.Context(), u.ID, slug); err == nil {
+		row.OnAir = &a
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return airRowView{}, err
+	}
+	return row, nil
+}
+
+// htmxRequest reports whether this press came from the control posting
+// in place rather than from the browser navigating. htmx sets the header
+// on every request it makes; nothing else does.
+func htmxRequest(r *http.Request) bool { return r.Header.Get("HX-Request") == "true" }
+
+// airFail is the refusal path for a press on the airing control. A
+// full-page post gets the status code it always got — the browser is
+// leaving anyway and has nowhere to put a message. An htmx press gets
+// the control back with the reason attached, since the reader is still
+// looking at the page that asked.
+func (s *server) airFail(w http.ResponseWriter, r *http.Request, u store.User, slug, msg string, status int) {
+	if !htmxRequest(r) {
+		http.Error(w, msg, status)
+		return
+	}
+	row, err := s.airRowFor(r, u, slug, msg)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.renderAirRow(w, row)
+}
+
+// renderAirRow writes the control on its own, with no layout around it.
+func (s *server) renderAirRow(w http.ResponseWriter, row airRowView) {
+	var buf bytes.Buffer
+	if err := s.tmplAirRow.ExecuteTemplate(&buf, "airrow", row); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
 // afterAiring sends the browser where the form asked to go (ADR 0022),
 // falling back to the Episode Page on its signed-in address — never the
 // capability one, so a listener's address bar never holds the key to
 // their whole feed.
+// or, when the press came from htmx, hands back the control alone and
+// leaves the page where it was.
 func (s *server) afterAiring(w http.ResponseWriter, r *http.Request, u store.User, slug string) {
+	if htmxRequest(r) {
+		row, err := s.airRowFor(r, u, slug, "")
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		s.renderAirRow(w, row)
+		return
+	}
 	http.Redirect(w, r, returnTo(r, "/me/episodes/"+u.ID+"/"+slug), http.StatusSeeOther)
 }

@@ -132,6 +132,11 @@ type airRowView struct {
 	// two surfaces pass different values; the handler honours whichever
 	// it is given (ADR 0022).
 	ReturnTo string
+	// Error is what went wrong on the press that produced this row —
+	// only ever set when the row is re-rendered in place for htmx. A
+	// full-page post still gets a plain status code, because there the
+	// browser is leaving anyway and has nowhere to put a message.
+	Error string
 }
 
 // pageView is what every HTML response executes against: the bar, and

@@ -151,6 +151,10 @@ type server struct {
 	tmplStrands *template.Template
 	tmplStrand  *template.Template
 
+	// tmplAirRow is the airing control on its own, with no layout around
+	// it: what an htmx press gets back in place of a whole new page.
+	tmplAirRow *template.Template
+
 	tmplAdminGeneration *template.Template
 	tmplAdminStrands    *template.Template
 	tmplAdmin           *template.Template
@@ -199,7 +203,7 @@ func New(cfg Config) (http.Handler, error) {
 	s.assetVersion = "dev"
 	h := sha256.New()
 	hashed := false
-	for _, name := range []string{"static/style.css", "static/player.js", "static/beat.js", "static/coverart.js"} {
+	for _, name := range []string{"static/style.css", "static/player.js", "static/beat.js", "static/coverart.js", "static/htmx.min.js"} {
 		if b, err := fs.ReadFile(cfg.Assets, name); err == nil {
 			h.Write(b)
 			hashed = true
@@ -229,6 +233,7 @@ func New(cfg Config) (http.Handler, error) {
 		{&s.tmplSettings, []string{"templates/layout.html", "templates/settings.html"}},
 		{&s.tmplStrands, []string{"templates/layout.html", "templates/strands.html"}},
 		{&s.tmplStrand, []string{"templates/layout.html", "templates/strand.html", "templates/fragments/*.html"}},
+		{&s.tmplAirRow, []string{"templates/fragments/*.html"}},
 		{&s.tmplAdminGeneration, []string{"templates/layout.html", "templates/admin_generation.html"}},
 		{&s.tmplAdminStrands, []string{"templates/layout.html", "templates/admin_strands.html"}},
 		{&s.tmplAdmin, []string{"templates/layout.html", "templates/admin.html"}},

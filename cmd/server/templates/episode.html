@@ -1,5 +1,5 @@
 {{define "title"}}{{.Episode.Title}}{{end}}
-{{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
+{{define "scripts"}}<script src="/static/htmx.min.js?v={{assetv}}" defer></script><script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
 {{define "content"}}
 <article class="card">
   {{if .CoverURL}}<img class="cover" src="{{.CoverURL}}?s=thumb" alt="Cover art for this feed">{{end}}

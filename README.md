@@ -47,7 +47,10 @@ the Publishing Contract below.
   pass landed.
 - HTML pages are `html/template` files under `cmd/server/templates`
   (layout + pages + `fragments/`), shipped in the binary via `go:embed` —
-  editing them means rebuild + redeploy.
+  editing them means rebuild + redeploy. The airing control posts in
+  place with htmx and gets the same fragment back (ADR 0031); everything
+  else is a plain form and a redirect, and airing still is without
+  JavaScript.
 
 ## Local development
 

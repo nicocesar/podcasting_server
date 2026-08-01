@@ -11,10 +11,15 @@
      put it in front of strangers (ADR 0006 vs ADR 0018), and the server
      enforces that regardless of what is rendered here.
 
-     A plain form, no JavaScript: the whole thing degrades to a select
-     and a button. */}}
+     A plain form first: without JavaScript the whole thing degrades to a
+     select, a button, and the redirect the handler has always sent. With
+     htmx loaded the same forms post in place and the server sends this
+     fragment back to replace the control — the round trip is identical,
+     only the page it lands on differs. The target is "closest .air-row"
+     rather than an id, so nothing has to agree about a name. */}}
 {{define "airrow"}}
 <div class="air-row">
+  {{with .Error}}<p class="air-error" role="alert">{{.}}</p>{{end}}
   {{if .AirBarred}}
   <p class="muted">The station took this off the air. Only an admin can put it back.</p>
   {{else if .OnAir}}
@@ -23,13 +28,19 @@
     On air in <a href="/strands/{{.OnAir.Strand}}">{{.OnAir.Strand}}</a> —
     anyone can hear it.
   </p>
-  <form method="post" action="/me/episodes/{{.Slug}}/unair">
+  <form method="post" action="/me/episodes/{{.Slug}}/unair"
+        hx-post="/me/episodes/{{.Slug}}/unair"
+        hx-target="closest .air-row" hx-swap="outerHTML"
+        hx-disabled-elt="find button">
     <input type="hidden" name="return" value="{{.ReturnTo}}">
     <button class="quiet" type="submit"
             title="Take it off the public strand. Anything already downloaded stays downloaded."><svg class="icon" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#i-x"/></svg>Take off the air</button>
   </form>
   {{else if .Strands}}
-  <form method="post" action="/me/episodes/{{.Slug}}/air" class="air-form">
+  <form method="post" action="/me/episodes/{{.Slug}}/air" class="air-form"
+        hx-post="/me/episodes/{{.Slug}}/air"
+        hx-target="closest .air-row" hx-swap="outerHTML"
+        hx-disabled-elt="find button">
     <input type="hidden" name="return" value="{{.ReturnTo}}">
     <label class="sr-only" for="air-{{.Slug}}">Strand to air this on</label>
     <select id="air-{{.Slug}}" name="strand">
