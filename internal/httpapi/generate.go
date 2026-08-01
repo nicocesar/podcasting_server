@@ -318,6 +318,27 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		return
 	}
 	req, msg := s.parseGenerationForm(r, u, tpl)
+	if req.Recur {
+		// A Beat is session-only, and this is where one is born. The
+		// /me/beats routes have always been s.session, but a Beat is not
+		// created there — it is created by the recur checkbox on this
+		// form, which rides the generate route and so accepts an API Key.
+		// ADR 0016 stated the invariant and this path quietly broke it.
+		//
+		// The reasoning is ADR 0010's and ADR 0016's together: a Beat
+		// spends money on its own schedule, so a leaked Generator
+		// credential must not be able to leave one running. That matters
+		// more since ADR 0028 than it did before — Beats used to fire only
+		// when traffic happened to arrive, and now they fire on a clock.
+		//
+		// Refused the way s.session refuses, rather than as a form error:
+		// the caller is a program, and a rendered HTML form is not an
+		// answer it can use.
+		if _, ok := s.bearerUser(r); ok {
+			http.Error(w, "a Beat requires a browser session, not an API key", http.StatusForbidden)
+			return
+		}
+	}
 	if msg == "" && req.Recur {
 		// Checked before anything is created, so the cap is reported on the
 		// form rather than after an Episode already exists.

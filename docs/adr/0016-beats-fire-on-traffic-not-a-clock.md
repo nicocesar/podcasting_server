@@ -81,6 +81,20 @@ reason with; a small number is the honest guard.
 API Key must not be able to leave one running — the same reasoning that
 put Credential Management behind a session in ADR 0010.
 
+This has to hold on **both** halves, and for a long time it did not. The
+`/me/beats` routes were session-only from the start, but nothing creates
+a Beat there: one is born from the `recur` checkbox on the generate form,
+which rides `POST /me/generate/{template}` and accepts an API Key like
+every other publishing route. So the invariant was written here, enforced
+on the management routes, and quietly absent from the only route that
+matters — a leaked Generator credential could leave up to five Beats
+running. `recur` now requires a session and answers an API Key with 403,
+the way `s.session` does.
+
+The bug was cheap while Beats fired on traffic, because a leaked key's
+Beats fired only when a poll happened to arrive. ADR 0028 put them on a
+clock, which is what made it worth finding.
+
 ## Considered Options
 
 - **Cloud Scheduler calling an authenticated tick endpoint.** Rejected:

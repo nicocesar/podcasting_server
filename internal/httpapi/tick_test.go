@@ -53,7 +53,7 @@ func TestTickSkipsDormantUser(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "1"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -131,7 +131,7 @@ func TestTickBudgetBounds(t *testing.T) {
 	ctx := context.Background()
 
 	for range 2 {
-		resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+		resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 			newsForm(map[string]string{"recur": "1", "freshness": "1"}), formType)
 		resp.Body.Close()
 		waitAllSettled(t, st, "alice")
@@ -185,7 +185,7 @@ func TestFeedPollDoesNotFireBeats(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "1"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")

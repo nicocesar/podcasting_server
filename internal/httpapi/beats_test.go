@@ -49,7 +49,7 @@ func TestBeatCreatedWithTheFirstEpisode(t *testing.T) {
 	ts, st := newGeneratingServerStore(t, nil)
 	alice := createUser(t, ts, "alice")
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1"}), formType)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
@@ -116,6 +116,50 @@ func TestTimelessCannotRecur(t *testing.T) {
 	}
 }
 
+// TestBeatCreationRequiresSession: a Beat is session-only, and this is
+// where one is born. The /me/beats routes have always been s.session, but
+// nothing creates a Beat there — the recur checkbox on the generate form
+// does, and that route accepts an API Key. ADR 0016 claimed the invariant
+// while this path quietly broke it, and every test above created its
+// Beats with a Generator credential without anyone noticing.
+//
+// It matters more since ADR 0028 than it did before: a leaked key's Beats
+// used to fire only when traffic happened to arrive, and now they fire on
+// a clock.
+func TestBeatCreationRequiresSession(t *testing.T) {
+	ts, st := newGeneratingServerStore(t, nil)
+	alice := createUser(t, ts, "alice")
+	ctx := context.Background()
+
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+		newsForm(map[string]string{"recur": "1"}), formType)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("an API key created a Beat: status = %d, want 403\n%s", resp.StatusCode, body)
+	}
+
+	// Refused before anything exists — no Beat, and no Episode the owner
+	// would be billed for on the way to being told no.
+	beats, _ := st.ListBeats(ctx, "alice")
+	if len(beats) != 0 {
+		t.Errorf("a refused request left %d beats behind", len(beats))
+	}
+	gens, _ := st.ListGenerations(ctx, "alice")
+	if len(gens) != 0 {
+		t.Errorf("a refused request started %d generations", len(gens))
+	}
+
+	// The same key still publishes and still makes one-off Episodes: this
+	// closes the Beat path, not the Publishing Contract.
+	resp = do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(), newsForm(nil), formType)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("a one-off with an API key: status = %d, want 201", resp.StatusCode)
+	}
+	waitAllSettled(t, st, "alice")
+}
+
 // TestBeatCap: the guard against unattended spending, and it must fire
 // before anything is created — otherwise the user pays for an Episode to
 // be told they may not have the Beat that came with it.
@@ -124,7 +168,7 @@ func TestBeatCap(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 
 	for i := range maxBeatsPerUser {
-		resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+		resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 			newsForm(map[string]string{"recur": "1"}), formType)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated {
@@ -166,7 +210,7 @@ func TestTickFiresDueBeatForLiveUser(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "1"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -226,7 +270,7 @@ func TestTickFiresOnceUnderConcurrency(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "1"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -264,7 +308,7 @@ func TestBeatNotDueDoesNotFire(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "7"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -291,7 +335,7 @@ func TestBeatPauseResumeCancel(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "1"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -353,7 +397,7 @@ func TestBeatEditKeepsHistory(t *testing.T) {
 	alice := createUser(t, ts, "alice")
 	ctx := context.Background()
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "1"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -399,7 +443,7 @@ func TestBeatEditToTimelessRejected(t *testing.T) {
 	ts, st := newGeneratingServerStore(t, nil)
 	alice := createUser(t, ts, "alice")
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "7"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -445,7 +489,7 @@ func TestBeatsPageShowsTheBeat(t *testing.T) {
 	ts, st := newGeneratingServerStore(t, nil)
 	alice := createUser(t, ts, "alice")
 
-	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.publishCreds(),
+	resp := do(t, "POST", ts.URL+"/me/generate/news", alice.sessionCreds(),
 		newsForm(map[string]string{"recur": "1", "freshness": "7"}), formType)
 	resp.Body.Close()
 	waitAllSettled(t, st, "alice")
@@ -517,7 +561,7 @@ func TestStoriesBeatPicksItsOwnCadence(t *testing.T) {
 		t.Fatalf("an off-menu interval: status = %d, want 400", resp.StatusCode)
 	}
 
-	resp = do(t, "POST", ts.URL+"/me/generate/stories", alice.publishCreds(),
+	resp = do(t, "POST", ts.URL+"/me/generate/stories", alice.sessionCreds(),
 		form(map[string]string{"recur": "1", "interval": "1"}), formType)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {

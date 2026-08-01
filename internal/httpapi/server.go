@@ -383,6 +383,13 @@ func New(cfg Config) (http.Handler, error) {
 	// a User asked to keep happening. Session-only — a Beat spends money
 	// unattended, so a leaked API Key must not be able to leave one
 	// running.
+	//
+	// These are only half of that rule. A Beat is *created* by the recur
+	// checkbox on the generate form above, which is s.auth and so takes an
+	// API Key; the session check for it lives in handleGenerateStart,
+	// because that route legitimately serves both credentials for
+	// everything else it does. Guarding this block alone left the
+	// invariant true of managing a Beat and false of making one.
 	mux.HandleFunc("GET /me/beats", s.session(s.generating(s.handleBeats)))
 	mux.HandleFunc("GET /me/beats/{id}/edit", s.session(s.generating(s.handleBeatEdit)))
 	mux.HandleFunc("POST /me/beats/{id}", s.session(s.generating(s.handleBeatUpdate)))
