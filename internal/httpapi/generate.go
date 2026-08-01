@@ -76,6 +76,10 @@ type generatePage struct {
 	// leaves the browser on each list's first option — the behaviour the
 	// form had before it could be prefilled at all.
 	Values generationRequest
+	// HomeZone is the User's, so the form can name the timezone its time
+	// picker is read in. Empty means they have none yet, in which case
+	// the note stays hidden and the first Anchor sets one.
+	HomeZone string
 	// Beat is set only when editing one: it redirects the form at the
 	// Beat's own URL and changes what the button says.
 	Beat *store.Beat
@@ -100,6 +104,14 @@ type generationRequest struct {
 	// FreshnessDays for a template that derives it.
 	Recur        bool
 	IntervalDays int
+
+	// FireAt is the Beat's Anchor as "HH:MM", empty for a loose one
+	// (ADR 0030). BrowserZone is what the form said the browser's IANA
+	// zone was; it is only ever used to give a User their first Home
+	// Zone, never to change one they already have — travelling must not
+	// silently move somebody's morning.
+	FireAt      string
+	BrowserZone string
 }
 
 // pageTemplate resolves the {template} path segment ("" → news, the
@@ -150,6 +162,7 @@ func (s *server) generatePage(r *http.Request, u store.User, tpl generation.Temp
 		AgeRanges: generation.AgeRanges,
 		Languages: tts.Languages(),
 		Providers: s.generator.EngineNames(),
+		HomeZone:  u.HomeZone,
 	}
 	if tpl.HasCast {
 		opts, err := s.castOptions(r, u)
@@ -244,6 +257,21 @@ func (s *server) parseGenerationForm(r *http.Request, u store.User, tpl generati
 	// briefing, but that is a convenience; this is the rule.
 	req.Recur = r.FormValue("recur") != ""
 	if req.Recur {
+		req.FireAt = strings.TrimSpace(r.FormValue("fire_at"))
+		req.BrowserZone = strings.TrimSpace(r.FormValue("browser_zone"))
+		if err := store.ValidateFireAt(req.FireAt); err != nil {
+			return req, err.Error()
+		}
+		// An Anchor is a wall time and means nothing without a zone to
+		// read it in. Either the User has one, or the browser just told
+		// us one — and a browser that reports nonsense is a browser we
+		// decline rather than a zone we guess at.
+		if req.FireAt != "" && u.HomeZone == "" {
+			if err := store.ValidateHomeZone(req.BrowserZone); err != nil || req.BrowserZone == "" {
+				return req, "We could not work out your timezone, so a time of day would be a guess. " +
+					"Set one in Settings, or leave the time empty and the beat will run whenever it comes round."
+			}
+		}
 		switch {
 		case tpl.DerivesInterval && req.FreshnessDays == 0:
 			return req, "A timeless topic isn't tied to the news, so there's nothing " +
@@ -361,6 +389,14 @@ func (s *server) handleGenerateStart(w http.ResponseWriter, r *http.Request, u s
 		if err != nil {
 			s.fail(w, err)
 			return
+		}
+		// An Anchor needs a zone to be an instant. Stamped before the Beat
+		// is written, so a Beat with a FireAt is never stored without one.
+		if req.FireAt != "" {
+			if u, err = s.ensureHomeZone(r, u, req.BrowserZone); err != nil {
+				s.fail(w, err)
+				return
+			}
 		}
 	}
 	g := newGeneration(u, tpl, req, id, beatID, now)

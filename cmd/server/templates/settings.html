@@ -29,6 +29,28 @@
     <p class="msg muted" id="profile-msg" hidden></p>
   </section>
 
+  {{/* The Home Zone (ADR 0030). Only shown once something depends on it:
+       a listener with no beat on a clock has no reason to be asked what
+       country they consider home. */}}
+  {{if .User.HomeZone}}
+  <section class="panel">
+    <p class="eyebrow">Home timezone</p>
+    <form method="post" action="/me/timezone" class="join">
+      <label for="tz">Beats with a set time fire on this zone</label>
+      <input id="tz" name="timezone" value="{{.User.HomeZone}}"
+             maxlength="64" autocomplete="off" spellcheck="false"
+             placeholder="America/New_York">
+      <input type="hidden" name="return" value="/me/settings">
+      <button type="submit">Save timezone</button>
+    </form>
+    <p class="muted" style="font-size:.85rem">An
+    <a href="https://en.wikipedia.org/wiki/List_of_tz_database_time_zones">IANA
+    zone name</a>, not an offset — that way daylight saving takes care of
+    itself. It stays put when you travel: a 7am briefing arrives at 7am
+    here, whatever time it is where you are.</p>
+  </section>
+  {{end}}
+
   <section class="panel">
     <p class="eyebrow">Feed URL</p>
     <div class="invite-row" id="feed-row">

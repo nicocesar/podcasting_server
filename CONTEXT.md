@@ -295,8 +295,30 @@ everything a Generation needs, so every Episode it makes is the same
 request asked again. It is dormant between Episodes — the Tick is what
 comes round for it, and only while its owner is inside the Liveness
 Window, so a Beat nobody is listening to falls quiet, and one that has
-been quiet a while covers the whole gap when it wakes.
+been quiet a while covers the whole gap when it wakes. It may name a time
+of day, in which case each firing has an Anchor and a morning missed by
+too much is skipped rather than delivered after dark.
 _Avoid_: schedule, cron job, recurrence, series, subscription
+
+**Anchor**:
+The firing a Beat intends — an instant it is *for*, as distinct from the
+instant it happens. A Beat caught a quarter of an hour late has still
+fired for its Anchor, and the next one is measured from the Anchor rather
+than from the firing, which is what stops a daily Beat wandering later
+through the clock. A Beat may carry a time of day, in which case its
+Anchors fall at that hour in its owner's Home Zone; one that carries none
+is _loose_, keeps its cadence, and has no opinion about the hour.
+_Avoid_: schedule, due date, cron expression, next run
+
+**Home Zone**:
+The place a User's Anchors are read in, named as a region and city rather
+than an offset so that daylight saving takes care of itself. Home, and
+deliberately not wherever they are standing: it does not follow its owner
+abroad, so a briefing anchored to the morning arrives in the evening
+while they are away and is itself again when they are back. The station
+learns it once, from the browser that first asks for a time of day, and
+changes it only when asked.
+_Avoid_: locale, region, current timezone, offset, UTC offset
 
 **Tick**:
 The one request that does the work nobody asked for: an hourly call to

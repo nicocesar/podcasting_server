@@ -1,5 +1,5 @@
 {{define "title"}}{{.User.Title}}{{end}}
-{{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script>{{end}}
+{{define "scripts"}}<script src="/static/player.js?v={{assetv}}" defer></script><script src="/static/homezone.js?v={{assetv}}" defer></script>{{end}}
 {{define "content"}}
 <div class="dash">
 
@@ -74,6 +74,28 @@
          feature invisible to anyone who has never made one. */}}
     <section class="card">
       <p class="eyebrow">Beats · {{len .Beats}}</p>
+
+      {{/* The traveller's prompt (ADR 0030). Rendered hidden and revealed
+           by homezone.js only when the browser's zone is not the stored
+           one: the server has no way to know where this page is being
+           read. An offer, never an action — a laptop that woke up in
+           Tokyo is not a reason to move somebody's morning. */}}
+      {{if .Zone.Relevant}}
+      <div class="warn" id="zone-banner" hidden
+           data-home-zone="{{.Zone.Home}}">
+        <p>Your beats fire on <strong>{{.Zone.Home}}</strong>, but this
+        browser is on <strong><span id="zone-browser"></span></strong>.
+        {{if eq .Zone.Anchored 1}}One beat has{{else}}{{.Zone.Anchored}} beats have{{end}}
+        a set time, so {{if eq .Zone.Anchored 1}}it{{else}}they{{end}} will
+        arrive at the usual hour back home.</p>
+        <form method="post" action="/me/timezone">
+          <input type="hidden" name="timezone" id="zone-switch-to" value="">
+          <input type="hidden" name="return" value="{{.Zone.ReturnTo}}">
+          <button class="quiet" type="submit">Move my beats here</button>
+        </form>
+      </div>
+      {{end}}
+
       {{range .Beats}}
       <div class="gen-row">
         <span class="topic">{{.Topic}}</span>

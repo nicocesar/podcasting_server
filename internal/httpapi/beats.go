@@ -63,9 +63,11 @@ func newBeat(u store.User, tpl generation.Template, req generationRequest, id st
 		Voice:          req.Voice,
 		Provider:       req.Provider,
 		IntervalDays:   req.IntervalDays,
+		FireAt:         req.FireAt,
 		CreatedAt:      now,
 	}
 }
+
 
 // beatCapError reports the message to show when the user may not have
 // another Beat, or "" when they may.
@@ -94,6 +96,7 @@ func beatValues(b store.Beat) generationRequest {
 		Language:       b.Language,
 		Voice:          b.Voice,
 		Provider:       b.Provider,
+		FireAt:         b.FireAt,
 		Recur:          true,
 		IntervalDays:   b.IntervalDays,
 	}
@@ -302,9 +305,23 @@ func (s *server) handleBeatUpdate(w http.ResponseWriter, r *http.Request, u stor
 		return
 	}
 
+	// An Anchor added on an edit needs a zone, exactly as one added on
+	// creation does.
+	if req.FireAt != "" {
+		var err error
+		if u, err = s.ensureHomeZone(r, u, req.BrowserZone); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
 	updated := newBeat(u, tpl, req, b.ID, b.CreatedAt)
 	// The history and the clock survive an edit: retuning the wording of
 	// a Topic is not a reason to re-cover a week you already heard.
+	//
+	// The Anchor survives too, and a changed FireAt needs no re-phasing:
+	// the next occurrence re-reads the wall clock from the Beat, so a
+	// 07:00 Anchor moved to 09:00 simply comes round at 09:00 next time.
+	updated.AnchorAt = b.AnchorAt
 	updated.LastFiredAt = b.LastFiredAt
 	updated.LastSucceededAt = b.LastSucceededAt
 	updated.EpisodeCount = b.EpisodeCount
@@ -343,6 +360,11 @@ func (s *server) handleBeatResume(w http.ResponseWriter, r *http.Request, u stor
 	}
 	now := time.Now().UTC()
 	b.Paused = false
+	// The Anchor re-phases too, or a Beat paused for a month would come
+	// back with a month-old Anchor and be due the instant it resumed. For
+	// an Anchored Beat this reads as "start counting from today", so the
+	// next one lands at its own time of day tomorrow rather than now.
+	b.AnchorAt = now
 	b.LastFiredAt = now
 	b.LastSucceededAt = now
 	b.ConsecutiveFailures = 0

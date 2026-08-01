@@ -88,9 +88,22 @@
         {{range .Intervals}}<option value="{{.Days}}"{{if eq $.Values.IntervalDays .Days}} selected{{end}}>{{.Label}}</option>{{end}}
       </select>
       {{end}}
-      <p class="muted beat-note">Beats run while something is listening: they
-      catch up when your podcast app checks the feed, or when you open your
-      dashboard.</p>
+
+      {{/* The Anchor (ADR 0030). Optional on purpose: leaving it empty is
+           how every Beat behaved before, and "some time that day" is a
+           perfectly good answer for most of them. The zone rides along in
+           a hidden field so nobody has to hunt through a list of 350 —
+           it is only read when the user has none set yet. */}}
+      <label for="fire_at">At a particular time <span class="muted">(optional)</span></label>
+      <input type="time" id="fire_at" name="fire_at" value="{{.Values.FireAt}}">
+      <input type="hidden" id="browser_zone" name="browser_zone" value="">
+      <p class="muted beat-note" id="beat-zone-note"{{if not .HomeZone}} hidden{{end}}>
+        Times are {{if .HomeZone}}{{.HomeZone}}{{end}} — your home timezone.
+        Travelling doesn't move it; <a href="/me/settings">change it in settings</a>.
+      </p>
+
+      <p class="muted beat-note">Beats run while something is listening: if
+      nothing checks your feed for a week, they go quiet until it does.</p>
     </div>
 
     <button type="submit">{{if .Beat}}Save the beat{{else}}Generate{{end}}</button>

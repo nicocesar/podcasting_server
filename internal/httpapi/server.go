@@ -360,6 +360,11 @@ func New(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("GET /me/api-keys", s.session(s.handleListAPIKeys))
 	mux.HandleFunc("POST /me/api-keys", s.session(s.handleMintAPIKey))
 	mux.HandleFunc("DELETE /me/api-keys/{keyid}", s.session(s.handleRevokeAPIKey))
+	// The Home Zone (ADR 0030). Session-only and deliberately not part of
+	// PUT /me: moving it re-times every Anchored Beat, and far enough
+	// west today's Anchor has not happened yet and fires again — which is
+	// unattended spend, and so out of an API Key's reach.
+	mux.HandleFunc("POST /me/timezone", s.session(s.handleSetTimezone))
 	mux.HandleFunc("POST /me/password", s.session(s.handleSetPassword))
 	mux.HandleFunc("POST /me/google/unlink", s.session(s.handleGoogleUnlink))
 	mux.HandleFunc("POST /me/logout-everywhere", s.session(s.handleLogoutEverywhere))
@@ -1332,6 +1337,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		GenerateEnabled bool
 		Generations     []generationView
 		Beats           []beatView
+		Zone            zoneBanner
 		// ReturnTo is this page as the reader reached it, filter and
 		// all, so an action lands them back where they were rather than
 		// at the top of an unfiltered log (ADR 0022).
@@ -1350,6 +1356,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 		GenerateEnabled: s.generator != nil,
 		Generations:     generations,
 		Beats:           beats,
+		Zone:            zoneBannerFor(u, beats, r.URL.RequestURI()),
 		subscribeBox:    s.subscribeBox(r, u),
 	})
 	// Opening the Dashboard says you are still here, and picks up a run

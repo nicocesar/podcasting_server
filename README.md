@@ -33,7 +33,10 @@ the Publishing Contract below.
   setting `ANTHROPIC_API_KEY` (SETUP.md §11); progress is checkpointed
   and resumes across restarts.
 - **Beats** (ADR 0016): a generation you asked to keep happening, on a
-  cadence, managed at `/me/beats`.
+  cadence, managed at `/me/beats`. Optionally at a time of day (ADR
+  0030) — "every morning at seven", read in your home timezone, which
+  stays put when you travel so a briefing anchored to the morning turns
+  up in the evening abroad rather than shifting under you.
 - **The Tick** (ADR 0028): one endpoint, `POST /tick`, that Cloud
   Scheduler calls hourly — it fires due Beats and picks up generations
   Cloud Run stalled. Traffic no longer fires anything; it records that
