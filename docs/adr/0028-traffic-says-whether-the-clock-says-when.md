@@ -4,9 +4,20 @@ Date: 2026-07-30
 
 ## Status
 
-Proposed (reverses ADR 0016's firing mechanism while keeping the
+Accepted (reverses ADR 0016's firing mechanism while keeping the
 property it was built to protect; gives ADR 0009's resume pass a
-dependable driver; prerequisite for ADR 0029)
+dependable driver)
+
+Built and running: Cloud Scheduler calls `POST /tick` every fifteen
+minutes, and the admin page shows what the last pass did. The fifteen
+rather than the hourly this ADR argued for is deliberate — ADR 0030 put
+a time of day on a Beat, and an Anchor is only honoured to within one
+Tick.
+
+Note that ADR 0029, named here as the thing that needed a clock with no
+natural rider, was never proposed: it is a draft under discussion. The
+argument for a Tick stands without it, on the two costs ADR 0016
+recorded and could not fix.
 
 ## Context
 

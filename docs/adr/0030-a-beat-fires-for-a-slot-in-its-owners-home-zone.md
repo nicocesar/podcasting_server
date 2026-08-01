@@ -4,9 +4,14 @@ Date: 2026-08-01
 
 ## Status
 
-Proposed (extends ADR 0016's Beat with a time of day; depends on ADR
+Accepted (extends ADR 0016's Beat with a time of day; depends on ADR
 0028's clock, without which none of this is expressible; introduces the
 first locale state the station has ever held)
+
+Built and running. The arithmetic and the drift fix landed first and on
+their own; the form, the Settings control and the Dashboard banner
+followed. Existing loose Beats stopped drifting on deploy without a
+migration, by inheriting their last firing as an Anchor.
 
 ## Context
 
