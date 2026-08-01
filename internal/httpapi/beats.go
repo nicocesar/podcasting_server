@@ -123,6 +123,10 @@ func (s *server) beatViews(r *http.Request, u store.User) ([]beatView, error) {
 		return nil, err
 	}
 	now := time.Now().UTC()
+	loc, zoneErr := store.LoadZone(u.HomeZone)
+	if zoneErr != nil {
+		loc = time.UTC
+	}
 	views := make([]beatView, 0, len(beats))
 	for _, b := range beats {
 		tpl, _ := generation.TemplateByID(b.Template)
@@ -130,7 +134,7 @@ func (s *server) beatViews(r *http.Request, u store.User) ([]beatView, error) {
 			Beat:        b,
 			ProgramName: tpl.Name,
 			Cadence:     cadenceLabel(b.IntervalDays),
-			Status:      beatStatus(b, now),
+			Status:      beatStatus(b, now, loc, u.HomeZone != ""),
 			EditURL:     "/me/beats/" + b.ID + "/edit",
 			Failing:     b.ConsecutiveFailures > 0,
 		})
@@ -158,22 +162,57 @@ func cadenceLabel(days int) string {
 }
 
 // beatStatus is the one line under a Beat that says where it stands.
-func beatStatus(b store.Beat, now time.Time) string {
+//
+// An Anchored Beat gets a wall time, because that is what its owner
+// asked for and a vague span would be a worse answer than the exact one.
+// A loose Beat keeps the vague span, because it has no time of day to be
+// precise about.
+func beatStatus(b store.Beat, now time.Time, loc *time.Location, hasZone bool) string {
 	if b.Paused {
 		if b.ConsecutiveFailures >= store.BeatFailureLimit {
 			return fmt.Sprintf("paused after %d failures", b.ConsecutiveFailures)
 		}
 		return "paused"
 	}
-	d := b.DueAt().Sub(now)
-	if d <= 0 {
+	if b.FireAt != "" && !hasZone {
+		// Reachable only by clearing a Home Zone that Anchored Beats were
+		// relying on. Said plainly, because the Beat has silently stopped.
+		return "waiting for a timezone — set one in Settings"
+	}
+	if b.Due(now, loc) {
 		return "due now"
 	}
-	return "next in about " + roughDuration(d)
+	next := b.NextAt(now, loc)
+	if next.IsZero() {
+		return "not scheduled"
+	}
+	if b.FireAt == "" {
+		return "next in about " + roughDuration(next.Sub(now))
+	}
+	return "next " + whenWords(next, now, loc)
+}
+
+// whenWords names an Anchored firing the way a person would: the day it
+// falls on and the time of day, read in the owner's own zone.
+func whenWords(next, now time.Time, loc *time.Location) string {
+	at := next.In(loc)
+	clock := at.Format("15:04")
+	today := now.In(loc)
+	days := int(at.Truncate(24*time.Hour).Sub(today.Truncate(24*time.Hour)) / (24 * time.Hour))
+	switch {
+	case at.YearDay() == today.YearDay() && at.Year() == today.Year():
+		return "today at " + clock
+	case days <= 1:
+		return "tomorrow at " + clock
+	case days < 7:
+		return at.Format("Monday") + " at " + clock
+	default:
+		return at.Format("2 Jan") + " at " + clock
+	}
 }
 
 // roughDuration is a human span for a due time — deliberately vague,
-// because a Beat fires when traffic next arrives, not on the minute.
+// because a loose Beat has no time of day, only a cadence.
 func roughDuration(d time.Duration) string {
 	switch {
 	case d < time.Hour:

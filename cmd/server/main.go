@@ -18,6 +18,13 @@ import (
 	"strings"
 	"time"
 
+	// A Home Zone is an IANA name (ADR 0030), so the binary has to be
+	// able to resolve one. distroless/static does ship tzdata today, but
+	// that is a property of the base image rather than of this program:
+	// embedding the database costs ~450KB and makes a Beat's morning
+	// independent of what the Dockerfile happens to sit on.
+	_ "time/tzdata"
+
 	"github.com/nicocesar/podcasting_server/internal/coverart"
 	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/httpapi"

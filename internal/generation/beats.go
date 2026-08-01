@@ -38,18 +38,34 @@ const resumeTimeout = 30 * time.Second
 // A Beat that fails to fire is logged and skipped, and the first error is
 // returned once the rest have had their turn: one bad Beat must not cost
 // its owner the others.
-func (r *Runner) FireDue(ctx context.Context, userID string, budget int) (fired int, truncated bool, err error) {
+func (r *Runner) FireDue(ctx context.Context, u store.User, budget int) (fired int, truncated bool, err error) {
 	if budget <= 0 {
 		return 0, false, nil
 	}
-	beats, err := r.store.ListBeats(ctx, userID)
+	beats, err := r.store.ListBeats(ctx, u.ID)
 	if err != nil {
 		return 0, false, err
+	}
+	// The whole User rather than an id, because an Anchor is a wall time
+	// and needs the Home Zone to be an instant at all (ADR 0030). A User
+	// with no zone can still hold loose Beats, which do not consult it.
+	loc, err := store.LoadZone(u.HomeZone)
+	if err != nil {
+		loc = time.UTC
 	}
 	var firstErr error
 	now := time.Now().UTC()
 	for _, b := range beats {
-		if !b.Due(now) {
+		if b.FireAt != "" && u.HomeZone == "" {
+			// An Anchored Beat whose owner has no Home Zone cannot be
+			// placed on a clock. Reading it in UTC would fire somebody's
+			// morning briefing in the middle of their night, which is
+			// worse than not firing it, so it waits for a zone to be set.
+			r.log.Warn("beats: anchored beat has no home zone",
+				"user", u.ID, "beat", b.ID, "fire_at", b.FireAt)
+			continue
+		}
+		if !b.Due(now, loc) {
 			continue
 		}
 		if _, ok := TemplateByID(b.Template); !ok {
@@ -65,9 +81,9 @@ func (r *Runner) FireDue(ctx context.Context, userID string, budget int) (fired 
 			truncated = true
 			break
 		}
-		started, err := r.fire(ctx, b, now)
+		started, err := r.fire(ctx, b, now, loc)
 		if err != nil {
-			r.log.Error("beats: fire failed", "user", userID, "beat", b.ID, "err", err)
+			r.log.Error("beats: fire failed", "user", u.ID, "beat", b.ID, "err", err)
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -93,7 +109,7 @@ func (r *Runner) FireDue(ctx context.Context, userID string, budget int) (fired 
 // resolve to exactly one Episode. Across replicas it is the persisted
 // clock alone, which is the same best-effort race Kick documents — and
 // the same worst case: duplicated work and a suffixed slug from freeSlug.
-func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time) (bool, error) {
+func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time, loc *time.Location) (bool, error) {
 	if !r.claimBeat(b) {
 		return false, nil
 	}
@@ -104,7 +120,7 @@ func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time) (bool, e
 	if err != nil {
 		return false, err
 	}
-	if !fresh.Due(now) {
+	if !fresh.Due(now, loc) {
 		return false, nil
 	}
 	b = fresh
@@ -138,13 +154,21 @@ func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time) (bool, e
 	if tpl, ok := TemplateByID(b.Template); ok && tpl.DerivesInterval {
 		g.FreshnessDays = b.GapDays(now)
 	}
+	// The Slot is the firing this run is *for*, which is not the instant
+	// it happens: a 07:00 Beat caught by the 07:13 Tick has fired for
+	// 07:00. Recording the Slot as the new Anchor is what keeps tomorrow
+	// at 07:00 instead of 07:13, and then 07:26, and so on (ADR 0030).
+	slot := b.Slot(now, loc)
 	// Traced at creation, like the cast on a hand-started Generation:
 	// it explains months later why an Episode nobody asked for exists,
-	// and why its window was the width it was.
+	// why its window was the width it was, and — when someone asks why
+	// their briefing was late — how far behind its Anchor it ran.
 	r.trace(&g, store.LevelInfo, "beat.fired", "started by a Beat",
 		"beat", b.ID, "interval_days", b.IntervalDays,
-		"freshness_days", g.FreshnessDays, "episode_count", b.EpisodeCount)
+		"freshness_days", g.FreshnessDays, "episode_count", b.EpisodeCount,
+		"anchor", slot.In(loc).Format(time.RFC3339), "late_by", now.Sub(slot).Round(time.Second).String())
 
+	b.AnchorAt = slot
 	b.LastFiredAt = now
 	if err := r.store.PutBeat(ctx, b); err != nil {
 		return false, err

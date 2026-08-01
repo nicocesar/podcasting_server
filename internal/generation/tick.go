@@ -127,7 +127,7 @@ func (r *Runner) Tick(ctx context.Context, opt TickOptions) (store.TickStatus, e
 			status.Truncated = true
 			break
 		}
-		fired, truncated, err := r.FireDue(ctx, u.ID, remaining)
+		fired, truncated, err := r.FireDue(ctx, u, remaining)
 		remaining -= fired
 		status.BeatsFired += fired
 		if truncated {

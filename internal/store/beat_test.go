@@ -51,8 +51,8 @@ func TestBeatDue(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.beat.Due(beatNow); got != tc.want {
-				t.Errorf("Due = %v, want %v (due at %s)", got, tc.want, tc.beat.DueAt())
+			if got := tc.beat.Due(beatNow, time.UTC); got != tc.want {
+				t.Errorf("Due = %v, want %v (due at %s)", got, tc.want, tc.beat.DueAt(time.UTC))
 			}
 		})
 	}

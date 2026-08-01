@@ -67,7 +67,7 @@ func TestBeatCreatedWithTheFirstEpisode(t *testing.T) {
 	if b.LastFiredAt.IsZero() {
 		t.Error("the clock did not start: LastFiredAt is zero")
 	}
-	if b.Due(time.Now().UTC()) {
+	if b.Due(time.Now().UTC(), time.UTC) {
 		t.Error("a brand-new beat is already due; it should be a week away")
 	}
 	waitAllSettled(t, st, "alice")
@@ -374,7 +374,7 @@ func TestBeatPauseResumeCancel(t *testing.T) {
 	if got.Paused {
 		t.Error("resume did not unpause the beat")
 	}
-	if got.Due(time.Now().UTC()) {
+	if got.Due(time.Now().UTC(), time.UTC) {
 		t.Error("resume left the beat immediately due; the clock should have re-phased")
 	}
 

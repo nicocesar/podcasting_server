@@ -11,6 +11,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"time"
 	"unicode/utf8"
 )
@@ -130,6 +131,22 @@ type User struct {
 	// password change or "log out everywhere") kills all outstanding
 	// sessions on their next request.
 	CredentialVersion int64 `json:"-" datastore:"credential_version,noindex"`
+
+	// HomeZone is the IANA zone an Anchored Beat's time of day is read in
+	// (ADR 0030) — "America/New_York", never a UTC offset, so daylight
+	// saving is the zone database's problem and not ours.
+	//
+	// Home, and deliberately not current: it does not follow the owner
+	// abroad. A briefing anchored to seven in the morning arrives at
+	// eight in the evening in Tokyo, and goes back to normal on the
+	// flight home. Following the traveller would mean a zone change
+	// mid-cycle, which can only ever deliver two Episodes in one day or
+	// none — and the station cannot see a phone that never opens the web.
+	//
+	// Empty means unset, which is every User written before Anchors and
+	// everyone who has never asked for a time of day. Loose Beats never
+	// need it.
+	HomeZone string `json:"home_zone,omitempty" datastore:"home_zone,noindex"`
 
 	// LastSeenAt is the liveness timestamp (ADR 0028): the Tick fires a
 	// User's due Beats only if they were seen inside the Liveness Window.
@@ -506,7 +523,20 @@ type Beat struct {
 	// by the runner after BeatFailureLimit consecutive failures.
 	Paused bool `json:"paused,omitempty" datastore:"paused,noindex"`
 
-	// LastFiredAt is the clock: it advances on every firing, successful or
+	// FireAt is the time of day this Beat wants, as "HH:MM" in its
+	// owner's Home Zone. Empty means loose: the Beat keeps its cadence
+	// but has no opinion about the hour, which is how every Beat behaved
+	// before Anchors existed.
+	FireAt string `json:"fire_at,omitempty" datastore:"fire_at,noindex"`
+
+	// AnchorAt is the instant this Beat last intended to fire, which is
+	// not the instant it did. The next occurrence is measured from here,
+	// so a Beat caught by the 07:15 Tick still means 07:00 tomorrow.
+	// Measuring from LastFiredAt instead is what made every Beat ratchet
+	// forward by up to one Tick a day, forever.
+	AnchorAt time.Time `json:"anchor_at,omitzero" datastore:"anchor_at,noindex"`
+
+	// LastFiredAt is when the Beat actually last fired, successful or
 	// not, so a failing Beat retries on cadence instead of hammering.
 	// LastSucceededAt is what the Freshness Window stretches from, so the
 	// Episode after a run of failures still covers the ground they missed.
@@ -520,20 +550,194 @@ type Beat struct {
 	UpdatedAt time.Time `json:"updated_at" datastore:"updated_at,noindex"`
 }
 
-// DueAt is when the Beat next wants to fire. A Beat with no firing yet
-// is anchored to its creation: the form that created it already produced
-// the first Episode.
-func (b Beat) DueAt() time.Time {
-	from := b.LastFiredAt
-	if from.IsZero() {
-		from = b.CreatedAt
+var fireAtPattern = regexp.MustCompile(`^([01][0-9]|2[0-3]):([0-5][0-9])$`)
+
+// ParseFireAt splits a "HH:MM" time of day, reporting whether it is one.
+// The empty string is not an hour and not an error: it is what a loose
+// Beat carries.
+func ParseFireAt(s string) (hour, minute int, ok bool) {
+	if !fireAtPattern.MatchString(s) {
+		return 0, 0, false
 	}
-	return from.AddDate(0, 0, b.IntervalDays)
+	h, _ := strconv.Atoi(s[:2])
+	m, _ := strconv.Atoi(s[3:])
+	return h, m, true
 }
 
-// Due reports whether the Beat should fire at t.
-func (b Beat) Due(t time.Time) bool {
-	return !b.Paused && b.IntervalDays > 0 && !t.Before(b.DueAt())
+// ValidateFireAt reports why s is unacceptable as a Beat's time of day,
+// or nil. The empty string is accepted: it means the Beat is loose.
+func ValidateFireAt(s string) error {
+	if s == "" {
+		return nil
+	}
+	if _, _, ok := ParseFireAt(s); !ok {
+		return errors.New("a time of day must be written HH:MM, on a 24-hour clock")
+	}
+	return nil
+}
+
+// LoadZone resolves an IANA zone name, refusing the two values that
+// would silently mean something else. The empty string is not a zone,
+// and "Local" is the *server's* zone — a Cloud Run container's idea of
+// local is UTC, which is nobody's morning.
+func LoadZone(name string) (*time.Location, error) {
+	if name == "" {
+		return nil, errors.New("no timezone set")
+	}
+	if name == "Local" {
+		return nil, errors.New(`"Local" is the server's timezone, not yours`)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return nil, fmt.Errorf("unknown timezone %q", name)
+	}
+	return loc, nil
+}
+
+// ValidateHomeZone reports why s is unacceptable as a User's Home Zone,
+// or nil. The empty string is accepted: it means none is set, which is
+// every User who has never asked a Beat for a time of day.
+func ValidateHomeZone(s string) error {
+	if s == "" {
+		return nil
+	}
+	_, err := LoadZone(s)
+	return err
+}
+
+// BeatGrace is how late an Anchored Beat may still fire. A morning
+// briefing is allowed to be late — a deploy, a cold start, an owner who
+// was outside the Liveness Window until mid-morning — but it is not
+// allowed to arrive at bedtime calling itself the morning news. Past the
+// grace, the firing is skipped and the next Anchor comes round tomorrow.
+//
+// Nothing is lost by skipping: GapDays widens the next Freshness Window
+// to cover the ground the skipped Episode would have covered.
+const BeatGrace = 4 * time.Hour
+
+// maxAnchorRoll bounds the walk from a stale Anchor to the present. A
+// daily Beat whose owner was dormant for a year needs 365 steps; the cap
+// is generous enough that the walk always converges in one pass, and
+// exists only so a corrupt IntervalDays cannot spin forever.
+const maxAnchorRoll = 500
+
+// anchorBase is the intended instant the next occurrence is measured
+// from. The fallbacks are the migration: a Beat written before Anchors
+// existed has no AnchorAt, so it inherits the instant it last actually
+// fired and freezes there instead of continuing to drift. One that has
+// never fired falls back to its creation, exactly as DueAt always did.
+func (b Beat) anchorBase() time.Time {
+	if !b.AnchorAt.IsZero() {
+		return b.AnchorAt
+	}
+	if !b.LastFiredAt.IsZero() {
+		return b.LastFiredAt
+	}
+	return b.CreatedAt
+}
+
+// occurrenceAfter is the intended firing one interval after t.
+//
+// The arithmetic is calendar arithmetic in loc, then the wall clock is
+// re-set to FireAt — which is what makes an Anchor survive a daylight
+// saving change. Adding 24 hours across a spring-forward would land at
+// 08:00; adding one calendar day and re-setting the clock lands at 07:00,
+// which is what "every morning at seven" means.
+//
+// A Beat with no FireAt is loose: it keeps whatever time of day its base
+// had, so the interval is honoured and nothing invents a clock for it.
+func (b Beat) occurrenceAfter(t time.Time, loc *time.Location) time.Time {
+	next := t.In(loc).AddDate(0, 0, b.IntervalDays)
+	if h, m, ok := ParseFireAt(b.FireAt); ok {
+		// time.Date has to resolve a wall time that does not exist. On
+		// the morning a spring-forward skips 02:00–03:00, an Anchor at
+		// 02:30 comes back as 01:30 in the old offset — an hour early,
+		// once a year, and only for an Anchor inside the skipped hour.
+		// Accepted rather than special-cased: the alternative is a rule
+		// about an hour nobody anchors a briefing to.
+		next = time.Date(next.Year(), next.Month(), next.Day(), h, m, 0, 0, loc)
+	}
+	return next
+}
+
+// Slot is the most recent firing the Beat intended at or before t, or the
+// zero time if none has come round yet.
+//
+// This is the instant a firing is *for*, as distinct from the instant it
+// happens. Recording the Slot rather than the firing is what stops a Beat
+// drifting: a daily Beat caught by the 07:15 Tick has fired for the 07:00
+// Slot, so tomorrow's is 07:00 again rather than 07:15 and then 07:30.
+func (b Beat) Slot(t time.Time, loc *time.Location) time.Time {
+	base := b.anchorBase()
+	if base.IsZero() || b.IntervalDays <= 0 {
+		return time.Time{}
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+	var slot time.Time
+	cur := base
+	for range maxAnchorRoll {
+		next := b.occurrenceAfter(cur, loc)
+		if next.After(t) {
+			break
+		}
+		slot, cur = next, next
+	}
+	return slot
+}
+
+// NextAt is the first firing the Beat intends strictly after t — what the
+// Beats page means by "next". A Beat that is due right now still reports
+// its next one, so the page can say both.
+func (b Beat) NextAt(t time.Time, loc *time.Location) time.Time {
+	base := b.anchorBase()
+	if base.IsZero() || b.IntervalDays <= 0 {
+		return time.Time{}
+	}
+	if loc == nil {
+		loc = time.UTC
+	}
+	cur := base
+	for range maxAnchorRoll {
+		next := b.occurrenceAfter(cur, loc)
+		if next.After(t) {
+			return next
+		}
+		cur = next
+	}
+	return cur
+}
+
+// DueAt is when the Beat next wants to fire, read in loc. Kept for
+// display and for tests; firing goes through Slot, which is the one that
+// knows what a firing is for.
+func (b Beat) DueAt(loc *time.Location) time.Time {
+	if loc == nil {
+		loc = time.UTC
+	}
+	return b.occurrenceAfter(b.anchorBase(), loc)
+}
+
+// Due reports whether the Beat should fire at t, read in loc.
+//
+// A loose Beat fires whenever a Tick next notices it: there is no time of
+// day to be late for. An Anchored one fires only inside BeatGrace of its
+// Slot — past that the Slot is abandoned and the next one comes round on
+// schedule, because a briefing that says "this morning" must not arrive
+// after dark.
+func (b Beat) Due(t time.Time, loc *time.Location) bool {
+	if b.Paused || b.IntervalDays <= 0 {
+		return false
+	}
+	slot := b.Slot(t, loc)
+	if slot.IsZero() {
+		return false
+	}
+	if b.FireAt == "" {
+		return true
+	}
+	return !t.After(slot.Add(BeatGrace))
 }
 
 // GapDays is the Freshness Window the next firing should use: the ground
