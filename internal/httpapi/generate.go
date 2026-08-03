@@ -608,13 +608,27 @@ func statsLabel(g store.Generation) string {
 		}
 		parts = append(parts, s)
 	}
-	if g.TTSAttempts > 0 {
+	// Gated on the characters rather than on the attempts: a performed
+	// story has no fallback chain to count attempts through, so keying
+	// off TTSAttempts hid the character count — the biggest number on
+	// the line — on exactly the template that spends the most.
+	if g.TTSCharacters > 0 {
 		s := fmt.Sprintf("%d chars", g.TTSCharacters)
 		if g.TTSEngine != "" {
 			s += " via " + g.TTSEngine
 		}
+		if g.DialogueRequests > 0 {
+			s += fmt.Sprintf(" (%d)", g.DialogueRequests)
+		}
 		if g.TTSAttempts > 1 {
 			s += fmt.Sprintf(" (%d engine attempts)", g.TTSAttempts)
+		}
+		parts = append(parts, s)
+	}
+	if g.SFXGenerated > 0 || g.SFXCacheHits > 0 {
+		s := plural(g.SFXGenerated, "effect")
+		if g.SFXCacheHits > 0 {
+			s += fmt.Sprintf(" · %d cached", g.SFXCacheHits)
 		}
 		parts = append(parts, s)
 	}

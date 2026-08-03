@@ -75,10 +75,16 @@ type episodeCost struct {
 	// and never will from here: ElevenLabs sells a monthly allowance,
 	// not per-request billing, so a figure in this row would be our
 	// arithmetic rather than their invoice (ADR 0026).
-	MusicMillis  int                `json:"music_millis,omitempty"`
-	MusicCalls   int                `json:"music_calls,omitempty"`
-	MusicModel   string             `json:"music_model,omitempty"`
-	CostUSD      *float64           `json:"cost_usd"` // null while pending
+	MusicMillis int    `json:"music_millis,omitempty"`
+	MusicCalls  int    `json:"music_calls,omitempty"`
+	MusicModel  string `json:"music_model,omitempty"`
+	// The performed-story meters. A story draws on the same allowance
+	// three separate ways at once, which is why these are here rather
+	// than folded into the two above.
+	DialogueRequests int                `json:"dialogue_requests,omitempty"`
+	SFXGenerated     int                `json:"sfx_generated,omitempty"`
+	SFXCacheHits     int                `json:"sfx_cache_hits,omitempty"`
+	CostUSD          *float64           `json:"cost_usd"` // null while pending
 	BreakdownUSD map[string]float64 `json:"breakdown_usd,omitempty"`
 	// Pricing is "reconciled" (all consumed token kinds had a posted
 	// rate for the day) or "pending" (the cost report has not caught
@@ -156,26 +162,59 @@ func (s *server) pricedEpisodes(ctx context.Context, ledger map[string]*dayLedge
 }
 
 // ElevenLabs is what this Generation drew from the ElevenLabs
-// allowance, in ElevenLabs' own units: characters for a voiced episode,
-// composed duration for an ambient one. Empty when the episode owes
-// them nothing — the free engines voice most episodes, and that is the
-// answer to "why is this row blank".
+// allowance, in ElevenLabs' own units: characters for speech, composed
+// duration for music, a count for generated effects. Empty when the
+// episode owes them nothing — the free engines voice most episodes, and
+// that is the answer to "why is this row blank".
 //
-// Deliberately not dollars. The Cost column beside it is Anthropic's
-// posted figure; this is a meter reading. Rendering both as currency
-// would imply the same provenance for two very different numbers.
+// Every kind that drew is listed. This used to be a switch returning the
+// first match, which was right while a template was either voiced or
+// composed and never both. A performed story is both and more: it
+// reported its bed's duration and silently hid the dialogue characters
+// that dominate its bill, so a two-minute story with speech, effects and
+// music read as a flat "1m 00s".
+//
+// Deliberately not dollars, and deliberately not summed. The Cost column
+// beside it is Anthropic's posted figure; this is a meter reading. The
+// units genuinely differ and this page does not invent a rate to convert
+// between them (ADR 0026), so they sit side by side instead.
 func (e *episodeCost) ElevenLabs() string {
-	switch {
-	case e.MusicMillis > 0:
+	var parts []string
+	if e.TTSEngine == "elevenlabs" && e.TTSCharacters > 0 {
+		s := fmt.Sprintf("%s chars", commas(int64(e.TTSCharacters)))
+		// Requests, because dialogue is billed per call as well as per
+		// character, and the packer's budget decides how many a story costs.
+		if e.DialogueRequests > 0 {
+			s += " · " + plural(e.DialogueRequests, "take")
+		}
+		parts = append(parts, s)
+	}
+	if e.MusicMillis > 0 {
 		s := formatDuration(e.MusicMillis)
+		// The unit word only when something else shares the cell. A
+		// composed piece is still a bare duration, as it has always been:
+		// the column header names the vendor, a duration reads as a
+		// duration, and the extra word was wide enough to push this table
+		// into a horizontal scroll on a phone. It earns its width only
+		// once a character count is sitting next to it.
+		if len(parts) > 0 {
+			s += " music"
+		}
 		if e.MusicCalls > 1 {
 			s += fmt.Sprintf(" · %d calls", e.MusicCalls)
 		}
-		return s
-	case e.TTSEngine == "elevenlabs" && e.TTSCharacters > 0:
-		return fmt.Sprintf("%s chars", commas(int64(e.TTSCharacters)))
+		parts = append(parts, s)
 	}
-	return ""
+	if e.SFXGenerated > 0 {
+		parts = append(parts, plural(e.SFXGenerated, "effect"))
+	}
+	// Cache hits cost nothing, which is exactly why they are worth
+	// showing: this is the number that says the cue library is working,
+	// and a story where it stays at zero is a story to go look at.
+	if e.SFXCacheHits > 0 {
+		parts = append(parts, fmt.Sprintf("%d cached", e.SFXCacheHits))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // formatDuration renders composed audio: seconds under a minute,
@@ -237,6 +276,8 @@ func priceGeneration(g store.Generation, ledger map[string]*dayLedger) *episodeC
 		},
 		TTSEngine: g.TTSEngine, TTSCharacters: g.TTSCharacters,
 		MusicMillis: g.MusicMillis, MusicCalls: g.MusicCalls, MusicModel: g.MusicModel,
+		DialogueRequests: g.DialogueRequests,
+		SFXGenerated:     g.SFXGenerated, SFXCacheHits: g.SFXCacheHits,
 		BreakdownUSD: map[string]float64{},
 		Pricing:      "reconciled",
 	}

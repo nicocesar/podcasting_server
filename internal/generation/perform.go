@@ -28,6 +28,10 @@ import (
 // which is what a bed is supposed to do.
 const bedMS = 60_000
 
+// bedAndMixSteps are the two units of work that happen after the last
+// piece is rendered: composing the bed, and mixing everything together.
+const bedAndMixSteps = 2
+
 // judgeStory answers one submit_story call, mirroring judgeSubmission and
 // judgeComposition: accept and checkpoint, or reject with what to fix and
 // let the caller keep polling. An already-answered call is re-judged
@@ -112,10 +116,24 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 		parts = append(parts, p)
 	}
 
+	// The bed and the mix are counted as work, not left off the end.
+	//
+	// Counting pieces alone made the bar reach 100% and then sit there for
+	// minutes: composing the bed can take as long as everything before it,
+	// and the mix runs after that. The page said "Performing" with a full
+	// bar and nothing moving, which is indistinguishable from a hang — and
+	// was reported as one. Whatever the last thing to finish is, the
+	// progress has to still be moving while it runs.
 	g.Stage = store.GenVoicing
-	g.VoicedChunks, g.TotalChunks = 0, len(pieces)
+	g.VoicedChunks, g.TotalChunks = 0, len(pieces)+bedAndMixSteps
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		return g, err
+	}
+	step := func() {
+		g.VoicedChunks++
+		if err := r.store.PutGeneration(ctx, g); err != nil {
+			r.trace(&g, store.LevelWarn, "progress.checkpoint_failed", "progress checkpoint failed", "err", err)
+		}
 	}
 
 	for i, p := range pieces {
@@ -129,21 +147,27 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 		// Checkpoint per piece, the same granularity the voiced path uses:
 		// the progress page moves, and a crash resumes from the stored
 		// Story rather than from the agent.
-		g.VoicedChunks = i + 1
-		if err := r.store.PutGeneration(ctx, g); err != nil {
-			r.trace(&g, store.LevelWarn, "progress.checkpoint_failed", "progress checkpoint failed", "err", err)
-		}
+		step()
 	}
 	if len(parts) == 0 {
 		return g, fmt.Errorf("the story rendered no audio")
 	}
 
+	// Traced before it starts, not after: this is the single slowest call
+	// in the pipeline, and a log that only says when it finished cannot
+	// answer "what is it doing right now".
+	if story.Bed != "" {
+		r.trace(&g, store.LevelInfo, "bed.composing", "composing the music bed", "ms", bedMS)
+	}
 	bed := r.renderBed(ctx, &g, story)
+	step()
 
+	r.trace(&g, store.LevelInfo, "story.mixing", "mixing", "parts", len(parts), "bed", len(bed) > 0)
 	mp3, err := mix.Mix(ctx, parts, bed)
 	if err != nil {
 		return g, fmt.Errorf("mixing: %w", err)
 	}
+	step()
 	r.trace(&g, store.LevelInfo, "story.mixed", "story mixed",
 		"pieces", len(pieces), "parts", len(parts), "bed", len(bed) > 0, "bytes", len(mp3))
 

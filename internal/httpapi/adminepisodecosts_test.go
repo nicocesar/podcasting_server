@@ -165,3 +165,56 @@ func TestAdminEpisodeCostsPendingWhenBillNotPosted(t *testing.T) {
 		t.Errorf("episodes = %+v, want one pending with null cost", got.Episodes)
 	}
 }
+
+// TestEpisodeCostElevenLabsReportsEveryKind guards the bug that shipped:
+// the column was a switch returning the first match, written when a
+// template was either voiced or composed and never both. A performed
+// story is both and more, so it reported its bed's one-minute duration
+// and silently hid the dialogue characters that dominate its bill — a
+// two-minute story with speech, effects and music read as "1m 00s".
+func TestEpisodeCostElevenLabsReportsEveryKind(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ep   episodeCost
+		want string
+	}{
+		{
+			name: "a performed story reports speech, music and effects",
+			ep: episodeCost{
+				TTSEngine: "elevenlabs", TTSCharacters: 4321, DialogueRequests: 3,
+				MusicMillis: 60000, MusicCalls: 1,
+				SFXGenerated: 4, SFXCacheHits: 6,
+			},
+			want: "4,321 chars · 3 takes · 1m 00s music · 4 effects · 6 cached",
+		},
+		{
+			name: "a composed piece is unchanged: a bare duration",
+			ep:   episodeCost{MusicMillis: 1_500_000, MusicCalls: 3},
+			want: "25m 00s · 3 calls",
+		},
+		{
+			name: "a voiced episode is unchanged",
+			ep:   episodeCost{TTSEngine: "elevenlabs", TTSCharacters: 12000},
+			want: "12,000 chars",
+		},
+		{
+			name: "a free-engine episode owes nothing",
+			ep:   episodeCost{TTSEngine: "edge-tts", TTSCharacters: 12000},
+			want: "",
+		},
+		{
+			name: "a story whose effects all came from cache paid for none",
+			ep: episodeCost{
+				TTSEngine: "elevenlabs", TTSCharacters: 900, DialogueRequests: 1,
+				SFXCacheHits: 8,
+			},
+			want: "900 chars · 1 take · 8 cached",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.ep.ElevenLabs(); got != tc.want {
+				t.Errorf("ElevenLabs() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
