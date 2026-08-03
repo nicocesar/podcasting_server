@@ -141,6 +141,7 @@ func (r *Runner) fire(ctx context.Context, b store.Beat, now time.Time, loc *tim
 		SaveCharacters: b.SaveCharacters,
 		Cast:           b.Cast,
 		Language:       b.Language,
+		TargetLanguage: b.TargetLanguage,
 		Voice:          b.Voice,
 		Provider:       b.Provider,
 		Stage:          store.GenResearching,

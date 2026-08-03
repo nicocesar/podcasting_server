@@ -97,6 +97,9 @@ type generationRequest struct {
 	Cast           []store.Character
 	CastRef        string // "owner/slug" the Cast came from; trace only
 	Language       string
+	// TargetLanguage is the language being practiced, for the templates
+	// that offer it. Empty means a monolingual episode.
+	TargetLanguage string
 	Voice          string
 	Provider       string
 
@@ -138,7 +141,7 @@ func (s *server) castOptions(r *http.Request, u store.User) ([]castOption, error
 	}
 	opts := []castOption{}
 	for _, e := range entries {
-		if e.Template != "stories" || len(e.Characters) == 0 {
+		if !generation.CarriesCast(e.Template) || len(e.Characters) == 0 {
 			continue
 		}
 		names := make([]string, len(e.Characters))
@@ -223,10 +226,26 @@ func (s *server) parseGenerationForm(r *http.Request, u store.User, tpl generati
 	if _, ok := tts.VoiceFor(req.Language, ""); !ok {
 		return req, "Pick a language from the list."
 	}
-	// A composed piece has no narrator, so the form does not offer these
-	// and they stay empty on the Generation — nothing downstream resolves
-	// a Voice for it.
-	if !tpl.IsMusic {
+	if tpl.HasTargetLanguage {
+		// Empty is a real answer here — "no second language" — so this is
+		// only validated when something was picked. It must resolve a
+		// tutor voice, because that is who speaks it; a language with no
+		// voice would be written into the story and then read by the
+		// narrator, which is the bug this whole program exists to fix.
+		req.TargetLanguage = r.FormValue("target_language")
+		if req.TargetLanguage == req.Language {
+			req.TargetLanguage = ""
+		}
+		if req.TargetLanguage != "" {
+			if _, ok := tts.RoleVoice("tutor", req.TargetLanguage); !ok {
+				return req, "Pick a language to practice from the list."
+			}
+		}
+	}
+	// A composed piece has no narrator, and a performed story casts every
+	// line from its role, so neither form offers these and they stay empty
+	// on the Generation — nothing downstream resolves a Voice for them.
+	if tpl.HasVoicePicker() {
 		req.Voice = r.FormValue("voice")
 		if _, ok := tts.VoiceFor(req.Language, req.Voice); req.Voice == "" || !ok {
 			return req, "Pick a voice from the list."
@@ -246,7 +265,7 @@ func (s *server) parseGenerationForm(r *http.Request, u store.User, tpl generati
 				return req, "Pick a returning cast from the list."
 			}
 			ep, err := s.store.GetEpisode(r.Context(), owner, slug)
-			if err != nil || ep.Template != "stories" || len(ep.Characters) == 0 {
+			if err != nil || !generation.CarriesCast(ep.Template) || len(ep.Characters) == 0 {
 				return req, "Pick a returning cast from the list."
 			}
 			req.Cast = ep.Characters
@@ -304,6 +323,7 @@ func newGeneration(u store.User, tpl generation.Template, req generationRequest,
 		SaveCharacters: req.SaveCharacters,
 		Cast:           req.Cast,
 		Language:       req.Language,
+		TargetLanguage: req.TargetLanguage,
 		Voice:          req.Voice,
 		Provider:       req.Provider,
 		Stage:          store.GenResearching,
@@ -446,7 +466,7 @@ func (s *server) handleEpisodeCharacters(w http.ResponseWriter, r *http.Request,
 		s.fail(w, err)
 		return
 	}
-	if ep.Template != "stories" {
+	if !generation.CarriesCast(ep.Template) {
 		http.Error(w, "not a story episode", http.StatusConflict)
 		return
 	}

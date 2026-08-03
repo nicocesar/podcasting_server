@@ -40,10 +40,21 @@ type Template struct {
 	RequiresSources bool
 
 	// IsMusic marks a template whose audio is composed rather than
-	// voiced. It routes the runner past TTS entirely and suppresses the
-	// voice, gender, and provider fields on the form — there is no
-	// speech in the output for them to describe.
+	// voiced. It routes the runner past TTS entirely, and through
+	// HasVoicePicker it takes the voice and provider fields off the form —
+	// there is no speech in the output for them to describe.
 	IsMusic bool
+
+	// NeedsDialogue marks a template whose audio is a performance rather
+	// than a reading: several voices, sound effects, a music bed, mixed
+	// together. Only ElevenLabs can render it, so this template does not
+	// get the free engine chain ADR 0009 gives everything else — it needs
+	// a key, and without one it refuses to start rather than quietly
+	// producing the flat single-voice version it exists to replace.
+	//
+	// It also routes the runner past voiceAndPublish entirely: the
+	// deliverable is a segment list, not prose.
+	NeedsDialogue bool
 
 	// Which form fields the template collects beyond the shared set
 	// (topic, length, language, voice, provider).
@@ -51,6 +62,9 @@ type Template struct {
 	HasAgeRange       bool
 	HasCast           bool // returning-characters picker
 	HasSaveCharacters bool // "save the characters" checkbox
+	// HasTargetLanguage adds the second language select: the one the
+	// listener is practicing, as opposed to the one the story is told in.
+	HasTargetLanguage bool
 
 	// DerivesInterval marks a template whose Beat cadence comes from the
 	// Freshness Window instead of its own select: firing exactly as often
@@ -79,9 +93,9 @@ type Template struct {
 	TaskMessage func(g store.Generation, now time.Time) string
 }
 
-// TemplateIDs is the chooser order. Template #3 is one entry in
+// TemplateIDs is the chooser order. A new program is one entry in
 // templates plus an ID here.
-var TemplateIDs = []string{"news", "stories", "ambient"}
+var TemplateIDs = []string{"news", "stories", "stories-v2", "ambient"}
 
 var templates = map[string]Template{
 	"news": {
@@ -124,6 +138,33 @@ var templates = map[string]Template{
 			"or a whole brief: characters, setting, the lesson, tone…",
 		TaskMessage: storiesMessage,
 	},
+	"stories-v2": {
+		ID:      "stories-v2",
+		Name:    "Story Time Studio",
+		Tagline: "A story performed, not read: several voices, sound effects, music — and a second language woven through it.",
+
+		// Its own agent, not a second version of the storyteller's. The
+		// two personas write different things and their prompts have to
+		// version independently (ADR 0011).
+		AgentName:      "podcasting-storyteller-v2",
+		SystemPrompt:   storiesV2SystemPrompt,
+		Tools:          append(agentTools[:len(agentTools):len(agentTools)], submitStoryTool),
+		SubmitToolName: submitStoryToolName,
+		NeedsDialogue:  true,
+
+		HasAgeRange:       true,
+		HasCast:           true,
+		HasSaveCharacters: true,
+		HasTargetLanguage: true,
+
+		TopicLabel: "Story idea",
+		TopicPlaceholder: "e.g. a duck and a pig who move into an empty barn — " +
+			"or a whole brief: characters, setting, the lesson, tone…",
+		ProgressTitle: "Producing a story",
+		PlanStage:     "Writing the story",
+		AudioStage:    "Performing",
+		TaskMessage:   storiesV2Message,
+	},
 	"ambient": {
 		ID:      "ambient",
 		Name:    "The Long Room",
@@ -147,6 +188,29 @@ var templates = map[string]Template{
 	},
 }
 
+// HasVoicePicker reports whether the form should offer the narrator's
+// gender and the TTS provider.
+//
+// Both are meaningless for the programs that do not have a single narrator
+// to describe. A composed piece has no speech at all; a performed story
+// casts every line from its role, and its provider is decided by the one
+// vendor that can render dialogue. Offering either would be offering a
+// control that does nothing.
+func (t Template) HasVoicePicker() bool { return !t.IsMusic && !t.NeedsDialogue }
+
+// CarriesCast reports whether Episodes from this template can hold a cast
+// of Characters — both to extract one onto, and to offer as a returning
+// cast on a later Generation.
+//
+// A predicate rather than a literal "stories" comparison because there is
+// now more than one storytelling program, and a hard-coded ID would mean
+// Story Time Studio silently could not reuse its own characters, which is
+// the feature people notice.
+func CarriesCast(templateID string) bool {
+	tpl, ok := TemplateByID(templateID)
+	return ok && tpl.HasSaveCharacters
+}
+
 // LanguageLabel brands the language select. It is deliberately narrower
 // for music: the language shapes the title and summary a person reads in
 // their feed, and nothing whatsoever about the audio — the composer is
@@ -154,6 +218,11 @@ var templates = map[string]Template{
 func (t Template) LanguageLabel() string {
 	if t.IsMusic {
 		return "Title & summary language"
+	}
+	if t.HasTargetLanguage {
+		// With two language selects on the form, "Output language" stops
+		// being self-explanatory: both are output.
+		return "Told in"
 	}
 	return "Output language"
 }
@@ -276,5 +345,30 @@ func storiesMessage(g store.Generation, now time.Time) string {
 		}
 	}
 	b.WriteString("\nWrite the story and produce the episode as specified in your instructions.")
+	return b.String()
+}
+
+// storiesV2Message renders the Story Time Studio task. Same request as
+// storiesMessage plus the practiced language, and it names the base
+// language as the base rather than as "the language" — the distinction is
+// the whole point of the template, and the task message is where the agent
+// first meets it.
+func storiesV2Message(g store.Generation, now time.Time) string {
+	words := g.LengthMinutes * wordsPerMinute
+	var b strings.Builder
+	fmt.Fprintf(&b, "Today is %s.\nStory idea: %s\nListeners: %s.\nTarget length: about %d spoken words (a %d-minute story).\nTell the story in: %s\n",
+		now.UTC().Format("Monday, 2 January 2006"), g.Topic, ageRangePhrase(g.AgeRange), words, g.LengthMinutes, languageName(g.Language))
+	if t := PrimaryTag(g.TargetLanguage); t != "" && t != PrimaryTag(g.Language) {
+		fmt.Fprintf(&b, "Language being practiced: %s — weave it through the story, spoken by a native voice.\n", languageName(t))
+	} else {
+		b.WriteString("Language being practiced: none — tell the whole story in one language.\n")
+	}
+	if len(g.Cast) > 0 {
+		b.WriteString("\nReturning characters — reuse these characters and keep them consistent:\n")
+		for _, c := range g.Cast {
+			fmt.Fprintf(&b, "- %s — %s\n", c.Name, c.Description)
+		}
+	}
+	b.WriteString("\nWrite the story and produce it as specified in your instructions.")
 	return b.String()
 }

@@ -30,6 +30,13 @@ type ElevenLabs struct {
 // language.
 const elevenLabsModel = "eleven_multilingual_v2"
 
+// elevenLabsDialogueModel is the expressive model behind Text-to-Dialogue.
+// Separate from elevenLabsModel and deliberately not a replacement for it:
+// v3 understands audio tags and matches prosody across speakers, which is
+// what the multi-voice programs need, while the single-voice path stays on
+// the model it was tuned and priced against.
+const elevenLabsDialogueModel = "eleven_v3"
+
 // NewElevenLabs returns an engine reading ELEVENLABS_API_KEY. An empty
 // key is an error rather than a silently dead engine: it would otherwise
 // appear in the provider dropdown and fail every chunk.
@@ -80,6 +87,64 @@ func (e *ElevenLabs) Synthesize(ctx context.Context, text string, v Voice) ([]by
 		// HTML error page should not land whole in the logs.
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, elevenlabs.HTTPError("text-to-speech", resp.StatusCode, msg)
+	}
+	return io.ReadAll(resp.Body)
+}
+
+// SynthesizeDialogue renders a run of turns as one continuous take. The
+// vendor matches prosody across the speaker changes and reads the audio
+// tags embedded in the text, which is why the whole run goes in one
+// request: split it and the seam is audible, because the second half no
+// longer knows how the first half was delivered.
+//
+// The same mp3_44100_128 pin as everywhere else, so what comes back
+// concatenates and mixes with every other part of an episode.
+func (e *ElevenLabs) SynthesizeDialogue(ctx context.Context, inputs []DialogueInput) ([]byte, error) {
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("dialogue: no inputs")
+	}
+	seen := map[string]bool{}
+	for i, in := range inputs {
+		if in.VoiceID == "" {
+			return nil, fmt.Errorf("dialogue: input %d has no voice", i)
+		}
+		seen[in.VoiceID] = true
+	}
+	if len(seen) > MaxDialogueVoices {
+		return nil, fmt.Errorf("dialogue: %d distinct voices exceeds the limit of %d", len(seen), MaxDialogueVoices)
+	}
+
+	// Built explicitly rather than by tagging DialogueInput: that type is
+	// this package's vocabulary, and it should not grow ElevenLabs' wire
+	// names just because ElevenLabs is currently the only implementation.
+	wire := make([]map[string]string, len(inputs))
+	for i, in := range inputs {
+		wire[i] = map[string]string{"text": in.Text, "voice_id": in.VoiceID}
+	}
+	body, err := json.Marshal(map[string]any{
+		"inputs":   wire,
+		"model_id": elevenLabsDialogueModel,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	url := "https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("xi-api-key", e.key)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := e.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return nil, elevenlabs.HTTPError("text-to-dialogue", resp.StatusCode, msg)
 	}
 	return io.ReadAll(resp.Body)
 }

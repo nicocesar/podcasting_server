@@ -1264,7 +1264,7 @@ func (s *server) handleGetMe(w http.ResponseWriter, r *http.Request, u store.Use
 			v.Player.CoverURL = "/strands/" + e.Strand + "/cover"
 		case e.SharedAt == nil:
 			v.Links = links[e.OwnerID+"/"+e.Slug]
-			v.NeedsCharacters = s.generator != nil && e.Template == "stories" && len(e.Characters) == 0
+			v.NeedsCharacters = s.generator != nil && generation.CarriesCast(e.Template) && len(e.Characters) == 0
 		default:
 			shared++
 			v.Shared = true

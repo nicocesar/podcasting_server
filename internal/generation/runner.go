@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/nicocesar/podcasting_server/internal/audio"
+	"github.com/nicocesar/podcasting_server/internal/mix"
+	"github.com/nicocesar/podcasting_server/internal/sfx"
 	"github.com/nicocesar/podcasting_server/internal/store"
 	"github.com/nicocesar/podcasting_server/internal/tts"
 )
@@ -39,6 +41,10 @@ type Config struct {
 	// when ELEVENLABS_API_KEY is unset, which also takes those templates
 	// off the chooser (Templates) rather than letting them fail late.
 	Music Composer
+	// SFX renders the sound effects a performed story asks for. Nil takes
+	// the templates that need it off the chooser, for the same reason
+	// Music does: no fallback exists behind it.
+	SFX SFXRenderer
 	// Model powers the agent, e.g. "claude-sonnet-5".
 	Model string
 	// Host is the bare public domain ("radio.example.com") spoken in the
@@ -70,11 +76,19 @@ type Composer interface {
 	Model() string
 }
 
+// SFXRenderer resolves a cue to audio, saying whether it came from the
+// cache so the run can meter a paid render apart from a free one. As
+// narrow as Composer, and for the same reasons.
+type SFXRenderer interface {
+	Render(ctx context.Context, cue sfx.Cue) (sfx.Result, error)
+}
+
 type Runner struct {
 	store   store.Store
 	api     API
 	engines []tts.Engine
 	music   Composer
+	sfx     SFXRenderer
 	model   string
 	host    string
 	log     *slog.Logger
@@ -108,6 +122,7 @@ func NewRunner(cfg Config) *Runner {
 		api:            cfg.API,
 		engines:        cfg.Engines,
 		music:          cfg.Music,
+		sfx:            cfg.SFX,
 		model:          cfg.Model,
 		host:           cfg.Host,
 		log:            log,
@@ -182,15 +197,32 @@ func (r *Runner) ResumeAll(ctx context.Context) (int, error) {
 // Composer is dropped rather than offered: unlike TTS there is no
 // fallback chain behind it, so it would take the request, spend an agent
 // session, and only then discover it cannot make a sound.
+// A performed template is dropped on the same rule for the same reason:
+// dialogue, effects and a bed are all one vendor with nothing behind
+// them, and mixing needs a binary that may not be in the image.
 func (r *Runner) AvailableTemplates() []string {
 	ids := make([]string, 0, len(TemplateIDs))
 	for _, id := range TemplateIDs {
-		if tpl, ok := TemplateByID(id); ok && tpl.IsMusic && r.music == nil {
+		tpl, ok := TemplateByID(id)
+		if !ok {
+			continue
+		}
+		if tpl.IsMusic && r.music == nil {
+			continue
+		}
+		if tpl.NeedsDialogue && !r.canPerform() {
 			continue
 		}
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// canPerform reports whether everything a performed story needs is
+// actually here: a dialogue-capable engine, an effects renderer, a
+// composer for the bed, and ffmpeg to mix them.
+func (r *Runner) canPerform() bool {
+	return tts.DialogueEngineOf(r.engines) != nil && r.sfx != nil && r.music != nil && mix.Available()
 }
 
 // provision ensures the template's pre-baked agent + the shared
@@ -285,9 +317,13 @@ func (r *Runner) run(g store.Generation) {
 			// Cheap for the spoken programs, at least. A composed piece
 			// pays the vendor per movement, which is why composeMovement
 			// retries in place rather than letting a blip get this far.
-			if tpl, ok := TemplateByID(g.Template); ok && tpl.IsMusic {
+			tpl, _ := TemplateByID(g.Template)
+			switch {
+			case tpl.IsMusic:
 				g, err = r.composeAndPublish(ctx, g)
-			} else {
+			case tpl.NeedsDialogue:
+				g, err = r.performAndPublish(ctx, g)
+			default:
 				g, err = r.voiceAndPublish(ctx, g)
 			}
 		case store.GenDone:
@@ -406,6 +442,27 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 				if use != nil {
 					var done bool
 					g, done, err = r.judgeComposition(ctx, g, use)
+					if done || err != nil {
+						return g, err
+					}
+					break // rejected: keep polling for the resubmission
+				}
+				if !sent {
+					if err := r.api.SendMessage(ctx, g.SessionID, tpl.TaskMessage(g, time.Now())); err != nil {
+						return g, fmt.Errorf("send task: %w", err)
+					}
+					sent = true
+				}
+				break
+			}
+			if tpl.NeedsDialogue {
+				// Like the composer: no legacy contract to fall back on,
+				// and no translation round — the language rule lives
+				// inside the submission, per segment, so a violation is an
+				// ordinary rejection rather than its own dance.
+				if use != nil {
+					var done bool
+					g, done, err = r.judgeStory(ctx, g, use)
 					if done || err != nil {
 						return g, err
 					}
@@ -659,27 +716,11 @@ func (r *Runner) voiceAndPublish(ctx context.Context, g store.Generation) (store
 
 	// The cast extraction the form asked for. Non-fatal by design: the
 	// Episode is already published, and the backfill button covers a
-	// missed extraction.
+	// missed extraction. Shared with the performed pipeline so both spoken
+	// programs extract identically; the token meters are folded in there
+	// (SessionsCount-free, since statsLabel keys off sessions).
 	if g.SaveCharacters {
-		chars, u, err := ExtractCharacters(ctx, r.api, script.Script)
-		// Extraction burned real tokens either way; fold them into the
-		// meters SessionsCount-free (statsLabel keys off sessions).
-		g.InputTokens += u.InputTokens
-		g.OutputTokens += u.OutputTokens
-		g.CacheReadTokens += u.CacheReadTokens
-		if err != nil {
-			r.trace(&g, store.LevelWarn, "characters.extraction_failed", "character extraction failed",
-				"episode", slug, "err", err)
-		} else {
-			ep.Characters = chars
-			if err := r.store.UpdateEpisode(ctx, ep); err != nil {
-				r.trace(&g, store.LevelWarn, "characters.save_failed", "could not save characters",
-					"episode", slug, "count", len(chars), "err", err)
-			} else {
-				r.trace(&g, store.LevelInfo, "characters.extracted", "characters extracted",
-					"episode", slug, "count", len(chars), "names", characterNames(chars))
-			}
-		}
+		r.extractCharacters(ctx, &g, ep, script.Script)
 	}
 
 	return r.finish(ctx, g, slug)

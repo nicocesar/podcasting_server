@@ -360,7 +360,14 @@ type Generation struct {
 	// philosophy as Script).
 	Cast     []Character `json:"-" datastore:"cast,noindex"`
 	Language string      `json:"language" datastore:"language,noindex"`
-	Voice    string      `json:"voice,omitempty" datastore:"voice,noindex"` // "female" or "male"; empty predates the voice picker
+	// TargetLanguage is the language being practiced, for the templates
+	// that deliberately code-switch: Language narrates, TargetLanguage is
+	// the one the listener is learning. Empty means a monolingual episode,
+	// which is every template that predates Story Time Studio — the
+	// episode, its feed entry and its spoken credit always follow
+	// Language alone, never this.
+	TargetLanguage string `json:"target_language,omitempty" datastore:"target_language,noindex"`
+	Voice          string `json:"voice,omitempty" datastore:"voice,noindex"` // "female" or "male"; empty predates the voice picker
 	// Provider is the preferred TTS engine name ("edge-tts",
 	// "google-tts", "elevenlabs"); empty = auto (default chain order).
 	// Preference only —
@@ -414,6 +421,17 @@ type Generation struct {
 	MusicMillis int    `json:"music_millis,omitempty" datastore:"music_millis,noindex"` // audio composed, summed over movements
 	MusicCalls  int    `json:"music_calls,omitempty" datastore:"music_calls,noindex"`   // compose requests including retried ones
 	MusicModel  string `json:"music_model,omitempty" datastore:"music_model,noindex"`
+
+	// Studio meters, for the templates voiced as multi-speaker dialogue.
+	// DialogueRequests is what the vendor actually bills a request at a
+	// time, and it is not derivable from TTSCharacters: the packer's
+	// budget and the seam rule decide how many requests a given script
+	// costs. SFXCacheHits is here to be watched — it is the number that
+	// says whether the cue library is paying for itself, and a run where
+	// it stays at zero is a run to go look at.
+	DialogueRequests int `json:"dialogue_requests,omitempty" datastore:"dialogue_requests,noindex"`
+	SFXGenerated     int `json:"sfx_generated,omitempty" datastore:"sfx_generated,noindex"` // cues rendered by the vendor and paid for
+	SFXCacheHits     int `json:"sfx_cache_hits,omitempty" datastore:"sfx_cache_hits,noindex"`
 
 	// Trace is the execution record: what happened during this run, for
 	// admin eyes. json:"-" because it carries raw upstream error strings,
@@ -512,6 +530,7 @@ type Beat struct {
 	SaveCharacters bool        `json:"save_characters,omitempty" datastore:"save_characters,noindex"`
 	Cast           []Character `json:"-" datastore:"cast,noindex"`
 	Language       string      `json:"language" datastore:"language,noindex"`
+	TargetLanguage string      `json:"target_language,omitempty" datastore:"target_language,noindex"`
 	Voice          string      `json:"voice,omitempty" datastore:"voice,noindex"`
 	Provider       string      `json:"provider,omitempty" datastore:"provider,noindex"`
 
@@ -966,6 +985,25 @@ type Store interface {
 	ListFollows(ctx context.Context, userID string) ([]Follow, error)
 
 	OpenAudio(ctx context.Context, ownerID, slug string) (Audio, error)
+
+	// PutAsset and OpenAsset store station-owned bytes under a caller-
+	// chosen key: audio the station renders once and reuses forever,
+	// belonging to no User and appearing in no feed. The rendered sound
+	// effects are the first of these — a cue costs money to generate and
+	// sounds slightly different every time, so the duck in one story has
+	// to be the identical duck in the next.
+	//
+	// Deliberately not an Episode and deliberately not a Cover: those are
+	// owned, listed, deleted with their owner, and reachable from the
+	// public surface. An asset is none of that. DeleteUser must never
+	// touch one.
+	//
+	// Keys are opaque to the store but path-shaped by convention
+	// ("sfx/{name}.mp3"); the caller keeps them free of traversal.
+	// OpenAsset returns ErrNotFound when the key has never been written,
+	// which is the ordinary cache miss, not an error worth a trace.
+	PutAsset(ctx context.Context, key, contentType string, r io.Reader) error
+	OpenAsset(ctx context.Context, key string) (io.ReadCloser, string, error)
 
 	// SetCover persists both the normalized full-size Cover Art and its
 	// web thumbnail (produced by internal/coverart). contentType is the

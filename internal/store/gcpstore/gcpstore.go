@@ -100,6 +100,7 @@ func beatKey(userID, id string) *datastore.Key {
 
 func tickKey() *datastore.Key { return datastore.NameKey(kindTick, tickKeyName, nil) }
 
+func assetObject(key string) string           { return "assets/" + key }
 func audioObject(ownerID, slug string) string { return "users/" + ownerID + "/" + slug + ".mp3" }
 func coverObject(ownerID string) string       { return "users/" + ownerID + "/cover" }
 func coverThumbObject(ownerID string) string  { return "users/" + ownerID + "/cover_thumb" }
@@ -802,6 +803,31 @@ func (s *Store) writeObject(ctx context.Context, object, contentType string, r i
 		return err
 	}
 	return w.Close()
+}
+
+// --- station assets ---
+
+// Assets sit outside users/ on purpose: nothing under this prefix belongs
+// to a User, so DeleteUser's sweep of their objects can never reach one.
+func (s *Store) PutAsset(ctx context.Context, key, contentType string, r io.Reader) error {
+	if key == "" || strings.Contains(key, "..") || strings.HasPrefix(key, "/") {
+		return fmt.Errorf("gcpstore: bad asset key %q", key)
+	}
+	return s.writeObject(ctx, assetObject(key), contentType, r)
+}
+
+func (s *Store) OpenAsset(ctx context.Context, key string) (io.ReadCloser, string, error) {
+	if key == "" || strings.Contains(key, "..") || strings.HasPrefix(key, "/") {
+		return nil, "", fmt.Errorf("gcpstore: bad asset key %q", key)
+	}
+	r, err := s.bucket.Object(assetObject(key)).NewReader(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, "", store.ErrNotFound
+		}
+		return nil, "", err
+	}
+	return r, r.Attrs.ContentType, nil
 }
 
 func (s *Store) OpenCover(ctx context.Context, userID string) (io.ReadCloser, string, error) {

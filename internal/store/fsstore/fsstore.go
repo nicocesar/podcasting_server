@@ -7,6 +7,8 @@
 //	root/
 //	├── invites.json                all invites, keyed by token
 //	├── tick.json                   what the last Tick did (ADR 0028)
+//	├── assets/                     station-owned, owned by no user
+//	│   └── sfx/duck_quack.mp3      a rendered cue, reused across episodes
 //	├── alice/                      user ID
 //	│   ├── user.json               user + feed metadata
 //	│   ├── shares.json             shares in alice's feed (may be absent)
@@ -22,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -918,6 +921,67 @@ func (s *Store) OpenCoverThumb(ctx context.Context, userID string) (io.ReadClose
 		return nil, "", err
 	}
 	return f, "image/jpeg", nil
+}
+
+// --- station assets ---
+
+// assetPath resolves a key under the assets tree, refusing anything that
+// could climb out of it. The keys in use are built by the server from a
+// fixed cue library and from hex digests, so this guards against a future
+// caller rather than against today's, which is exactly when it is cheap to
+// write.
+func (s *Store) assetPath(key string) (string, error) {
+	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, `\`) {
+		return "", fmt.Errorf("fsstore: bad asset key %q", key)
+	}
+	clean := path.Clean(key)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("fsstore: bad asset key %q", key)
+	}
+	return filepath.Join(s.root, "assets", filepath.FromSlash(clean)), nil
+}
+
+// The content type travels in a sidecar rather than being guessed back
+// from the extension, so that both backends return exactly what was
+// written. GCS keeps it on the object; here it needs somewhere to live.
+func (s *Store) PutAsset(_ context.Context, key, contentType string, r io.Reader) error {
+	p, err := s.assetPath(key)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	if _, err := writeAtomic(p, r); err != nil {
+		return err
+	}
+	if contentType == "" {
+		return nil
+	}
+	_, err = writeAtomic(p+".type", strings.NewReader(contentType))
+	return err
+}
+
+func (s *Store) OpenAsset(_ context.Context, key string) (io.ReadCloser, string, error) {
+	p, err := s.assetPath(key)
+	if err != nil {
+		return nil, "", err
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, "", store.ErrNotFound
+		}
+		return nil, "", err
+	}
+	ct, err := os.ReadFile(p + ".type")
+	if err != nil {
+		// An asset written before the sidecar, or written with no type at
+		// all: the bytes are the point, so hand them back untyped rather
+		// than failing the read.
+		return f, "", nil
+	}
+	return f, string(ct), nil
 }
 
 func readJSON(path string, v any) error {

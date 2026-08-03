@@ -28,7 +28,9 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/coverart"
 	"github.com/nicocesar/podcasting_server/internal/generation"
 	"github.com/nicocesar/podcasting_server/internal/httpapi"
+	"github.com/nicocesar/podcasting_server/internal/mix"
 	"github.com/nicocesar/podcasting_server/internal/music"
+	"github.com/nicocesar/podcasting_server/internal/sfx"
 	"github.com/nicocesar/podcasting_server/internal/store"
 	"github.com/nicocesar/podcasting_server/internal/store/fsstore"
 	"github.com/nicocesar/podcasting_server/internal/store/gcpstore"
@@ -219,11 +221,26 @@ func run(log *slog.Logger) error {
 			composer = m
 			log.Info("generation: music composition enabled", "model", m.Model())
 		}
+		// And the same key again for sound effects. Story Time Studio
+		// needs all three vendors plus ffmpeg; missing any one of them
+		// takes that program off the chooser rather than letting it
+		// produce the flat single-voice reading it exists to replace.
+		var effects generation.SFXRenderer
+		if s, err := sfx.New(os.Getenv("ELEVENLABS_API_KEY"), st); err != nil {
+			log.Info("generation: sound effects unavailable, performed program hidden", "err", err)
+		} else {
+			effects = s
+			log.Info("generation: sound effects enabled")
+		}
+		if !mix.Available() {
+			log.Info("generation: ffmpeg not found, performed program hidden", "looked_for", mix.Binary)
+		}
 		generator = generation.NewRunner(generation.Config{
 			Store:   st,
 			API:     generation.NewClient(key),
 			Engines: engines,
 			Music:   composer,
+			SFX:     effects,
 			Model:   env("GENERATION_MODEL", "claude-sonnet-5"),
 			// Spoken in the episode credit ("...on radio.example.com...");
 			// the same BASE_URL the feed links use, reduced to a bare domain.

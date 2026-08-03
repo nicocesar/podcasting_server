@@ -48,7 +48,15 @@
       {{range .Languages}}<option value="{{.Language}}"{{if eq $.Values.Language .Language}} selected{{end}}>{{.Label}}</option>{{end}}
     </select>
 
-    {{if not .Template.IsMusic}}
+    {{if .Template.HasTargetLanguage}}
+    <label for="target_language">Practicing</label>
+    <select id="target_language" name="target_language">
+      <option value=""{{if eq .Values.TargetLanguage ""}} selected{{end}}>Nothing — one language only</option>
+      {{range .Languages}}<option value="{{.Language}}"{{if eq $.Values.TargetLanguage .Language}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    {{end}}
+
+    {{if .Template.HasVoicePicker}}
     <label for="voice">Voice</label>
     <select id="voice" name="voice">
       <option value="female"{{if eq .Values.Voice "female"}} selected{{end}}>Female</option>
