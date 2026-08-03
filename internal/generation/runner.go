@@ -421,6 +421,7 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 	}
 
 	sent := false
+	nudgedOn := ""
 	translationRequested := false
 	for {
 		status, err := r.api.SessionStatus(ctx, g.SessionID)
@@ -447,11 +448,8 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 					}
 					break // rejected: keep polling for the resubmission
 				}
-				if !sent {
-					if err := r.api.SendMessage(ctx, g.SessionID, tpl.TaskMessage(g, time.Now())); err != nil {
-						return g, fmt.Errorf("send task: %w", err)
-					}
-					sent = true
+				if err := r.prod(ctx, &g, tpl, &sent, &nudgedOn); err != nil {
+					return g, err
 				}
 				break
 			}
@@ -468,11 +466,8 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 					}
 					break // rejected: keep polling for the resubmission
 				}
-				if !sent {
-					if err := r.api.SendMessage(ctx, g.SessionID, tpl.TaskMessage(g, time.Now())); err != nil {
-						return g, fmt.Errorf("send task: %w", err)
-					}
-					sent = true
+				if err := r.prod(ctx, &g, tpl, &sent, &nudgedOn); err != nil {
+					return g, err
 				}
 				break
 			}
@@ -517,12 +512,8 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 			} else if strings.Contains(msg, "```json") {
 				return g, perr // a legacy delivery that is broken JSON
 			}
-			if !sent {
-				task := tpl.TaskMessage(g, time.Now())
-				if err := r.api.SendMessage(ctx, g.SessionID, task); err != nil {
-					return g, fmt.Errorf("send task: %w", err)
-				}
-				sent = true
+			if err := r.prod(ctx, &g, tpl, &sent, &nudgedOn); err != nil {
+				return g, err
 			}
 		}
 		select {
@@ -531,6 +522,64 @@ func (r *Runner) research(ctx context.Context, g store.Generation) (store.Genera
 		case <-time.After(r.poll):
 		}
 	}
+}
+
+// prod moves an idle session that has not delivered anything.
+//
+// The first time, that means sending the task: the session was just
+// created, or the process restarted before the task went out.
+//
+// After that it means the agent went idle having written a chat message
+// instead of calling the submit tool — it is asking a question, or
+// declining, or offering to do something else. There is nobody in the
+// session to answer it, so the old code simply kept polling until
+// researchTimeout and failed half an hour later with "research timed
+// out", which says nothing about what actually happened. It gets one
+// nudge, and if it talks again instead of submitting, the run fails
+// immediately with the agent's own words on the trace, where an admin
+// reads them.
+//
+// nudgedOn holds the message we nudged on, not a bool, because the
+// session reads idle again before the agent has replied: seeing the same
+// text twice means it has not answered yet, and only new text is a
+// refusal to take the nudge.
+func (r *Runner) prod(ctx context.Context, g *store.Generation, tpl Template, sent *bool, nudgedOn *string) error {
+	if !*sent {
+		if err := r.api.SendMessage(ctx, g.SessionID, tpl.TaskMessage(*g, time.Now())); err != nil {
+			return fmt.Errorf("send task: %w", err)
+		}
+		*sent = true
+		return nil
+	}
+	msg, err := r.api.LastAgentMessage(ctx, g.SessionID)
+	if err != nil {
+		return fmt.Errorf("fetch agent output: %w", err)
+	}
+	if strings.TrimSpace(msg) == "" || msg == *nudgedOn {
+		return nil // nothing new to react to: keep polling
+	}
+	said := truncateRunes(strings.TrimSpace(msg), 400)
+	if *nudgedOn != "" {
+		return fmt.Errorf("agent answered in chat instead of calling %s: %s", tpl.SubmitToolName, said)
+	}
+	r.trace(g, store.LevelNotice, "agent.nudged",
+		"agent replied instead of submitting", "said", said)
+	if err := r.api.SendMessage(ctx, g.SessionID, nudgeMessage(tpl.SubmitToolName)); err != nil {
+		return fmt.Errorf("nudge: %w", err)
+	}
+	*nudgedOn = msg
+	return nil
+}
+
+// nudgeMessage answers the one thing an agent that stops to talk is
+// always doing: waiting for a person. It says there is none, and that
+// adapting the brief is a delivery while a question is not.
+func nudgeMessage(tool string) string {
+	return "There is no human in this session and nobody will read that message. " +
+		"You cannot ask for direction or offer alternatives — the only delivery is a " + tool + " call.\n\n" +
+		"If the request does not work as given, adapt it yourself and deliver the adapted version: " +
+		"replace anything you will not write — a real person, a premise that is wrong for the age range — " +
+		"with something of your own invention, keep the rest, and submit that. Do it now."
 }
 
 // judgeSubmission answers one submit_episode call: accept (ack + Script

@@ -557,6 +557,43 @@ func TestLegacySessionStillLands(t *testing.T) {
 	}
 }
 
+// TestChattyAgentIsNudgedThenFails: an agent that answers with a chat
+// message instead of calling the submit tool — asking which direction to
+// take, or declining the brief — is talking to a human who is not there.
+// It gets one nudge, and if it talks again the run fails right away with
+// what it said, rather than polling in silence until researchTimeout.
+func TestChattyAgentIsNudgedThenFails(t *testing.T) {
+	st := testStore(t)
+	api := newFakeAPI()
+	api.submissions = nil // never calls the tool
+	api.legacyReplies = []string{
+		"I won't write that one. Want The Lantern Man instead?",
+		"Happy to help once you pick a direction!",
+	}
+	r := testRunner(st, api, fakeEngine{name: "fake"})
+
+	g := newGeneration()
+	if err := st.PutGeneration(context.Background(), g); err != nil {
+		t.Fatal(err)
+	}
+	r.Kick(g)
+	g = waitStage(t, st, store.GenFailed)
+
+	if !strings.Contains(g.Error, "instead of calling "+submitToolName) {
+		t.Errorf("error = %q, want it to name the missing tool call", g.Error)
+	}
+	if !strings.Contains(g.Error, "pick a direction") {
+		t.Errorf("error = %q, want the agent's own words in it", g.Error)
+	}
+	sent := api.sent[g.SessionID]
+	if len(sent) != 2 {
+		t.Fatalf("sent %d messages, want the task plus exactly one nudge: %q", len(sent), sent)
+	}
+	if !strings.Contains(sent[1], "no human in this session") {
+		t.Errorf("second message is not the nudge: %q", sent[1])
+	}
+}
+
 func TestSlugCollisionGetsSuffix(t *testing.T) {
 	st := testStore(t)
 	slug := time.Now().UTC().Format("2006-01-02") + "-fusion-energy"
