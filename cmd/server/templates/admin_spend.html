@@ -115,10 +115,10 @@
         <tbody>
           {{range .Episodes}}
           <tr>
-            {{/* Topics run long. Clipped to keep the table from growing
-                 a horizontal scrollbar that pushes the cost column out
-                 of sight, with the whole thing in the tooltip. */}}
-            <td class="spend-topic" title="{{.Topic}}">{{.Topic}}{{if eq .Stage "failed"}} · failed{{end}}</td>
+            {{/* Topics run long, and wrap rather than clip: this is a
+                 report, and a truncated topic is the one thing on the row
+                 you cannot reconstruct from the others. */}}
+            <td class="spend-topic">{{.Topic}}{{if eq .Stage "failed"}} · failed{{end}}</td>
             <td class="muted">@{{.User}}</td>
             <td class="muted">{{.CreatedAt.Format "2 Jan"}}</td>
             <td class="spend-amount">
@@ -128,7 +128,14 @@
                  table. Blank means the episode owed ElevenLabs nothing,
                  which is most of them: the free engines do the voicing
                  unless a generation asks otherwise. */}}
-            <td class="spend-amount spend-meter muted">{{with .ElevenLabs}}{{.}}{{else}}—{{end}}</td>
+            {{/* One span per meter so the cell wraps between meters and
+                 never inside one — "1m 00s" and "music" stay together.
+                 The separator sits outside the spans, which is what makes
+                 it the only place a line may break. */}}
+            <td class="spend-amount spend-meter muted">
+              {{- range $i, $m := .ElevenLabsParts}}{{if $i}} · {{end}}<span>{{$m}}</span>{{end}}
+              {{- if not .ElevenLabsParts}}—{{end -}}
+            </td>
           </tr>
           {{end}}
         </tbody>

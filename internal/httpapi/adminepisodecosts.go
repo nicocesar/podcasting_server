@@ -179,15 +179,27 @@ func (s *server) pricedEpisodes(ctx context.Context, ledger map[string]*dayLedge
 // units genuinely differ and this page does not invent a rate to convert
 // between them (ADR 0026), so they sit side by side instead.
 func (e *episodeCost) ElevenLabs() string {
+	return strings.Join(e.ElevenLabsParts(), " · ")
+}
+
+// ElevenLabsParts is the same reading as ElevenLabs, one meter per
+// element, for a template that renders each in its own unbreakable span.
+// The cell wraps between meters and never inside one, which a single
+// joined string cannot express without burying non-breaking spaces in it
+// — invisible characters in a display string that every reader and test
+// would then have to know about.
+func (e *episodeCost) ElevenLabsParts() []string {
 	var parts []string
+	// One meter per element, never two joined into one: each is rendered
+	// as an unbreakable span, so a pair glued together here becomes a wide
+	// unit that forces an early wrap. Joined, the reading is identical.
 	if e.TTSEngine == "elevenlabs" && e.TTSCharacters > 0 {
-		s := fmt.Sprintf("%s chars", commas(int64(e.TTSCharacters)))
+		parts = append(parts, fmt.Sprintf("%s chars", commas(int64(e.TTSCharacters))))
 		// Requests, because dialogue is billed per call as well as per
 		// character, and the packer's budget decides how many a story costs.
 		if e.DialogueRequests > 0 {
-			s += " · " + plural(e.DialogueRequests, "take")
+			parts = append(parts, plural(e.DialogueRequests, "take"))
 		}
-		parts = append(parts, s)
 	}
 	if e.MusicMillis > 0 {
 		s := formatDuration(e.MusicMillis)
@@ -200,10 +212,10 @@ func (e *episodeCost) ElevenLabs() string {
 		if len(parts) > 0 {
 			s += " music"
 		}
-		if e.MusicCalls > 1 {
-			s += fmt.Sprintf(" · %d calls", e.MusicCalls)
-		}
 		parts = append(parts, s)
+		if e.MusicCalls > 1 {
+			parts = append(parts, fmt.Sprintf("%d calls", e.MusicCalls))
+		}
 	}
 	if e.SFXGenerated > 0 {
 		parts = append(parts, plural(e.SFXGenerated, "effect"))
@@ -214,15 +226,7 @@ func (e *episodeCost) ElevenLabs() string {
 	if e.SFXCacheHits > 0 {
 		parts = append(parts, fmt.Sprintf("%d cached", e.SFXCacheHits))
 	}
-	// A performed story lists three or four meters where a voiced one
-	// listed a single number. That is long enough to widen the table past
-	// a phone, and this table already clips its topics to stop a
-	// horizontal scrollbar carrying the cost column out of sight — so the
-	// cell is allowed to wrap in CSS (.spend-meter) and grow downward
-	// instead. Kept as a plain string with ordinary spaces: the wrapping
-	// is presentation, and burying non-breaking spaces in here would make
-	// every reader and test carry that knowledge invisibly.
-	return strings.Join(parts, " · ")
+	return parts
 }
 
 // formatDuration renders composed audio: seconds under a minute,

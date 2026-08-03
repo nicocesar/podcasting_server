@@ -164,12 +164,19 @@ func TestSpendPageRendersRealRows(t *testing.T) {
 	if strings.Contains(body, "%!f") || strings.Contains(body, "*float64") {
 		t.Errorf("a cost cell rendered a Go formatting error:\n%s", body)
 	}
-	// The topic actually appears, and carries its full text for the
-	// tooltip so a clipped cell is still readable.
-	for _, want := range []string{"world cup", long, `title="` + long + `"`} {
+	// The topic appears in full, in the cell. It used to be clipped to an
+	// ellipsis with the real text stashed in a title attribute; once the
+	// ElevenLabs column started reporting four meters there was no spare
+	// width left to clip into, and topics collapsed to "Titu…". A report
+	// that hides the one column you cannot reconstruct from the others is
+	// not doing its job, so the cell wraps now.
+	for _, want := range []string{"world cup", long} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the by-episode table is missing %q", want)
 		}
+	}
+	if strings.Contains(body, `title="`+long+`"`) {
+		t.Error("the topic is still hidden behind a tooltip instead of being shown")
 	}
 	// And a real dollar figure, not a pointer and not an empty cell.
 	if !strings.Contains(body, "$0.") {
@@ -177,9 +184,11 @@ func TestSpendPageRendersRealRows(t *testing.T) {
 	}
 }
 
-// TestSpendEpisodeCellShape pins the two things the screenshot caught:
-// a priced cell holds a dollar figure and not a Go pointer, and a topic
-// cell carries its full text in a title so clipping it stays readable.
+// TestSpendEpisodeCellShape pins the two things screenshots have caught
+// here: a priced cell holds a dollar figure and not a Go pointer, and a
+// topic cell shows its whole topic. The second half used to say the
+// opposite — clip it, keep the full text in a title — which is how a
+// later screenshot came back with every topic reduced to four characters.
 func TestSpendEpisodeCellShape(t *testing.T) {
 	upstream := spendUpstream(t)
 	defer upstream.Close()
@@ -201,9 +210,9 @@ func TestSpendEpisodeCellShape(t *testing.T) {
 
 	_, body := htmlPage(t, ts.URL+"/admin/costs", admin.sessionCreds())
 
-	want := `<td class="spend-topic" title="` + topic + `">` + topic
+	want := `<td class="spend-topic">` + topic
 	if !strings.Contains(body, want) {
-		t.Errorf("the topic cell is not clippable-with-tooltip:\n%s", want)
+		t.Errorf("the topic cell does not carry its whole topic; wanted to find:\n%s", want)
 	}
 	// A priced row: "$" followed by digits, not a formatting verb.
 	priced := regexp.MustCompile(`\$[0-9]+\.[0-9]{4}`)

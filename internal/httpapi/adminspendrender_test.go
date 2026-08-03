@@ -67,4 +67,36 @@ func TestRenderSpendPageForAPerformedStory(t *testing.T) {
 	if !strings.Contains(html, `class="spend-amount spend-meter muted"`) {
 		t.Error("the meter cell is missing its wrapping class")
 	}
+	// The topic is the one thing on the row that cannot be reconstructed
+	// from the other columns, so it must arrive whole — no ellipsis, and
+	// no title-attribute stashing of the real text.
+	if !strings.Contains(html, `Titulo &#34;Aventuras en la granja&#34;`) {
+		t.Error("the topic was not rendered in full")
+	}
+	if strings.Contains(html, `title="Titulo`) {
+		t.Error("the topic is still being hidden behind a tooltip")
+	}
+}
+
+// TestSpendTableWrappingBeatsTheNowrapRule pins the CSS specificity that
+// made the first fix a no-op: the nowrap rule lives on `.spend-table td`
+// (0,1,1), so a bare `.spend-meter` class (0,1,0) loses to it silently
+// and the cell grows instead of wrapping — which starved the topic
+// column down to an ellipsis.
+func TestSpendTableWrappingBeatsTheNowrapRule(t *testing.T) {
+	css, err := os.ReadFile("../../cmd/server/static/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		".spend-table td.spend-topic",
+		".spend-table td.spend-meter",
+	} {
+		if !strings.Contains(string(css), want) {
+			t.Errorf("missing %q: a bare class cannot override .spend-table td", want)
+		}
+	}
+	if strings.Contains(string(css), "text-overflow: ellipsis;\n  cursor: help;") {
+		t.Error("the topic is still clipped to an ellipsis")
+	}
 }

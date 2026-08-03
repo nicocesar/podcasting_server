@@ -1189,13 +1189,6 @@ footer.colophon {
 }
 .spend-table tbody th { font-weight: 400; color: var(--muted); font-size: 0.85rem; }
 .spend-amount { text-align: right; font-variant-numeric: tabular-nums; }
-/* The one cell allowed to wrap. A performed story reports speech,
-   music and effects side by side, which does not fit a phone on one
-   line; its meters are joined by ordinary spaces and bound internally
-   by non-breaking ones, so it breaks between meters and never inside
-   one. Growing downward beats a horizontal scrollbar that carries the
-   cost column off the screen. */
-.spend-meter { white-space: normal; min-width: 7rem; }
 .spend-bar-cell { width: 100%; padding-right: 1rem; }
 .spend-bar {
   display: block;
@@ -1256,10 +1249,39 @@ footer.colophon {
    horizontal scroll its wrapper allows. This way another column narrows
    the title instead, at any viewport, with no breakpoint to maintain.
    The full topic stays in the cell's tooltip either way. */
+/* The topic and the meter reading are the two cells allowed to wrap.
+   Everything else in this table is a short number that reads better on
+   one line.
+
+   The topic used to be clipped to an ellipsis instead (width:100% with
+   max-width:0, the absorb-then-clip trick). That held while the
+   ElevenLabs column was a single short number. A performed story reports
+   four meters there, and once that column refused to shrink there was no
+   leftover width left to absorb: topics collapsed to "Titu…" while the
+   meters ran off the right edge at the same time. Both ends hidden at
+   once, which is the opposite of what a spend report is for.
+
+   Rows grow taller now. A table that is taller than you expected is
+   readable; one that is wider than the screen is not. */
 .spend-topic {
   width: 100%;
-  max-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: help;
+  min-width: 9rem;
 }
+/* Specificity has to beat `.spend-table td` (0,1,1) — the nowrap rule
+   lives there, and a bare class (0,1,0) loses to it silently. That is
+   exactly how the first attempt at this failed. */
+.spend-table td.spend-topic,
+.spend-table td.spend-meter {
+  white-space: normal;
+}
+.spend-table td.spend-topic { overflow-wrap: anywhere; }
+.spend-table td.spend-meter {
+  min-width: 9rem;
+  /* The meters are a list, and reading them ragged-right beats reading
+     them right-aligned once they occupy more than one line. */
+  text-align: left;
+}
+/* Each meter is one unbreakable thing: "1m 00s" must not leave "music"
+   stranded on the next line. The separators live outside the spans, so
+   they are the only place the cell may break. */
+.spend-table td.spend-meter span { white-space: nowrap; }
