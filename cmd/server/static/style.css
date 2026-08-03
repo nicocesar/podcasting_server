@@ -1189,6 +1189,13 @@ footer.colophon {
 }
 .spend-table tbody th { font-weight: 400; color: var(--muted); font-size: 0.85rem; }
 .spend-amount { text-align: right; font-variant-numeric: tabular-nums; }
+/* The one cell allowed to wrap. A performed story reports speech,
+   music and effects side by side, which does not fit a phone on one
+   line; its meters are joined by ordinary spaces and bound internally
+   by non-breaking ones, so it breaks between meters and never inside
+   one. Growing downward beats a horizontal scrollbar that carries the
+   cost column off the screen. */
+.spend-meter { white-space: normal; min-width: 7rem; }
 .spend-bar-cell { width: 100%; padding-right: 1rem; }
 .spend-bar {
   display: block;

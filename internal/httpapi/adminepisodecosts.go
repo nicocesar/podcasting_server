@@ -85,7 +85,7 @@ type episodeCost struct {
 	SFXGenerated     int                `json:"sfx_generated,omitempty"`
 	SFXCacheHits     int                `json:"sfx_cache_hits,omitempty"`
 	CostUSD          *float64           `json:"cost_usd"` // null while pending
-	BreakdownUSD map[string]float64 `json:"breakdown_usd,omitempty"`
+	BreakdownUSD     map[string]float64 `json:"breakdown_usd,omitempty"`
 	// Pricing is "reconciled" (all consumed token kinds had a posted
 	// rate for the day) or "pending" (the cost report has not caught
 	// up; retry later).
@@ -214,6 +214,14 @@ func (e *episodeCost) ElevenLabs() string {
 	if e.SFXCacheHits > 0 {
 		parts = append(parts, fmt.Sprintf("%d cached", e.SFXCacheHits))
 	}
+	// A performed story lists three or four meters where a voiced one
+	// listed a single number. That is long enough to widen the table past
+	// a phone, and this table already clips its topics to stop a
+	// horizontal scrollbar carrying the cost column out of sight — so the
+	// cell is allowed to wrap in CSS (.spend-meter) and grow downward
+	// instead. Kept as a plain string with ordinary spaces: the wrapping
+	// is presentation, and burying non-breaking spaces in here would make
+	// every reader and test carry that knowledge invisibly.
 	return strings.Join(parts, " · ")
 }
 
