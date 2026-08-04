@@ -102,31 +102,44 @@ type storyVoice struct {
 	Name     string
 }
 
-// storyVoices is the cast list.
+// storyVoices is the cast list. Every entry is a voice somebody listened
+// to and chose; this is listening work, not programming work.
 //
-// It is deliberately short. Every entry here is a voice somebody listened
-// to and chose; the roles with no entry fall back through roleFallback to
-// the curated Voices table, so an uncast role still produces audio in a
-// sensible voice rather than failing a run or, worse, reaching the vendor
-// with an invented ID. That fallback is why a story today can have fewer
-// distinct voices than it has roles — filling this table in is listening
-// work, not programming work, and it is the difference between a duck that
-// sounds like a duck and a duck that sounds like the narrator.
+// English and Spanish are now cast for every role, which is what closes
+// ADR 0032's "a duck can sound like the narrator" — the duck is
+// small_squeaky, and until it was listed here it borrowed whatever the
+// fallback found. A language with no entries still falls back through
+// roleFallback to the curated Voices table, so an uncast role produces
+// audio in a sensible voice rather than failing a run or, worse, reaching
+// the vendor with an invented ID.
+//
+// Roles may share a voice on purpose. In Spanish the gruff one and the
+// squeaky one are both Agustin: eleven_v3 performs the audio tags the
+// agent writes, so one actor plays both parts rather than the part being
+// miscast.
 var storyVoices = []storyVoice{
 	// English
 	{Role: "narrator", Language: "en", Eleven: "ZF6FPAbjXT4488VcRRnw", Name: "Amelia"},
-	{Role: "tutor", Language: "en", Eleven: "ZF6FPAbjXT4488VcRRnw", Name: "Amelia"},
+	{Role: "tutor", Language: "en", Eleven: "QMSGabqYzk8YAneQYYvR", Name: "Natalie"},
 	{Role: "warm_grownup", Language: "en", Eleven: "G17SuINrv2H9FC6nvetn", Name: "Christopher"},
-	{Role: "big_gruff", Language: "en", Eleven: "G17SuINrv2H9FC6nvetn", Name: "Christopher"},
+	{Role: "big_gruff", Language: "en", Eleven: "7JxUWWyYwXK8kmqmKEnT", Name: "Chuck"},
+	{Role: "child", Language: "en", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
+	{Role: "small_squeaky", Language: "en", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
+	{Role: "silly", Language: "en", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
 	// Spanish
 	{Role: "narrator", Language: "es", Eleven: "9rvdnhrYoXoUt4igKpBw", Name: "Mariana"},
-	{Role: "tutor", Language: "es", Eleven: "9rvdnhrYoXoUt4igKpBw", Name: "Mariana"},
+	{Role: "tutor", Language: "es", Eleven: "bN1bDXgDIGX5lw0rtY2B", Name: "Melanie"},
 	{Role: "warm_grownup", Language: "es", Eleven: "dGjL92Li0y7ZUQ3MESQW", Name: "Juan"},
-	{Role: "big_gruff", Language: "es", Eleven: "dGjL92Li0y7ZUQ3MESQW", Name: "Juan"},
+	{Role: "big_gruff", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	{Role: "child", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	{Role: "small_squeaky", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	{Role: "silly", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
 }
 
 // roleFallback is the gender each uncast role borrows from the curated
-// Voices table, so the fallback at least varies with the part.
+// Voices table, so the fallback at least varies with the part. With en and
+// es fully cast above, this now only covers a story told in some other
+// language — it is the safety net, no longer the ordinary path.
 var roleFallback = map[string]string{
 	"narrator":      "female",
 	"tutor":         "female",

@@ -45,6 +45,43 @@ func TestRoleVoiceCoversEveryRole(t *testing.T) {
 	}
 }
 
+// The two languages the station actually tells stories in are cast by
+// hand, every role, with no role left borrowing from roleFallback.
+//
+// TestRoleVoiceCoversEveryRole passes on the fallback alone, so it went on
+// passing through the whole period when the duck sounded like the narrator.
+// This is the test that notices: deleting a row from storyVoices is
+// otherwise silent, because the fallback absorbs it and still returns a
+// perfectly usable voice — just the wrong one.
+func TestCuratedLanguagesCastEveryRole(t *testing.T) {
+	for _, lang := range []string{"en", "es"} {
+		for _, r := range Roles {
+			t.Run(r.ID+"/"+lang, func(t *testing.T) {
+				var found *storyVoice
+				for i, sv := range storyVoices {
+					if sv.Role == r.ID && sv.Language == lang {
+						found = &storyVoices[i]
+						break
+					}
+				}
+				if found == nil {
+					t.Fatalf("role %q has no curated %s voice, so it falls back to %q — "+
+						"somebody has to listen and choose one", r.ID, lang, roleFallback[r.ID])
+				}
+				// A hand-copied ID that got truncated reaches the vendor
+				// and fails the episode, and dialogue failures are not
+				// skippable the way a sound effect is.
+				if len(found.Eleven) < 15 || strings.ContainsAny(found.Eleven, " \t\n") {
+					t.Errorf("role %q in %s has a malformed voice id %q", r.ID, lang, found.Eleven)
+				}
+				if strings.TrimSpace(found.Name) == "" {
+					t.Errorf("role %q in %s has no voice name; the credit needs one to speak", r.ID, lang)
+				}
+			})
+		}
+	}
+}
+
 func TestNarratorVoiceCanSpeakTheCredit(t *testing.T) {
 	// The performed pipeline voices the credit with the narrator's role
 	// voice. Credit returns "" when the Voice has no spoken name for the
