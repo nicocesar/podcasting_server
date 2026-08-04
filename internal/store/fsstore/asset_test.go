@@ -107,8 +107,8 @@ func TestDeleteUserLeavesAssetsAlone(t *testing.T) {
 	r.Close()
 }
 
-func TestGenerationStudioFieldsRoundTrip(t *testing.T) {
-	// TargetLanguage and the studio meters carry real JSON tags, so they
+func TestGenerationPerformanceFieldsRoundTrip(t *testing.T) {
+	// TargetLanguage and the performance meters carry real JSON tags, so they
 	// ride the embedded Generation rather than needing a line in
 	// generationRecord — unlike Cast and Trace. This is the test that says
 	// so out loud, since the failure mode is silent data loss.
@@ -138,7 +138,7 @@ func TestGenerationStudioFieldsRoundTrip(t *testing.T) {
 		t.Errorf("TargetLanguage = %q, want es", got.TargetLanguage)
 	}
 	if got.DialogueRequests != 4 || got.SFXGenerated != 2 || got.SFXCacheHits != 7 {
-		t.Errorf("studio meters lost: %+v", got)
+		t.Errorf("performance meters lost: %+v", got)
 	}
 }
 

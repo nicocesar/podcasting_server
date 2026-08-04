@@ -478,12 +478,10 @@ func (s *server) handleEpisodeCharacters(w http.ResponseWriter, r *http.Request,
 	}
 	scriptText := ""
 	for _, g := range gens {
-		if g.EpisodeSlug != slug || g.Script == "" {
+		if g.EpisodeSlug != slug {
 			continue
 		}
-		var script generation.Script
-		if err := json.Unmarshal([]byte(g.Script), &script); err == nil {
-			scriptText = script.Script
+		if scriptText = generation.StoredScriptText(g.Script); scriptText != "" {
 			break
 		}
 	}

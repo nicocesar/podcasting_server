@@ -540,7 +540,7 @@ func TestDashboardLinksToBeatsWhenEmpty(t *testing.T) {
 // TestStoriesBeatPicksItsOwnCadence: Story Time has no Freshness Window,
 // so it chooses an interval instead — and an invalid one is rejected.
 func TestStoriesBeatPicksItsOwnCadence(t *testing.T) {
-	ts, st := newGeneratingServerStore(t, nil)
+	ts, st := newPerformingServerStore(t)
 	alice := createUser(t, ts, "alice")
 
 	form := func(over map[string]string) io.Reader {

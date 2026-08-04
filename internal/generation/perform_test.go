@@ -131,10 +131,20 @@ func performRunner(st store.Store, api API, d *fakeDialogue, fx SFXRenderer, mus
 	})
 }
 
+// storyComposer is a composer whose bed is real audio: the mixer measures
+// the bed to lay it under the speech, so a placeholder byte string fails
+// the run before the test reaches what it is about.
+func storyComposer(t *testing.T) *fakeComposer {
+	t.Helper()
+	c := newFakeComposer()
+	c.piece = perfTone(t, 220)
+	return c
+}
+
 func newStoryGeneration() store.Generation {
 	return store.Generation{
 		UserID: "alice", ID: "gen-story",
-		Template: "stories-v2", Topic: "a duck and a pig",
+		Template: "stories", Topic: "a duck and a pig",
 		LengthMinutes: 2, Language: "en", TargetLanguage: "es",
 		AgeRange: "2-4",
 		Stage:    store.GenResearching, Active: true, CreatedAt: time.Now().UTC(),
@@ -199,7 +209,7 @@ func TestPerformAndPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("episode not published: %v", err)
 	}
-	if ep.Template != "stories-v2" {
+	if ep.Template != "stories" {
 		t.Errorf("episode template = %q", ep.Template)
 	}
 	if ep.DurationSec <= 0 {

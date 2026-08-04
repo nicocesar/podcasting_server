@@ -1,6 +1,6 @@
 package generation
 
-// The performed-story pipeline: Story Time Studio's counterpart to
+// The performed-story pipeline: Story Time's counterpart to
 // voiceAndPublish and composeAndPublish.
 //
 // What makes it different from voicing is that the parts are not all
@@ -295,6 +295,32 @@ func (r *Runner) extractCharacters(ctx context.Context, g *store.Generation, ep 
 	}
 	r.trace(g, store.LevelInfo, "characters.extracted", "characters extracted",
 		"episode", ep.Slug, "count", len(chars), "names", characterNames(chars))
+}
+
+// StoredScriptText is the prose of whatever a Generation checkpointed in
+// its Script field, for the readers outside this package that want words
+// rather than a pipeline: character backfill, and anything after it.
+//
+// Two shapes reach it, because the templates deliver two: a Script, whose
+// prose is one field, and a Story, whose prose is spread across its spoken
+// segments. Both are JSON objects and either decodes cleanly into the
+// other with everything missing, so the story is tried first and a script
+// is recognised by having any prose at all.
+func StoredScriptText(stored string) string {
+	if stored == "" {
+		return ""
+	}
+	var story Story
+	if err := json.Unmarshal([]byte(stored), &story); err == nil {
+		if text := spokenScript(story); text != "" {
+			return text
+		}
+	}
+	var script Script
+	if err := json.Unmarshal([]byte(stored), &script); err == nil {
+		return script.Script
+	}
+	return ""
 }
 
 // spokenScript flattens the story to the words a listener hears, for the

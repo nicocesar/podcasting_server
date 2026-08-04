@@ -340,12 +340,15 @@ func TestAvailableTemplates(t *testing.T) {
 	if slices.Contains(without.AvailableTemplates(), "ambient") {
 		t.Error("ambient offered without a composer")
 	}
-	// The spoken programs are never affected either way.
+	// The read program is never affected either way. Story Time is: it is
+	// performed, so it stands or falls with the same vendor the composer
+	// needs, and neither runner here can render it.
 	for _, ids := range [][]string{withMusic.AvailableTemplates(), without.AvailableTemplates()} {
-		for _, want := range []string{"news", "stories"} {
-			if !slices.Contains(ids, want) {
-				t.Errorf("%s missing from %v", want, ids)
-			}
+		if !slices.Contains(ids, "news") {
+			t.Errorf("news missing from %v", ids)
+		}
+		if slices.Contains(ids, "stories") {
+			t.Errorf("stories offered without the vendors to perform it: %v", ids)
 		}
 	}
 }

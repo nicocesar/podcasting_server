@@ -320,29 +320,23 @@ func TestPipelineHappyPath(t *testing.T) {
 // agent (not the news one), sends the story task with the returning cast,
 // and — SaveCharacters — extracts the cast onto the published Episode.
 func TestStoriesPipeline(t *testing.T) {
+	requirePerfFFmpeg(t)
 	st := testStore(t)
-	api := newFakeAPI()
-	// A story the agent invented, submitted with the empty sources list
-	// its own prompt asks for. This is the ordinary Story Time delivery,
-	// and nothing in the pipeline may treat it as a defect.
-	api.submissions = []string{`{"title":"The Fox Who Waited","summary":"A patient fox.","language":"en","script":"` +
-		strings.Repeat("The fox waited by the river. ", 200) + `","sources":[]}`}
-	r := testRunner(st, api, fakeEngine{name: "fake"})
+	api := storyAPI()
+	r := performRunner(st, api, &fakeDialogue{audio: perfTone(t, 440)},
+		&fakeSFX{audio: perfTone(t, 880)}, storyComposer(t))
 
-	g := newGeneration()
-	g.Template = "stories"
-	g.FreshnessDays = 0
+	g := newStoryGeneration()
 	g.AgeRange = "5-7"
 	g.SaveCharacters = true
 	g.Cast = []store.Character{{Name: "Grandpa Bear", Description: "Slow and warm."}}
-	if err := st.PutGeneration(context.Background(), g); err != nil {
-		t.Fatal(err)
-	}
-	r.Kick(g)
-	g = waitStage(t, st, store.GenDone)
+	g = runToCompletion(t, r, st, g)
 
-	if len(api.agents) != 1 || api.agents[0] != "podcasting-storyteller" {
-		t.Errorf("agents ensured = %v, want [podcasting-storyteller]", api.agents)
+	if g.Stage != store.GenDone {
+		t.Fatalf("stage = %q, want done (error: %s)", g.Stage, g.Error)
+	}
+	if len(api.agents) != 1 || api.agents[0] != "podcasting-storyteller-v2" {
+		t.Errorf("agents ensured = %v, want [podcasting-storyteller-v2]", api.agents)
 	}
 	task := api.sent["sess-1"][0]
 	for _, want := range []string{"aged 5 to 7", "Returning characters", "Grandpa Bear"} {
@@ -370,21 +364,21 @@ func TestStoriesPipeline(t *testing.T) {
 // A failed extraction never fails the pipeline: the Episode is already
 // published, and the dashboard's backfill button covers the gap.
 func TestCharacterExtractionFailureIsNonFatal(t *testing.T) {
+	requirePerfFFmpeg(t)
 	st := testStore(t)
-	api := newFakeAPI()
+	api := storyAPI()
 	api.completeErr = errors.New("model overloaded")
-	r := testRunner(st, api, fakeEngine{name: "fake"})
+	r := performRunner(st, api, &fakeDialogue{audio: perfTone(t, 440)},
+		&fakeSFX{audio: perfTone(t, 880)}, storyComposer(t))
 
-	g := newGeneration()
-	g.Template = "stories"
+	g := newStoryGeneration()
 	g.AgeRange = "all"
 	g.SaveCharacters = true
-	if err := st.PutGeneration(context.Background(), g); err != nil {
-		t.Fatal(err)
-	}
-	r.Kick(g)
-	g = waitStage(t, st, store.GenDone)
+	g = runToCompletion(t, r, st, g)
 
+	if g.Stage != store.GenDone {
+		t.Fatalf("stage = %q, want done (error: %s)", g.Stage, g.Error)
+	}
 	ep, err := st.GetEpisode(context.Background(), "alice", g.EpisodeSlug)
 	if err != nil {
 		t.Fatal(err)
@@ -413,20 +407,38 @@ func TestNewsPipelineKeepsItsAgent(t *testing.T) {
 	}
 }
 
-// Bootstrap warms every template's agent so the first request of either
-// kind pays no provisioning latency.
+// Bootstrap warms every available template's agent so the first request
+// of either kind pays no provisioning latency. This instance can neither
+// perform nor compose, so the storyteller and the composer are not among
+// them — an agent is pushed only for a program the chooser offers.
 func TestBootstrapProvisionsAllTemplates(t *testing.T) {
 	st := testStore(t)
 	api := newFakeAPI()
 	r := testRunner(st, api, fakeEngine{name: "fake"})
 	r.Bootstrap(context.Background())
 
-	want := map[string]bool{"podcasting-generator": true, "podcasting-storyteller": true}
+	want := map[string]bool{"podcasting-generator": true}
 	for _, name := range api.agents {
 		delete(want, name)
 	}
 	if len(want) != 0 {
 		t.Errorf("agents not provisioned: %v (got %v)", want, api.agents)
+	}
+
+	// A fully equipped instance warms the other two as well.
+	requirePerfFFmpeg(t)
+	full := newFakeAPI()
+	performRunner(st, full, &fakeDialogue{}, &fakeSFX{}, newFakeComposer()).Bootstrap(context.Background())
+	want = map[string]bool{
+		"podcasting-generator":      true,
+		"podcasting-storyteller-v2": true,
+		"podcasting-composer":       true,
+	}
+	for _, name := range full.agents {
+		delete(want, name)
+	}
+	if len(want) != 0 {
+		t.Errorf("agents not provisioned: %v (got %v)", want, full.agents)
 	}
 }
 

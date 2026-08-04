@@ -1,14 +1,14 @@
 package generation
 
-// Story Time Studio's half of the generation contract: a script that is a
-// list of things to render rather than a block of prose.
+// Story Time's half of the generation contract: a script that is a list of
+// things to render rather than a block of prose.
 //
-// The old contract hands back one string and one voice, which is why the
-// bilingual stories it produced were read by an English narrator doing an
-// accent — the pipeline had nowhere to put the information that this word
-// is Spanish and somebody else should say it. Here, every spoken segment
-// carries its own role and its own language, and the server casts each one
-// separately.
+// The prose contract the other templates use hands back one string and one
+// voice, which is why the bilingual stories this program used to produce
+// were read by an English narrator doing an accent — there was nowhere to
+// put the information that this word is Spanish and somebody else should
+// say it. Here, every spoken segment carries its own role and its own
+// language, and the server casts each one separately.
 
 import (
 	"encoding/json"
@@ -99,11 +99,11 @@ func (st Story) Languages() []string {
 	return out
 }
 
-// submitStoryToolName is Story Time Studio's counterpart to
-// submit_episode. A separate tool rather than a wider submit_episode: the
-// two deliverables have nothing in common past title and summary, and the
-// old template's agent must keep seeing exactly the schema it was
-// versioned against.
+// submitStoryToolName is Story Time's counterpart to submit_episode. A
+// separate tool rather than a wider submit_episode: the two deliverables
+// have nothing in common past title and summary, and the agents that
+// deliver prose must keep seeing exactly the schema they were versioned
+// against.
 const submitStoryToolName = "submit_story"
 
 // pauseBounds keep a pause meaningful and bounded.
@@ -182,8 +182,8 @@ func roleHints() string {
 // ParseStorySubmission decodes and validates a submit_story tool input.
 //
 // The language rule is the interesting one, and it is the opposite of the
-// old template's. There, one episode-level tag was compared against the
-// request and a mismatch triggered a demand to translate — which would
+// prose templates'. There, one episode-level tag is compared against the
+// request and a mismatch triggers a demand to translate — which would
 // reject a deliberately bilingual story on principle. Here each segment is
 // checked against the two languages the request actually allows, so
 // code-switching is legal and a third language is not.
@@ -354,11 +354,10 @@ func Plan(st Story, budget int) []Piece {
 	return pieces
 }
 
-// storiesV2SystemPrompt is Story Time Studio's persona. Derived from
-// storiesSystemPrompt, with the single-narrator rule — the one that made
-// the old template's bilingual stories impossible to voice properly —
-// replaced by casting, direction, and code-switching instructions.
-const storiesV2SystemPrompt = `You are the storyteller for a private podcast service that produces audio stories for children. Each task message gives you a story idea, the listeners' age range, a target spoken length in words, the language to tell the story in, sometimes a second language the listener is practicing, and sometimes a returning cast of characters. Your job: write a complete, ready-to-produce children's story.
+// storiesSystemPrompt is Story Time's persona. Like the news prompt it
+// lives in the repo on purpose: the startup bootstrap pushes it to the
+// platform, where a change becomes a new agent version (ADR 0009).
+const storiesSystemPrompt = `You are the storyteller for a private podcast service that produces audio stories for children. Each task message gives you a story idea, the listeners' age range, a target spoken length in words, the language to tell the story in, sometimes a second language the listener is practicing, and sometimes a returning cast of characters. Your job: write a complete, ready-to-produce children's story.
 
 Unlike a plain script, your story is produced: it is performed by several voices, over sound effects and music. You write all of that.
 

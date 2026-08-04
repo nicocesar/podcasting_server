@@ -101,15 +101,19 @@ func TestParseMusicSubmissionTolerance(t *testing.T) {
 }
 
 // TestTemplateSubmitTools guards the split introduced with the ambient
-// program: the spoken templates must keep answering on submit_episode.
+// program: each deliverable has its own submit tool, and a template must
+// not drift onto another one's.
 func TestTemplateSubmitTools(t *testing.T) {
-	for _, id := range []string{"news", "stories"} {
+	for id, want := range map[string]string{
+		"news":    submitToolName,
+		"stories": submitStoryToolName,
+	} {
 		tpl, ok := TemplateByID(id)
 		if !ok {
 			t.Fatalf("template %q missing", id)
 		}
-		if tpl.SubmitToolName != submitToolName {
-			t.Errorf("%s submits on %q, want %q", id, tpl.SubmitToolName, submitToolName)
+		if tpl.SubmitToolName != want {
+			t.Errorf("%s submits on %q, want %q", id, tpl.SubmitToolName, want)
 		}
 		if tpl.IsMusic {
 			t.Errorf("%s should not be a music template", id)

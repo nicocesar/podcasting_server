@@ -241,15 +241,61 @@ func TestSpokenScriptStripsDirection(t *testing.T) {
 	}
 }
 
-func TestStoriesV2MessageNamesBothLanguages(t *testing.T) {
-	tpl, ok := TemplateByID("stories-v2")
+// TestStoredScriptTextReadsBothShapes: the two checkpoint shapes are both
+// JSON objects, so each decodes into the other with every field missing —
+// which is how character backfill came to read a performed story as an
+// empty script and report there was nothing on record.
+func TestStoredScriptTextReadsBothShapes(t *testing.T) {
+	story := mustMarshal(Story{
+		Title: "The Barn", Summary: "A duck and a pig.", Language: "en",
+		Segments: []Segment{
+			{Kind: SegSpeech, Speaker: "narrator", Lang: "en", Text: "[sleepy] The barn is empty."},
+			{Kind: SegSFX, Cue: "duck_quack"},
+			{Kind: SegSpeech, Speaker: "tutor", Lang: "es", Text: "Vacío."},
+		},
+	})
+	got := StoredScriptText(story)
+	if !strings.Contains(got, "The barn is empty.") || !strings.Contains(got, "Vacío.") {
+		t.Errorf("story prose lost: %q", got)
+	}
+	if strings.Contains(got, "[sleepy]") || strings.Contains(got, "duck_quack") {
+		t.Errorf("direction and cues are not prose: %q", got)
+	}
+
+	script := `{"title":"Fusion","summary":"A summary.","script":"Fusion progresses steadily.","sources":[]}`
+	if got := StoredScriptText(script); got != "Fusion progresses steadily." {
+		t.Errorf("script prose = %q", got)
+	}
+	if got := StoredScriptText(""); got != "" {
+		t.Errorf("nothing checkpointed should read as nothing, got %q", got)
+	}
+}
+
+func TestStoriesTemplateIsPerformed(t *testing.T) {
+	tpl, ok := TemplateByID("stories")
 	if !ok {
-		t.Fatal("stories-v2 is not registered")
+		t.Fatal("stories is not registered")
 	}
 	if !tpl.NeedsDialogue || !tpl.HasTargetLanguage {
-		t.Error("stories-v2 must declare NeedsDialogue and HasTargetLanguage")
+		t.Error("stories must declare NeedsDialogue and HasTargetLanguage")
+	}
+	if !CarriesCast("stories") {
+		t.Error("stories episodes must be able to carry a returning cast")
+	}
+}
+
+// The performed program shipped as "stories-v2" alongside the plain
+// reading. Retiring the reading renamed it, but stored Generations,
+// Episodes and Beats still carry the old id and must keep resolving.
+func TestStoriesV2IDStillResolves(t *testing.T) {
+	tpl, ok := TemplateByID("stories-v2")
+	if !ok {
+		t.Fatal("stories-v2 no longer resolves; records that predate the rename are orphaned")
+	}
+	if tpl.ID != "stories" {
+		t.Errorf("stories-v2 resolved to %q, want the stories template", tpl.ID)
 	}
 	if !CarriesCast("stories-v2") {
-		t.Error("stories-v2 episodes must be able to carry a returning cast")
+		t.Error("stories-v2 episodes lost their cast")
 	}
 }

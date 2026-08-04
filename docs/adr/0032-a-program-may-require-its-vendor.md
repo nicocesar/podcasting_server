@@ -161,3 +161,32 @@ has fewer places to hide one and will break mid-conversation.
 Filling in the voice roster is listening work, not programming work. Until
 somebody auditions and picks real voices per role per language, several
 roles share a voice and a duck can sound like the narrator.
+
+## Addendum, 2026-08-04: the reading is retired and the name is plain
+
+The two storytelling programs ran side by side for two days, which was
+long enough to answer the question the split was hedging against: the
+performed stories are the ones worth keeping. The plain reading is gone —
+its registry entry, its system prompt, and its `podcasting-storyteller`
+agent are no longer pushed — and the performed program takes the name and
+the URL that were its: **Story Time**, at `stories`.
+
+What this costs is the fallback. An instance without an ElevenLabs key,
+sound effects and ffmpeg now offers no storytelling program at all, where
+before it offered the free single-voice one. That is the same trade this
+ADR already made for the program itself, taken one step further: a flat
+reading of a bilingual bedtime story is not a lesser version of this
+program, it is the bug, and keeping it on the chooser only made the bug
+easier to reach.
+
+The stored id `stories-v2` outlives the rename. Generations, Episodes and
+Beats carry it, so `TemplateByID` resolves it to `stories` rather than
+rewriting records in the store. The agent keeps its `-v2` name for the
+same reason: the platform treats the name as a version lineage, and
+renaming it would restart that lineage on top of the retired
+storyteller's.
+
+One thing the retirement broke and this addendum fixes: character
+backfill read `Generation.Script` as prose only. With every cast-carrying
+program now performed, that path found nothing to extract, so it reads
+either shape (`StoredScriptText`).

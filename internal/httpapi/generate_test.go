@@ -10,11 +10,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/nicocesar/podcasting_server/internal/generation"
+	"github.com/nicocesar/podcasting_server/internal/mix"
+	"github.com/nicocesar/podcasting_server/internal/sfx"
 	"github.com/nicocesar/podcasting_server/internal/store"
 	"github.com/nicocesar/podcasting_server/internal/store/fsstore"
 	"github.com/nicocesar/podcasting_server/internal/tts"
@@ -50,8 +53,13 @@ func (instantAPI) LastToolUse(_ context.Context, sessionID, name string) (*gener
 	input := []byte(`{"title":"Generated","summary":"A summary.","script":"` +
 		strings.Repeat("Spoken words here. ", 400) +
 		`","sources":[{"title":"A source","url":"https://a.example"}]}`)
-	if name == "submit_music" {
+	switch name {
+	case "submit_music":
 		input = []byte(`{"title":"Composed","summary":"A summary.","movements":[{"prompt":"warm rhodes, 60bpm","duration_ms":300000}]}`)
+	case "submit_story":
+		input = []byte(`{"title":"Performed","summary":"A summary.","language":"en","segments":[` +
+			`{"kind":"speech","speaker":"narrator","lang":"en","text":"` +
+			strings.Repeat("Spoken words here. ", 400) + `"}]}`)
 	}
 	return &generation.ToolUse{ID: sessionID + "-use-0", Input: input}, nil
 }
@@ -66,6 +74,42 @@ type instantEngine struct{}
 func (instantEngine) Name() string { return "instant" }
 func (instantEngine) Synthesize(context.Context, string, tts.Voice) ([]byte, error) {
 	return []byte("MP3!"), nil
+}
+
+// performVendor stands in for all three vendors Story Time needs — the
+// dialogue engine, the effects renderer, the composer of the bed. One
+// type because the real instance is one ElevenLabs key, and because the
+// mix cares about none of the distinctions: what it needs is audio it can
+// actually measure, so every call answers with real MP3.
+type performVendor struct{ audio []byte }
+
+func (performVendor) Name() string  { return "elevenlabs" }
+func (performVendor) Model() string { return "music-test" }
+
+func (p performVendor) Synthesize(context.Context, string, tts.Voice) ([]byte, error) {
+	return p.audio, nil
+}
+func (p performVendor) SynthesizeDialogue(context.Context, []tts.DialogueInput) ([]byte, error) {
+	return p.audio, nil
+}
+func (p performVendor) Render(context.Context, sfx.Cue) (sfx.Result, error) {
+	return sfx.Result{Audio: p.audio}, nil
+}
+func (p performVendor) Compose(context.Context, string, int) ([]byte, error) {
+	return p.audio, nil
+}
+
+// tone is a second of real MP3, built by the same ffmpeg the mixer uses.
+func tone(t *testing.T) []byte {
+	t.Helper()
+	out, err := exec.Command(mix.Binary, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+		"-c:a", "libmp3lame", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+		"-f", "mp3", "pipe:1").Output()
+	if err != nil {
+		t.Fatalf("generating fixture: %v", err)
+	}
+	return out
 }
 
 // instantComposer is a music client that renders instantly, for the
@@ -108,10 +152,53 @@ func newGeneratingServerStore(t *testing.T, composer generation.Composer) (*http
 // not care about the clock are untouched.
 func newGeneratingServerTick(t *testing.T, composer generation.Composer, opt generation.TickOptions) (*httptest.Server, *fsstore.Store) {
 	t.Helper()
+	return newServerTick(t, generation.Config{
+		Engines: []tts.Engine{instantEngine{}},
+		Music:   composer,
+	}, opt)
+}
+
+// newPerformingServer is the instance that can produce Story Time: a
+// dialogue-capable engine, sound effects, a composer for the bed, and
+// ffmpeg for the mix. Anything less and the program 404s, so the tests
+// about its form, its Beat and its progress page all start here.
+func newPerformingServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	ts, _ := newPerformingServerStore(t)
+	return ts
+}
+
+func newPerformingServerStore(t *testing.T) (*httptest.Server, *fsstore.Store) {
+	t.Helper()
+	if !mix.Available() {
+		if p, err := exec.LookPath("ffmpeg"); err == nil {
+			mix.Binary = p
+		} else {
+			t.Skip("ffmpeg not available: no instance can perform without it")
+		}
+	}
+	v := performVendor{audio: tone(t)}
+	return newServerTick(t, generation.Config{
+		Engines: []tts.Engine{v},
+		SFX:     v,
+		Music:   v,
+	}, generation.TickOptions{})
+}
+
+// newServerTick builds the generating server around gen, which carries
+// only the per-test half of the Runner's config: what this instance can
+// render. The rest is the same for every caller.
+func newServerTick(t *testing.T, gen generation.Config, opt generation.TickOptions) (*httptest.Server, *fsstore.Store) {
+	t.Helper()
 	st, err := fsstore.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	gen.Store = st
+	gen.API = instantAPI{}
+	gen.Model = "claude-test"
+	gen.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	gen.PollInterval = 5 * time.Millisecond
 	handler, err := New(Config{
 		Store:         st,
 		AdminToken:    adminToken,
@@ -120,15 +207,7 @@ func newGeneratingServerTick(t *testing.T, composer generation.Composer, opt gen
 		SessionSecret: "test-session-secret",
 		Assets:        os.DirFS("../../cmd/server"),
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Generator: generation.NewRunner(generation.Config{
-			Store:        st,
-			API:          instantAPI{},
-			Engines:      []tts.Engine{instantEngine{}},
-			Music:        composer,
-			Model:        "claude-test",
-			Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-			PollInterval: 5 * time.Millisecond,
-		}),
+		Generator:     generation.NewRunner(gen),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -227,6 +306,7 @@ func TestProgressPageWordingPerTemplate(t *testing.T) {
 	cases := []struct {
 		name     string
 		tpl      string
+		perform  bool // the program needs the performing instance
 		form     url.Values
 		want     []string
 		unwanted []string
@@ -251,14 +331,18 @@ func TestProgressPageWordingPerTemplate(t *testing.T) {
 		{
 			name:     "stories keeps its age range",
 			tpl:      "stories",
-			form:     url.Values{"topic": {"a dragon"}, "length": {"5"}, "age": {"5-7"}, "language": {"en"}, "voice": {"female"}},
-			want:     []string{"Generating a story", "Writing the story", "for ages 5-7"},
-			unwanted: []string{"timeless", "Composing"},
+			perform:  true,
+			form:     url.Values{"topic": {"a dragon"}, "length": {"5"}, "age": {"5-7"}, "language": {"en"}},
+			want:     []string{"Producing a story", "Writing the story", "Performing", "for ages 5-7"},
+			unwanted: []string{"timeless", "Composing the"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ts := newGeneratingServerWith(t, instantComposer{})
+			if tc.perform {
+				ts = newPerformingServer(t)
+			}
 			alice := createUser(t, ts, "alice")
 
 			resp := do(t, "POST", ts.URL+"/me/generate/"+tc.tpl, alice.publishCreds(),
@@ -360,14 +444,17 @@ func TestGenerateFlow(t *testing.T) {
 	ts := newGeneratingServer(t)
 	alice := createUser(t, ts, "alice")
 
-	// The chooser lists every program.
+	// The chooser lists the programs this instance can produce. Story
+	// Time and the ambient program are not among them here: both stand on
+	// vendors this server has not been given.
 	resp := do(t, "GET", ts.URL+"/me/generate", alice.publishCreds(), nil, "")
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK ||
-		!strings.Contains(string(body), "/me/generate/news") ||
-		!strings.Contains(string(body), "/me/generate/stories") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "/me/generate/news") {
 		t.Fatalf("chooser: %d\n%s", resp.StatusCode, body)
+	}
+	if strings.Contains(string(body), "/me/generate/stories") {
+		t.Fatalf("stories offered without the vendors to perform it:\n%s", body)
 	}
 
 	// The news form renders.
@@ -555,7 +642,7 @@ var storyForm = url.Values{
 }
 
 func TestGenerateStoriesFlow(t *testing.T) {
-	ts := newGeneratingServer(t)
+	ts := newPerformingServer(t)
 	alice := createUser(t, ts, "alice")
 	bob := createUser(t, ts, "bobby")
 
@@ -620,7 +707,7 @@ func TestGenerateStoriesFlow(t *testing.T) {
 }
 
 func TestGenerateStoriesValidation(t *testing.T) {
-	ts := newGeneratingServer(t)
+	ts := newPerformingServer(t)
 	alice := createUser(t, ts, "alice")
 	bad := []url.Values{
 		{"topic": {"x"}, "length": {"2"}, "language": {"en"}, "voice": {"female"}},                                  // no age
@@ -639,7 +726,7 @@ func TestGenerateStoriesValidation(t *testing.T) {
 }
 
 func TestCharacterBackfill(t *testing.T) {
-	ts := newGeneratingServer(t)
+	ts := newPerformingServer(t)
 	alice := createUser(t, ts, "alice")
 
 	// Published without the checkbox: no characters yet.

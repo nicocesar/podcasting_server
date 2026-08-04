@@ -363,7 +363,7 @@ type Generation struct {
 	// TargetLanguage is the language being practiced, for the templates
 	// that deliberately code-switch: Language narrates, TargetLanguage is
 	// the one the listener is learning. Empty means a monolingual episode,
-	// which is every template that predates Story Time Studio — the
+	// which is every template but the performed one — the
 	// episode, its feed entry and its spoken credit always follow
 	// Language alone, never this.
 	TargetLanguage string `json:"target_language,omitempty" datastore:"target_language,noindex"`
@@ -422,7 +422,7 @@ type Generation struct {
 	MusicCalls  int    `json:"music_calls,omitempty" datastore:"music_calls,noindex"`   // compose requests including retried ones
 	MusicModel  string `json:"music_model,omitempty" datastore:"music_model,noindex"`
 
-	// Studio meters, for the templates voiced as multi-speaker dialogue.
+	// Performance meters, for the templates voiced as multi-speaker dialogue.
 	// DialogueRequests is what the vendor actually bills a request at a
 	// time, and it is not derivable from TTSCharacters: the packer's
 	// budget and the seam rule decide how many requests a given script

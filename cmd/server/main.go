@@ -221,8 +221,8 @@ func run(log *slog.Logger) error {
 			composer = m
 			log.Info("generation: music composition enabled", "model", m.Model())
 		}
-		// And the same key again for sound effects. Story Time Studio
-		// needs all three vendors plus ffmpeg; missing any one of them
+		// And the same key again for sound effects. Story Time needs
+		// all three vendors plus ffmpeg; missing any one of them
 		// takes that program off the chooser rather than letting it
 		// produce the flat single-voice reading it exists to replace.
 		var effects generation.SFXRenderer

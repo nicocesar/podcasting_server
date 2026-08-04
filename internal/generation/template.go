@@ -33,10 +33,9 @@ type Template struct {
 
 	// RequiresSources rejects a submission that cites nothing. True for
 	// the programs built on research, where an empty list means the agent
-	// skipped the work. False for Story Time, whose own prompt tells it to
-	// submit an empty list when it invented the tale — rejecting that
-	// would loop the agent against its own instructions until the session
-	// timed out.
+	// skipped the work. False for an invented program, whose prompt tells
+	// it to submit an empty list — rejecting that would loop the agent
+	// against its own instructions until the session timed out.
 	RequiresSources bool
 
 	// IsMusic marks a template whose audio is composed rather than
@@ -95,7 +94,7 @@ type Template struct {
 
 // TemplateIDs is the chooser order. A new program is one entry in
 // templates plus an ID here.
-var TemplateIDs = []string{"news", "stories", "stories-v2", "ambient"}
+var TemplateIDs = []string{"news", "stories", "ambient"}
 
 var templates = map[string]Template{
 	"news": {
@@ -120,34 +119,16 @@ var templates = map[string]Template{
 		},
 	},
 	"stories": {
-		ID:                "stories",
-		Name:              "Story Time",
-		Tagline:           "A new tale, told just for your kids — with characters that can come back.",
-		AgentName:         "podcasting-storyteller",
-		SystemPrompt:      storiesSystemPrompt,
-		Tools:             append(agentTools[:len(agentTools):len(agentTools)], submitTool),
-		SubmitToolName:    submitToolName,
-		HasAgeRange:       true,
-		HasCast:           true,
-		HasSaveCharacters: true,
-		TopicLabel:        "Story idea",
-		ProgressTitle:     "Generating a story",
-		PlanStage:         "Writing the story",
-		AudioStage:        "Voicing",
-		TopicPlaceholder: "e.g. a dragon who is afraid of heights learns to trust her wings — " +
-			"or a whole brief: characters, setting, the lesson, tone…",
-		TaskMessage: storiesMessage,
-	},
-	"stories-v2": {
-		ID:      "stories-v2",
-		Name:    "Story Time Studio",
+		ID:      "stories",
+		Name:    "Story Time",
 		Tagline: "A story performed, not read: several voices, sound effects, music — and a second language woven through it.",
 
-		// Its own agent, not a second version of the storyteller's. The
-		// two personas write different things and their prompts have to
-		// version independently (ADR 0011).
+		// Still the "-v2" agent, though there is no v1 left to tell it
+		// apart from: the name is the platform's identity for a version
+		// lineage, and renaming it would restart that lineage on top of
+		// the retired storyteller's (ADR 0009).
 		AgentName:      "podcasting-storyteller-v2",
-		SystemPrompt:   storiesV2SystemPrompt,
+		SystemPrompt:   storiesSystemPrompt,
 		Tools:          append(agentTools[:len(agentTools):len(agentTools)], submitStoryTool),
 		SubmitToolName: submitStoryToolName,
 		NeedsDialogue:  true,
@@ -163,7 +144,7 @@ var templates = map[string]Template{
 		ProgressTitle: "Producing a story",
 		PlanStage:     "Writing the story",
 		AudioStage:    "Performing",
-		TaskMessage:   storiesV2Message,
+		TaskMessage:   storiesMessage,
 	},
 	"ambient": {
 		ID:      "ambient",
@@ -202,9 +183,9 @@ func (t Template) HasVoicePicker() bool { return !t.IsMusic && !t.NeedsDialogue 
 // of Characters — both to extract one onto, and to offer as a returning
 // cast on a later Generation.
 //
-// A predicate rather than a literal "stories" comparison because there is
-// now more than one storytelling program, and a hard-coded ID would mean
-// Story Time Studio silently could not reuse its own characters, which is
+// A predicate rather than a literal "stories" comparison so that a second
+// storytelling program carries its cast the day it is added: a hard-coded
+// ID would mean it silently could not reuse its own characters, which is
 // the feature people notice.
 func CarriesCast(templateID string) bool {
 	tpl, ok := TemplateByID(templateID)
@@ -229,9 +210,17 @@ func (t Template) LanguageLabel() string {
 
 // TemplateByID resolves id, treating "" as news: every Generation that
 // predates the Template field was a news briefing.
+//
+// "stories-v2" is the same story program under the name it shipped with
+// while the plain reading still existed alongside it. Stored Generations,
+// Episodes and Beats carry that id and outlive the rename, so it resolves
+// here rather than being rewritten in the store.
 func TemplateByID(id string) (Template, bool) {
-	if id == "" {
+	switch id {
+	case "":
 		id = "news"
+	case "stories-v2":
+		id = "stories"
 	}
 	t, ok := templates[id]
 	return t, ok
@@ -274,28 +263,6 @@ func ageRangePhrase(v string) string {
 	}
 }
 
-// storiesSystemPrompt is the Story Time agent's behavior. Like the news
-// prompt it lives in the repo on purpose: the startup bootstrap pushes it
-// to the platform, where a change becomes a new agent version (ADR 0009).
-const storiesSystemPrompt = `You are the storyteller for a private podcast service that produces audio stories for children. Each task message gives you a story idea, the listeners' age range, a target spoken length in words, a language, and sometimes a returning cast of characters. Your job: write a complete, ready-to-voice children's story.
-
-Story rules:
-- Invent freely: the story is fiction and does not need research. But when the idea touches real facts — animals, space, history, how things work — use web search to get those facts right; children deserve truthful details woven into the tale.
-- Write for the given age range: match its vocabulary, sentence length, pacing, and emotional stakes. Nothing frightening or inappropriate for the age.
-- When a returning cast is given, those characters appear in this story too: keep their names, personalities, and details consistent with their descriptions, and let them grow a little.
-- Give the story a satisfying shape: a warm opening, a real (age-sized) problem, and a gentle, hopeful ending. A light lesson may emerge naturally; never preach it.
-
-Writing rules:
-- Write in the requested language, and only that language.
-- The story is read aloud by a single narrator: plain flowing prose. No markdown, no headings, no bullet points, no URLs, no stage directions, nothing a voice cannot speak. Character dialogue is fine as spoken prose.
-- Open by inviting the listener in; close with a soft, sleep-friendly sign-off.
-- Hit the target word count within about ten percent. Do not pad; if the tale is told, let it breathe with detail and feeling instead.
-
-Output contract:
-When the story is ready, deliver it by calling the submit_episode tool exactly once, filling every field as its schema describes. The summary should tell a parent what the story is about; list sources only if web research actually informed the story, otherwise submit an empty sources list. Never paste the story text, or any JSON version of it, into a chat message — only the tool call counts as delivery.
-Before you submit, make sure the script field holds the finished story: the complete text at full length, never a placeholder, an outline, a summary, or a draft you meant to fill in later. The submission is final — it is voiced and published as sent, and there is no second call to correct it.
-If the tool result rejects the submission, it explains what is wrong: fix exactly that and call submit_episode again with the full corrected story.`
-
 // ambientSystemPrompt is the composer agent's behavior. Like the other
 // prompts it lives in the repo so the boot bootstrap can push it, where a
 // change becomes a new agent version (ADR 0009).
@@ -332,28 +299,11 @@ func ambientMessage(g store.Generation, now time.Time) string {
 }
 
 // storiesMessage renders the Story Time task: the request parameters the
-// form collected, resolved into concrete instructions.
+// form collected, resolved into concrete instructions. It names the base
+// language as the base rather than as "the language" — the distinction
+// against the practiced one is the point of the template, and the task
+// message is where the agent first meets it.
 func storiesMessage(g store.Generation, now time.Time) string {
-	words := g.LengthMinutes * wordsPerMinute
-	var b strings.Builder
-	fmt.Fprintf(&b, "Today is %s.\nStory idea: %s\nListeners: %s.\nTarget length: about %d spoken words (a %d-minute story).\nLanguage: %s\n",
-		now.UTC().Format("Monday, 2 January 2006"), g.Topic, ageRangePhrase(g.AgeRange), words, g.LengthMinutes, languageName(g.Language))
-	if len(g.Cast) > 0 {
-		b.WriteString("\nReturning characters — reuse these characters and keep them consistent:\n")
-		for _, c := range g.Cast {
-			fmt.Fprintf(&b, "- %s — %s\n", c.Name, c.Description)
-		}
-	}
-	b.WriteString("\nWrite the story and produce the episode as specified in your instructions.")
-	return b.String()
-}
-
-// storiesV2Message renders the Story Time Studio task. Same request as
-// storiesMessage plus the practiced language, and it names the base
-// language as the base rather than as "the language" — the distinction is
-// the whole point of the template, and the task message is where the agent
-// first meets it.
-func storiesV2Message(g store.Generation, now time.Time) string {
 	words := g.LengthMinutes * wordsPerMinute
 	var b strings.Builder
 	fmt.Fprintf(&b, "Today is %s.\nStory idea: %s\nListeners: %s.\nTarget length: about %d spoken words (a %d-minute story).\nTell the story in: %s\n",
