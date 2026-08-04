@@ -105,18 +105,23 @@ type storyVoice struct {
 // storyVoices is the cast list. Every entry is a voice somebody listened
 // to and chose; this is listening work, not programming work.
 //
-// English and Spanish are now cast for every role, which is what closes
-// ADR 0032's "a duck can sound like the narrator" — the duck is
-// small_squeaky, and until it was listed here it borrowed whatever the
-// fallback found. A language with no entries still falls back through
-// roleFallback to the curated Voices table, so an uncast role produces
-// audio in a sensible voice rather than failing a run or, worse, reaching
-// the vendor with an invented ID.
+// Every offered language is cast for every role, which is what closes ADR
+// 0032's "a duck can sound like the narrator" — the duck is small_squeaky,
+// and until it was listed here it borrowed whatever roleFallback found.
+// TestCuratedLanguagesCastEveryRole holds that line: adding a language to
+// Voices without casting it here fails, because the dropdown is shared and
+// a language offered to Story Time is a language it will try to perform.
 //
 // Roles may share a voice on purpose. In Spanish the gruff one and the
-// squeaky one are both Agustin: eleven_v3 performs the audio tags the
-// agent writes, so one actor plays both parts rather than the part being
-// miscast.
+// squeaky one are both Agustin, and Italian and German each give the three
+// young parts to one actor: eleven_v3 performs the audio tags the agent
+// writes, so that is one actor playing several parts rather than a part
+// being miscast.
+//
+// Italian and German were picked from the shared-voice library by usage,
+// filtered on the metadata that matches each role — age for the young
+// parts, "deep" for the gruff one, a storyteller description for the
+// narrator. Every id was checked against text-to-dialogue before landing.
 var storyVoices = []storyVoice{
 	// English
 	{Role: "narrator", Language: "en", Eleven: "ZF6FPAbjXT4488VcRRnw", Name: "Amelia"},
@@ -134,12 +139,29 @@ var storyVoices = []storyVoice{
 	{Role: "child", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
 	{Role: "small_squeaky", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
 	{Role: "silly", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	// Italian
+	{Role: "narrator", Language: "it", Eleven: "MLpDWJvrjFIdb63xbJp8", Name: "Angelina"},
+	{Role: "tutor", Language: "it", Eleven: "oVJbgLwL0s5pk9e2U6QH", Name: "Manuela"},
+	{Role: "warm_grownup", Language: "it", Eleven: "uScy1bXtKz8vPzfdFsFw", Name: "Antonio"},
+	{Role: "big_gruff", Language: "it", Eleven: "13Cuh3NuYvWOVQtLbRN8", Name: "Marco"},
+	{Role: "child", Language: "it", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
+	{Role: "small_squeaky", Language: "it", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
+	{Role: "silly", Language: "it", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
+	// German
+	{Role: "narrator", Language: "de", Eleven: "7eVMgwCnXydb3CikjV7a", Name: "Lea"},
+	{Role: "tutor", Language: "de", Eleven: "uvysWDLbKpA4XvpD3GI6", Name: "Leonie"},
+	{Role: "warm_grownup", Language: "de", Eleven: "IWm8DnJ4NGjFI7QAM5lM", Name: "Stephan"},
+	{Role: "big_gruff", Language: "de", Eleven: "czb8zR3V35utWZxvKd9a", Name: "Leo"},
+	{Role: "child", Language: "de", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
+	{Role: "small_squeaky", Language: "de", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
+	{Role: "silly", Language: "de", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
 }
 
 // roleFallback is the gender each uncast role borrows from the curated
-// Voices table, so the fallback at least varies with the part. With en and
-// es fully cast above, this now only covers a story told in some other
-// language — it is the safety net, no longer the ordinary path.
+// Voices table, so the fallback at least varies with the part. With every
+// offered language cast above, nothing reaches this in practice — it is
+// the safety net that keeps an uncast role producing audio rather than an
+// empty voice id, not the ordinary path.
 var roleFallback = map[string]string{
 	"narrator":      "female",
 	"tutor":         "female",

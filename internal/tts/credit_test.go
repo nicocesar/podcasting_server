@@ -1,6 +1,9 @@
 package tts
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCredit(t *testing.T) {
 	en, _ := VoiceFor("en", "female")
@@ -65,6 +68,31 @@ func TestCreditFormatPerLanguage(t *testing.T) {
 		}
 		if _, ok := expandedCreditFormats[v.Language]; !ok {
 			t.Errorf("language %q has no expanded credit format", v.Language)
+		}
+	}
+}
+
+// A sign-off is written by hand, in a language whoever added it may not
+// read, and then spoken aloud. Sprintf does not fail on a format with the
+// wrong number of verbs — it renders "%!s(MISSING)" straight into the
+// audio — and every other credit test here only checks for a non-empty
+// string, so this is the one that hears it.
+func TestCreditRendersWithoutFormattingArtifacts(t *testing.T) {
+	for _, v := range Languages() {
+		for engine := range providerNames {
+			for _, credit := range []string{
+				Credit(engine, v, "", ""),
+				Credit(engine, v, "nico", "radio.example.com"),
+			} {
+				if credit == "" {
+					t.Errorf("no credit for %s on %s", v.Language, engine)
+					continue
+				}
+				if strings.Contains(credit, "%!") || strings.Contains(credit, "%s") {
+					t.Errorf("credit for %s on %s has a format error, and it is spoken out loud: %q",
+						v.Language, engine, credit)
+				}
+			}
 		}
 	}
 }

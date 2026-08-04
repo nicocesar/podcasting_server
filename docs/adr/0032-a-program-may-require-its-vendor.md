@@ -167,12 +167,15 @@ Filling in the voice roster is listening work, not programming work. Until
 somebody auditions and picks real voices per role per language, several
 roles share a voice and a duck can sound like the narrator.
 
-> Done for English and Spanish, 2026-08-04: every role in both languages
-> is cast by hand in `storyVoices`, and `roleFallback` is now the safety
-> net for other languages rather than the ordinary path.
-> `TestCuratedLanguagesCastEveryRole` fails if a row is dropped — the
-> older coverage test passes on the fallback, which is why nothing caught
-> this for as long as it lasted.
+> Done, 2026-08-04: every role in every offered language is cast by hand
+> in `storyVoices`, and `roleFallback` is now the safety net rather than
+> the ordinary path. Italian and German were added at the same time,
+> picked out of the shared-voice library by usage and filtered on the
+> metadata that matches each role. `TestCuratedLanguagesCastEveryRole`
+> holds the line in both directions: it fails if a row is dropped, and it
+> reads its languages from `Voices`, so adding one to the dropdown obliges
+> you to cast it. The older coverage test passes on the fallback, which is
+> why nothing caught this for as long as it lasted.
 
 ## Addendum, 2026-08-04: the reading is retired and the name is plain
 

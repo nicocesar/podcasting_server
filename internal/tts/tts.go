@@ -65,6 +65,18 @@ var Voices = []Voice{
 	// Juan - Rich, Soothing and Bassy (Argentinian)
 	{Language: "es", Label: "Español", Gender: "male", Edge: "es-AR-TomasNeural", Google: "es-US-Neural2-B", GoogleLang: "es-US", Eleven: "dGjL92Li0y7ZUQ3MESQW",
 		EdgeName: "Tomás", GoogleName: "Neural Dos B", ElevenName: "Juan"},
+	// Angelina - Storyteller, warm and gentle
+	{Language: "it", Label: "Italiano", Gender: "female", Edge: "it-IT-ElsaNeural", Google: "it-IT-Neural2-A", GoogleLang: "it-IT", Eleven: "MLpDWJvrjFIdb63xbJp8",
+		EdgeName: "Elsa", GoogleName: "Neural Due A", ElevenName: "Angelina"},
+	// Antonio Farina - Expressive and Warm
+	{Language: "it", Label: "Italiano", Gender: "male", Edge: "it-IT-DiegoNeural", Google: "it-IT-Neural2-F", GoogleLang: "it-IT", Eleven: "uScy1bXtKz8vPzfdFsFw",
+		EdgeName: "Diego", GoogleName: "Neural Due F", ElevenName: "Antonio"},
+	// Lea - Clear and Feminine
+	{Language: "de", Label: "Deutsch", Gender: "female", Edge: "de-DE-KatjaNeural", Google: "de-DE-Neural2-G", GoogleLang: "de-DE", Eleven: "7eVMgwCnXydb3CikjV7a",
+		EdgeName: "Katja", GoogleName: "Neural Zwei G", ElevenName: "Lea"},
+	// Stephan - Warm and Friendly
+	{Language: "de", Label: "Deutsch", Gender: "male", Edge: "de-DE-ConradNeural", Google: "de-DE-Neural2-H", GoogleLang: "de-DE", Eleven: "IWm8DnJ4NGjFI7QAM5lM",
+		EdgeName: "Conrad", GoogleName: "Neural Zwei H", ElevenName: "Stephan"},
 }
 
 // Languages returns one Voice per Language, in dropdown order, for the

@@ -45,16 +45,22 @@ func TestRoleVoiceCoversEveryRole(t *testing.T) {
 	}
 }
 
-// The two languages the station actually tells stories in are cast by
-// hand, every role, with no role left borrowing from roleFallback.
+// Every language the station offers is cast by hand, every role, with no
+// role left borrowing from roleFallback.
 //
 // TestRoleVoiceCoversEveryRole passes on the fallback alone, so it went on
 // passing through the whole period when the duck sounded like the narrator.
 // This is the test that notices: deleting a row from storyVoices is
 // otherwise silent, because the fallback absorbs it and still returns a
 // perfectly usable voice — just the wrong one.
+//
+// It reads the languages from Voices rather than listing them, so adding
+// one to the dropdown obliges you to cast it. The dropdown is shared: a
+// language offered for The Briefing is also offered for Story Time, which
+// will then try to perform seven roles in it.
 func TestCuratedLanguagesCastEveryRole(t *testing.T) {
-	for _, lang := range []string{"en", "es"} {
+	for _, l := range Languages() {
+		lang := l.Language
 		for _, r := range Roles {
 			t.Run(r.ID+"/"+lang, func(t *testing.T) {
 				var found *storyVoice
