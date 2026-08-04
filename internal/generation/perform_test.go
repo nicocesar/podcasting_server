@@ -217,6 +217,65 @@ func TestPerformAndPublish(t *testing.T) {
 	}
 }
 
+// A pause the agent writes has to reach the listener. It was validated by
+// ParseStorySubmission, planned into a Piece, and then dropped — first by
+// renderPiece, which returned nothing for it, and then by the emptiness
+// test in performAndPublish, which would have dropped it a second time.
+// Both are on the path this exercises, so the assertion is the published
+// duration rather than anything either of them returns.
+func TestPerformRendersAPauseAsSilence(t *testing.T) {
+	requirePerfFFmpeg(t)
+
+	publish := func(t *testing.T, story Story) int {
+		t.Helper()
+		st := testStore(t)
+		api := newFakeAPI()
+		api.toolName = submitStoryToolName
+		api.submissions = []string{mustMarshal(story)}
+		mus := newFakeComposer()
+		mus.piece = perfTone(t, 220)
+		r := performRunner(st, api, &fakeDialogue{audio: perfTone(t, 440)},
+			&fakeSFX{audio: perfTone(t, 880)}, mus)
+
+		g := runToCompletion(t, r, st, newStoryGeneration())
+		if g.Stage != store.GenDone {
+			t.Fatalf("stage = %q, want done (error: %s)", g.Stage, g.Error)
+		}
+		ep, err := st.GetEpisode(context.Background(), "alice", g.EpisodeSlug)
+		if err != nil {
+			t.Fatalf("episode not published: %v", err)
+		}
+		return ep.DurationSec
+	}
+
+	// The same story with the pause lengthened by four seconds. Comparing
+	// two runs rather than asserting an absolute length keeps this honest
+	// about fixture durations, the credit, and the bed tail — all of which
+	// are identical between the two and cancel out.
+	var story Story
+	if err := json.Unmarshal([]byte(storyInput), &story); err != nil {
+		t.Fatal(err)
+	}
+	longer := story
+	longer.Segments = append([]Segment(nil), story.Segments...)
+	found := false
+	for i, s := range longer.Segments {
+		if s.Kind == SegPause {
+			longer.Segments[i].MS = s.MS + 4000
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the story fixture has no pause; this test has nothing to measure")
+	}
+
+	short, long := publish(t, story), publish(t, longer)
+	if long-short < 3 {
+		t.Errorf("lengthening a pause by 4s changed the episode from %ds to %ds; "+
+			"the pause is not reaching the mix", short, long)
+	}
+}
+
 // TestPerformProgressCountsTheSlowTail is the regression for a run that
 // looked hung in production. Counting only pieces made the bar reach 100%
 // and then sit there through the bed compose and the mix — the two

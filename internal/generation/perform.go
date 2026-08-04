@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"unicode/utf8"
 
 	"github.com/nicocesar/podcasting_server/internal/mix"
@@ -141,7 +142,10 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 		if err != nil {
 			return g, fmt.Errorf("piece %d of %d (%s): %w", i+1, len(pieces), p.Kind, err)
 		}
-		if len(part.Audio) > 0 {
+		// Silence carries no bytes — the mixer generates it — so an
+		// emptiness test alone would drop every pause on the floor, which
+		// is precisely what this pipeline used to do with them.
+		if len(part.Audio) > 0 || part.Kind == mix.Silence {
 			parts = append(parts, part)
 		}
 		// Checkpoint per piece, the same granularity the voiced path uses:
@@ -163,18 +167,19 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 	step()
 
 	r.trace(&g, store.LevelInfo, "story.mixing", "mixing", "parts", len(parts), "bed", len(bed) > 0)
-	mp3, err := mix.Mix(ctx, parts, bed)
+	mixed, err := mix.Mix(ctx, parts, bed)
 	if err != nil {
 		return g, fmt.Errorf("mixing: %w", err)
 	}
 	step()
 	r.trace(&g, store.LevelInfo, "story.mixed", "story mixed",
-		"pieces", len(pieces), "parts", len(parts), "bed", len(bed) > 0, "bytes", len(mp3))
+		"pieces", len(pieces), "parts", len(parts), "bed", len(bed) > 0, "bytes", len(mixed.Audio))
+	r.traceLevels(&g, mixed.Levels)
 
 	// The spoken text, tags stripped, is what the Strand classifier should
 	// read: audio tags are direction, and a classifier reading "[giggling]"
 	// is reading something no listener hears.
-	g, ep, err := r.publishAudio(ctx, g, story.Title, story.Description(), spokenScript(story), mp3)
+	g, ep, err := r.publishAudio(ctx, g, story.Title, story.Description(), spokenScript(story), mixed.Audio)
 	if err != nil {
 		return g, err
 	}
@@ -206,7 +211,8 @@ func (r *Runner) renderPiece(ctx context.Context, g *store.Generation, p Piece, 
 		for _, t := range p.Turns {
 			g.TTSCharacters += utf8.RuneCountInString(t.Text)
 		}
-		return mix.Part{Audio: audio, Label: fmt.Sprintf("dialogue (%d turns)", len(p.Turns))}, nil
+		return mix.Part{Kind: mix.Speech, Audio: audio,
+			Label: fmt.Sprintf("dialogue (%d turns)", len(p.Turns))}, nil
 
 	case SegSFX:
 		res, err := r.sfx.Render(ctx, sfx.Cue{Name: p.Cue})
@@ -219,15 +225,15 @@ func (r *Runner) renderPiece(ctx context.Context, g *store.Generation, p Piece, 
 		} else {
 			g.SFXGenerated++
 		}
-		return mix.Part{Audio: res.Audio, Label: "sfx " + p.Cue}, nil
+		return mix.Part{Kind: mix.Effect, Audio: res.Audio, Label: "sfx " + p.Cue}, nil
 
 	case SegPause:
-		// Nothing renders silence today: pause segments are in the schema
-		// but the agent is not directed to use them, and giving them real
-		// duration is part of the deferred rhythm work. Dropping them
-		// keeps the plan honest — a pause that produces no silence should
-		// not pretend to be a part.
-		return mix.Part{}, nil
+		// A pause carries no audio: the mixer generates the silence, which
+		// is cheaper than rendering it and saves carrying a silent MP3
+		// around. Everything upstream of here already worked — the schema
+		// validates the length, the planner emits the piece — and a pause
+		// the agent wrote was simply dropped at this line.
+		return mix.Part{Kind: mix.Silence, MS: p.MS, Label: fmt.Sprintf("pause %dms", p.MS)}, nil
 	}
 	return mix.Part{}, fmt.Errorf("unknown piece kind %q", p.Kind)
 }
@@ -251,7 +257,61 @@ func (r *Runner) creditPart(ctx context.Context, g *store.Generation, story Stor
 	}
 	g.DialogueRequests++
 	g.TTSCharacters += utf8.RuneCountInString(credit)
-	return mix.Part{Audio: audio, Label: "credit"}, true
+	return mix.Part{Kind: mix.Speech, Audio: audio, Label: "credit"}, true
+}
+
+// traceLevels records what the mixer measured and what it did about it.
+//
+// The levels in a Story Time episode are decided by constants chosen from
+// first principles rather than by ear, so this is the evidence for moving
+// them: reading the trace across a handful of episodes says whether the bed
+// is sitting where it was meant to sit without listening to any of them.
+func (r *Runner) traceLevels(g *store.Generation, l mix.Levels) {
+	if !l.Measured {
+		r.trace(g, store.LevelNotice, "story.levels_skipped",
+			"levels left as the vendors returned them", "why", l.Note)
+		return
+	}
+	args := []any{
+		"speech_lufs", round1(l.SpeechLUFS),
+		"speech_peak_db", round1(l.SpeechPeak),
+		"final_gain_db", round1(l.FinalGain),
+		"effects", len(l.EffectGains),
+	}
+	// Only when there was one: a bed that was never composed would
+	// otherwise report as 0 LUFS, which reads as deafening rather than
+	// absent.
+	if l.BedLUFS != 0 {
+		args = append(args, "bed_lufs", round1(l.BedLUFS), "bed_gain_db", round1(l.BedGain))
+	}
+	if len(l.EffectGains) > 0 {
+		quietest, loudest := l.EffectGains[0], l.EffectGains[0]
+		for _, gain := range l.EffectGains {
+			quietest, loudest = min(quietest, gain), max(loudest, gain)
+		}
+		// The range rather than every value: what matters when reading
+		// these back is whether any effect needed a big correction.
+		args = append(args, "effect_gain_min_db", round1(quietest), "effect_gain_max_db", round1(loudest))
+	}
+	if l.FinalClamp != "" {
+		args = append(args, "final_clamped_by", l.FinalClamp)
+	}
+	r.trace(g, store.LevelInfo, "story.levels", "levels set", args...)
+}
+
+// round1 keeps the trace readable — a tenth of a decibel is already finer
+// than anything anyone can act on — and keeps it renderable.
+//
+// Digital silence meters as -Inf, which encoding/json refuses. traceDetail
+// drops the whole detail object when marshalling fails, so one infinity
+// would take every other field in the event with it, silently, in exactly
+// the case worth reading about. Rendered as a string it survives and still
+// says what happened.
+func round1(f float64) any {
+	if math.IsInf(f, 0) || math.IsNaN(f) {
+		return fmt.Sprintf("%v", f)
+	}
+	return math.Round(f*10) / 10
 }
 
 // renderBed composes the music the story plays over. Non-fatal: a story

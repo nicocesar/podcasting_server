@@ -153,6 +153,11 @@ child, and the honest way to find that is to listen to real episodes. The
 `pause` segment kind exists in the schema against that work, and currently
 renders nothing.
 
+> Superseded by ADR 0033. Levels are now measured relative to the
+> narration, the bed fades and outlasts the last word, and pauses render.
+> Ducking is still not done, and is still a deliberate deferral. The
+> filter-surface estimate above is also out of date — see ADR 0033.
+
 Seam quality depends on that same gap. Dialogue prosody does not carry
 across a request boundary, and the packer prefers to break where a sound
 effect covers the seam — but with no pause segments in play, a quiet story
