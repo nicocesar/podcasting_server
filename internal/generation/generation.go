@@ -412,13 +412,36 @@ func translateMessage(language string) string {
 	)
 }
 
+// languageNames is how a language is named *to the agent* — in the task
+// message that says what to write, and in the rejection that says what
+// went wrong. Both the English name and the native one, because the agent
+// is being asked to write in it, not about it.
+//
+// This is not tts.Voice.Label, which is what the dropdown shows a reader
+// picking a language they already speak ("Deutsch"). Here the sentence
+// around it is English, so the name has to be legible in English first.
+var languageNames = map[string]string{
+	"en": "English",
+	"es": "Spanish (español)",
+	"it": "Italian (italiano)",
+	"de": "German (Deutsch)",
+}
+
+// languageName names a language for the agent.
+//
+// It used to be a two-case switch that returned "English" for anything it
+// did not recognise, which is the worst possible default: adding Italian
+// to the dropdown silently told the agent to write Italian episodes in
+// English, and then told it off in a rejection that also said "English"
+// — so the agent obediently wrote English and was rejected for it, on a
+// loop. An unknown code now returns the code itself, which is wrong in a
+// way somebody notices rather than wrong in a way that argues back, and
+// TestLanguageNameCoversEveryLanguage makes sure it cannot come up.
 func languageName(code string) string {
-	switch code {
-	case "es":
-		return "Spanish (español)"
-	default:
-		return "English"
+	if name, ok := languageNames[code]; ok {
+		return name
 	}
+	return code
 }
 
 // Slugify turns a Topic into the slug's topic part: lowercase, runs of

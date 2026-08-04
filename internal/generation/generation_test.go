@@ -4,7 +4,39 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nicocesar/podcasting_server/internal/tts"
 )
+
+// Every language the station offers has to be nameable to the agent.
+//
+// This is the regression for a real loop in production: languageName was a
+// switch that returned "English" for anything but Spanish, so adding
+// Italian to the dropdown told the agent "write it in English" and then
+// rejected the English it wrote with a message that also said "English".
+// Nothing failed, nothing logged an error, and the agent argued with the
+// server until the run timed out.
+func TestLanguageNameCoversEveryLanguage(t *testing.T) {
+	for _, v := range tts.Languages() {
+		name, ok := languageNames[v.Language]
+		if !ok {
+			t.Errorf("language %q has no agent-facing name, so the task message would say %q",
+				v.Language, languageName(v.Language))
+			continue
+		}
+		if name == "" {
+			t.Errorf("language %q has an empty name", v.Language)
+		}
+		// Two languages sharing a name is the failure this test exists for,
+		// dressed differently: the agent cannot tell them apart.
+		for _, other := range tts.Languages() {
+			if other.Language != v.Language && languageNames[other.Language] == name {
+				t.Errorf("languages %q and %q are both called %q to the agent",
+					v.Language, other.Language, name)
+			}
+		}
+	}
+}
 
 func TestParseScript(t *testing.T) {
 	payload := `{"title":"T","summary":"S","script":"Hello there.","sources":[{"title":"A","url":"https://a.example","published":"2026-07-01"}]}`

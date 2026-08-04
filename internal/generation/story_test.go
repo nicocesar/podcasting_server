@@ -58,6 +58,70 @@ func TestParseStorySubmissionAcceptsCodeSwitching(t *testing.T) {
 	}
 }
 
+// The regression for a loop that reached production: a Spanish story
+// practicing Italian was told, in both the task message and every
+// rejection, that the language to practice was "English" — because
+// languageName returned English for anything it did not recognise. The
+// agent wrote English, the server rejected the English, and the rejection
+// said to write English. Nothing errored; the run just argued until it
+// timed out.
+//
+// This exercises the symptom rather than the cause, so it stays honest if
+// the naming ever moves somewhere else.
+func TestParseStorySubmissionNamesTheRightLanguages(t *testing.T) {
+	for _, tc := range []struct {
+		base, target string
+		wantNamed    string
+	}{
+		{"es", "it", "Italian"},
+		{"es", "de", "German"},
+		{"en", "it", "Italian"},
+		{"de", "en", "German"},
+	} {
+		t.Run(tc.base+"/"+tc.target, func(t *testing.T) {
+			// A story in a language neither allows, so the rejection has to
+			// spell out which two are.
+			st := farmStory()
+			st.Segments = []Segment{
+				speech("narrator", "pt", "Era uma vez uma fazenda muito tranquila."),
+			}
+			_, err := ParseStorySubmission(mustJSON(t, st), 0, tc.base, tc.target)
+			if err == nil {
+				t.Fatal("a story in a third language should be rejected")
+			}
+			if !strings.Contains(err.Error(), tc.wantNamed) {
+				t.Errorf("rejection does not name %s, so the agent cannot act on it: %v",
+					tc.wantNamed, err)
+			}
+			// The bug's signature: English named in a story that may not use
+			// it. Only meaningful when neither side actually is English.
+			if tc.base != "en" && tc.target != "en" && strings.Contains(err.Error(), "English") {
+				t.Errorf("rejection tells the agent to use English, which is not one of the "+
+					"allowed languages (%s/%s): %v", tc.base, tc.target, err)
+			}
+		})
+	}
+}
+
+// And the accepting half: the exact shape that was looping is now valid.
+func TestParseStorySubmissionAcceptsTheNewLanguages(t *testing.T) {
+	for _, tc := range []struct{ base, target string }{
+		{"es", "it"}, {"es", "de"}, {"it", "de"}, {"de", "en"},
+	} {
+		t.Run(tc.base+"/"+tc.target, func(t *testing.T) {
+			st := farmStory()
+			st.Language = tc.base
+			st.Segments = []Segment{
+				speech("narrator", tc.base, "Once upon a time on a very quiet farm."),
+				speech("tutor", tc.target, "Once upon a time on a very quiet farm."),
+			}
+			if _, err := ParseStorySubmission(mustJSON(t, st), 0, tc.base, tc.target); err != nil {
+				t.Errorf("a %s story practicing %s was rejected: %v", tc.base, tc.target, err)
+			}
+		})
+	}
+}
+
 func TestParseStorySubmissionRejects(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
