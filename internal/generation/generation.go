@@ -19,7 +19,7 @@ import (
 
 // Lengths are the Target Length options (minutes), as offered on the
 // form. The word budget assumes ~150 spoken words per minute.
-var Lengths = []int{2, 5, 10, 15, 25, 60}
+var Lengths = []int{2, 5, 10}
 
 const wordsPerMinute = 150
 
