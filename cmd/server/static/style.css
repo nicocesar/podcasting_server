@@ -733,6 +733,9 @@ details.subscribe > div {
 @media (prefers-reduced-motion: reduce) {
   .stages li.stage-now::before { animation: none; }
 }
+/* The lamp marks the step a failed run died on, which is not a step still
+   in progress: same red, but it stops pulsing. */
+#gen[data-stage="failed"] .stages li.stage-now::before { animation: none; }
 
 .creds dt { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
 .creds dd { margin: 0.25rem 0 0; }

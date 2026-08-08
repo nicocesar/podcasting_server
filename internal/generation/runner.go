@@ -280,6 +280,7 @@ func (r *Runner) Retry(ctx context.Context, g store.Generation) (store.Generatio
 		return g, fmt.Errorf("generation is not failed")
 	}
 	g.Error = ""
+	g.FailedStage = ""
 	g.Active = true
 	g.VoicedChunks = 0
 	// Retrying un-dismisses. Otherwise a run cleared off the Dashboard
@@ -351,6 +352,7 @@ func (r *Runner) fail(g store.Generation, cause error) {
 	if g.Stage == store.GenResearching && g.SessionID != "" {
 		r.recordSessionUsage(ctx, &g)
 	}
+	g.FailedStage = g.Stage
 	g.Stage = store.GenFailed
 	g.Active = false
 	g.Error = cause.Error()

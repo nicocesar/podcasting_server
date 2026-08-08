@@ -381,6 +381,11 @@ type Generation struct {
 	BeatID string `json:"beat_id,omitempty" datastore:"beat_id,noindex"`
 
 	Stage string `json:"stage" datastore:"stage,noindex"`
+	// FailedStage is the stage Stage held when the run failed, kept because
+	// "failed" overwrites it: without this the progress page knows only
+	// that something broke, and marks the first step for want of anywhere
+	// better to put the mark. Empty on a run that has not failed.
+	FailedStage string `json:"failed_stage,omitempty" datastore:"failed_stage,noindex"`
 	// Active indexes the resume scan: true until done or failed.
 	Active bool   `json:"-" datastore:"active"`
 	Error  string `json:"error,omitempty" datastore:"error,noindex"`

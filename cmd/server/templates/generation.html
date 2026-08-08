@@ -1,7 +1,7 @@
 {{define "title"}}Generating: {{.Topic}}{{end}}
 {{define "content"}}
 <article class="card" id="gen"
-         data-stage="{{.Stage}}">
+         data-stage="{{.Stage}}" data-failed-stage="{{.FailedStage}}">
   <h1>{{.ProgressTitle}}</h1>
   <p class="muted">{{.TemplateName}} · “{{.Topic}}” · {{.LengthMinutes}} min{{with .Detail}} · {{.}}{{end}} · {{.Language}}</p>
 
@@ -30,8 +30,12 @@ const order = ["researching", "voicing", "publishing", "done"];
 function apply(v) {
   const gen = document.getElementById("gen");
   gen.dataset.stage = v.stage;
+  gen.dataset.failedStage = v.failed_stage || "";
   document.getElementById("stage-label").firstElementChild.textContent = v.stage_label;
-  const reached = order.indexOf(v.stage === "failed" ? "researching" : v.stage);
+  // A failed run marks the step it died on. Runs that failed before the
+  // field existed have nothing to point at, so they still mark the first.
+  const reached = order.indexOf(
+    v.stage === "failed" ? (v.failed_stage || "researching") : v.stage);
   document.querySelectorAll(".stages li").forEach((li) => {
     const i = order.indexOf(li.dataset.stage);
     li.classList.toggle("stage-past", i < reached || v.stage === "done");
@@ -61,6 +65,7 @@ async function poll() {
 
 if (!apply({
   stage: document.getElementById("gen").dataset.stage,
+  failed_stage: document.getElementById("gen").dataset.failedStage,
   stage_label: document.getElementById("stage-label").firstElementChild.textContent,
   error: document.getElementById("gen-error").textContent.trim(),
   episode_slug: (document.querySelector("#done-link code") || {}).textContent,
