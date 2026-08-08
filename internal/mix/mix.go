@@ -348,7 +348,16 @@ func run(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, Binary, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	start := time.Now()
 	if err := cmd.Run(); err != nil {
+		// CommandContext kills ffmpeg with SIGKILL when the run's deadline
+		// passes, and a killed ffmpeg logs nothing on its way out: the plain
+		// error reads "signal: killed" with an empty log after it, which
+		// looks exactly like the kernel reclaiming an oversized mix. Naming
+		// the deadline here is what tells those two apart.
+		if ctx.Err() != nil {
+			return stderr.String(), fmt.Errorf("ffmpeg: %w after %s", ctx.Err(), time.Since(start).Round(time.Second))
+		}
 		return stderr.String(), fmt.Errorf("ffmpeg: %w: %s", err, strings.TrimSpace(lastLines(stderr.String(), 5)))
 	}
 	return stderr.String(), nil
