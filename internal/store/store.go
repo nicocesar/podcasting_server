@@ -202,6 +202,18 @@ type APIKey struct {
 type Character struct {
 	Name        string `json:"name" datastore:"name,noindex"`
 	Description string `json:"description" datastore:"description,noindex"`
+	// Role is the part type this character was cast as, and Register the
+	// vocal register they were cast at — both from the canon in
+	// internal/tts.
+	Role     string `json:"role,omitempty" datastore:"role,noindex"`
+	Register string `json:"register,omitempty" datastore:"register,noindex"`
+	// VoiceID and VoiceName are the voice this character actually spoke
+	// with. Recorded so a character who comes back sounds like themselves
+	// even after the curated pool is widened or re-ordered — without it,
+	// continuity is only ever as stable as the table. Empty on characters
+	// extracted before the cast was declared up front.
+	VoiceID   string `json:"voice_id,omitempty" datastore:"voice_id,noindex"`
+	VoiceName string `json:"voice_name,omitempty" datastore:"voice_name,noindex"`
 }
 
 // Trace levels, ordered by how much they want an admin's attention.

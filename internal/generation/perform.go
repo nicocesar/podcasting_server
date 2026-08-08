@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/nicocesar/podcasting_server/internal/mix"
@@ -106,6 +107,19 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 		return g, fmt.Errorf("this program needs ffmpeg to mix the audio; it is not available")
 	}
 
+	// Cast once for the whole story rather than per request: distinctness
+	// is a property of the episode, so it cannot be decided a packed
+	// request at a time.
+	casting, err := tts.CastStory(story.Members(), PrimaryTag(g.Language), PrimaryTag(g.TargetLanguage), returningVoices(g.Cast))
+	if err != nil {
+		return g, fmt.Errorf("casting: %w", err)
+	}
+	for _, n := range casting.Notices {
+		r.trace(&g, store.LevelNotice, "cast.compromised", n)
+	}
+	r.trace(&g, store.LevelInfo, "cast.decided", "cast decided",
+		"members", len(story.Cast), "voices", casting.Distinct(), "who", castSummary(story, casting))
+
 	pieces := Plan(story, tts.DialogueCharBudget)
 
 	// The credit leads rather than trails. Everywhere else it is appended,
@@ -113,7 +127,7 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 	// jump-cut at the exact moment the point was to be winding down. Spoken
 	// in the narrator's voice so it belongs to the same production.
 	var parts []mix.Part
-	if p, ok := r.creditPart(ctx, &g, story, dialogue); ok {
+	if p, ok := r.creditPart(ctx, &g, casting, dialogue); ok {
 		parts = append(parts, p)
 	}
 
@@ -138,7 +152,7 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 	}
 
 	for i, p := range pieces {
-		part, err := r.renderPiece(ctx, &g, p, dialogue)
+		part, err := r.renderPiece(ctx, &g, p, casting, dialogue)
 		if err != nil {
 			return g, fmt.Errorf("piece %d of %d (%s): %w", i+1, len(pieces), p.Kind, err)
 		}
@@ -185,7 +199,7 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 	}
 
 	if g.SaveCharacters {
-		r.extractCharacters(ctx, &g, ep, spokenScript(story))
+		r.saveCast(ctx, &g, ep, storyCharacters(story, casting))
 	}
 	return r.finish(ctx, g, ep.Slug)
 }
@@ -195,10 +209,10 @@ func (r *Runner) performAndPublish(ctx context.Context, g store.Generation) (sto
 // paid for, and perfectly listenable without one bird call, and failing
 // the whole episode over it would be a bad trade. A failed line of
 // dialogue is not skippable — that is the story itself.
-func (r *Runner) renderPiece(ctx context.Context, g *store.Generation, p Piece, dialogue tts.DialogueEngine) (mix.Part, error) {
+func (r *Runner) renderPiece(ctx context.Context, g *store.Generation, p Piece, casting tts.Casting, dialogue tts.DialogueEngine) (mix.Part, error) {
 	switch p.Kind {
 	case SegSpeech:
-		inputs, err := tts.CastDialogue(p.Turns)
+		inputs, err := tts.CastDialogue(p.Turns, casting)
 		if err != nil {
 			return mix.Part{}, err
 		}
@@ -241,8 +255,16 @@ func (r *Runner) renderPiece(ctx context.Context, g *store.Generation, p Piece, 
 // creditPart voices the station credit in the story's narrator voice.
 // Non-fatal throughout: losing the credit is not worth losing an episode
 // that is already written and largely paid for.
-func (r *Runner) creditPart(ctx context.Context, g *store.Generation, story Story, dialogue tts.DialogueEngine) (mix.Part, bool) {
-	voice, ok := tts.RoleVoice("narrator", g.Language)
+func (r *Runner) creditPart(ctx context.Context, g *store.Generation, casting tts.Casting, dialogue tts.DialogueEngine) (mix.Part, bool) {
+	// The cast's narrator, not the table's: the credit names the voice it
+	// is spoken in, so reading the table again would credit whoever is
+	// listed first rather than whoever actually narrated. A story that
+	// declared no narrator falls back to the table, which is also what
+	// the sign-off would have used before there was a cast.
+	voice, ok := casting.Narrator()
+	if !ok {
+		voice, ok = tts.RoleVoice("narrator", PrimaryTag(g.Language))
+	}
 	if !ok {
 		return mix.Part{}, false
 	}
@@ -336,6 +358,79 @@ func (r *Runner) renderBed(ctx context.Context, g *store.Generation, story Story
 // of voiceAndPublish so both spoken pipelines run the identical thing.
 // Non-fatal by design: the Episode is already published, and the backfill
 // button covers a missed extraction.
+// returningVoices indexes the cast frozen on the Generation by normalised
+// name, so the caster can give a character who is coming back the voice
+// they had. Characters saved before voices were recorded contribute
+// nothing and fall through to the hash, which is what they were cast by
+// in the first place.
+func returningVoices(cast []store.Character) map[string]string {
+	if len(cast) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(cast))
+	for _, c := range cast {
+		if c.VoiceID != "" {
+			out[tts.NormalizeName(c.Name)] = c.VoiceID
+		}
+	}
+	return out
+}
+
+// storyCharacters is what the Episode keeps: who was in the story and who
+// voiced them. Written from the declared cast rather than inferred back
+// out of the finished script — the storyteller already told us, and a
+// second model reading its output to rediscover it cost a call per
+// episode and could disagree with the segments.
+func storyCharacters(story Story, casting tts.Casting) []store.Character {
+	out := make([]store.Character, 0, len(story.Cast))
+	for _, m := range story.Cast {
+		c := store.Character{
+			Name:        m.Name,
+			Description: m.Description,
+			Role:        m.Role,
+			Register:    m.Voice,
+		}
+		if v, ok := casting.Voice(m.ID); ok {
+			c.VoiceID, c.VoiceName = v.Eleven, v.ElevenName
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// castSummary renders the casting for the trace: who was heard as whom,
+// which is the one line that answers "why did the girl sound like that".
+func castSummary(story Story, casting tts.Casting) string {
+	parts := make([]string, 0, len(story.Cast))
+	for _, m := range story.Cast {
+		if v, ok := casting.Voice(m.ID); ok {
+			parts = append(parts, m.Name+"="+v.ElevenName)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// saveCast records the cast on the Episode. Non-fatal: the episode is
+// published by the time this runs, and losing the cast costs a later
+// story the chance to bring these characters back, not this one anything.
+func (r *Runner) saveCast(ctx context.Context, g *store.Generation, ep store.Episode, chars []store.Character) {
+	if len(chars) == 0 {
+		return
+	}
+	ep.Characters = chars
+	if err := r.store.UpdateEpisode(ctx, ep); err != nil {
+		r.trace(g, store.LevelWarn, "characters.save_failed", "could not save characters",
+			"episode", ep.Slug, "count", len(chars), "err", err)
+		return
+	}
+	r.trace(g, store.LevelInfo, "characters.saved", "cast saved",
+		"episode", ep.Slug, "count", len(chars), "names", characterNames(chars))
+}
+
+// extractCharacters infers a cast from finished prose. The performed
+// stories declare theirs up front and no longer need this on the happy
+// path; it stays for the owner-only backfill button, which runs against
+// episodes published before the cast existed.
 func (r *Runner) extractCharacters(ctx context.Context, g *store.Generation, ep store.Episode, script string) {
 	chars, u, err := ExtractCharacters(ctx, r.api, script)
 	// Extraction burned real tokens either way; fold them into the meters.

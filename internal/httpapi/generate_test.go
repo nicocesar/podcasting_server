@@ -57,7 +57,8 @@ func (instantAPI) LastToolUse(_ context.Context, sessionID, name string) (*gener
 	case "submit_music":
 		input = []byte(`{"title":"Composed","summary":"A summary.","movements":[{"prompt":"warm rhodes, 60bpm","duration_ms":300000}]}`)
 	case "submit_story":
-		input = []byte(`{"title":"Performed","summary":"A summary.","language":"en","segments":[` +
+		input = []byte(`{"title":"Performed","summary":"A summary.","language":"en",` +
+			`"cast":[{"id":"narrator","name":"Narrator","role":"narrator","voice":"female"}],"segments":[` +
 			`{"kind":"speech","speaker":"narrator","lang":"en","text":"` +
 			strings.Repeat("Spoken words here. ", 400) + `"}]}`)
 	}
@@ -672,15 +673,20 @@ func TestGenerateStoriesFlow(t *testing.T) {
 	maps.Copy(form, storyForm)
 	form.Set("save_characters", "1")
 	ep := generateStory(t, ts, alice, form)
-	if ep.Template != "stories" || len(ep.Characters) == 0 || ep.Characters[0].Name != "Lila" {
+	// The cast is the one the storyteller declared, carrying the voice it
+	// was cast to — not a cast inferred from the finished script.
+	if ep.Template != "stories" || len(ep.Characters) == 0 || ep.Characters[0].Name != "Narrator" {
 		t.Fatalf("episode = %+v", ep)
+	}
+	if ep.Characters[0].VoiceID == "" {
+		t.Fatalf("saved cast has no voice on it: %+v", ep.Characters)
 	}
 
 	// The cast picker now offers it…
 	resp = do(t, "GET", ts.URL+"/me/generate/stories", alice.publishCreds(), nil, "")
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "Returning characters") || !strings.Contains(string(body), "Lila") {
+	if !strings.Contains(string(body), "Returning characters") || !strings.Contains(string(body), "Narrator") {
 		t.Fatalf("cast picker missing:\n%s", body)
 	}
 
@@ -701,7 +707,7 @@ func TestGenerateStoriesFlow(t *testing.T) {
 	resp = do(t, "GET", ts.URL+"/me/generate/stories", bob.publishCreds(), nil, "")
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if !strings.Contains(string(body), "Lila") || !strings.Contains(string(body), "alice/"+ep.Slug) {
+	if !strings.Contains(string(body), "Narrator") || !strings.Contains(string(body), "alice/"+ep.Slug) {
 		t.Fatalf("shared cast missing from bob's picker:\n%s", body)
 	}
 }

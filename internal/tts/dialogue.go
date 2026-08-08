@@ -93,13 +93,18 @@ func ValidRole(id string) bool {
 	return false
 }
 
-// storyVoice is one curated casting: a role, in a language, to a real
-// ElevenLabs voice.
+// storyVoice is one curated casting: a role, in a language, at a vocal
+// register, to a real ElevenLabs voice.
 type storyVoice struct {
 	Role     string
 	Language string
-	Eleven   string
-	Name     string
+	// Gender is the vocal register this voice reads as. Empty means it
+	// reads as neither and can fill either — Cassidy Cartoon arrives from
+	// the shared library with no gender on the record, and listening to
+	// it agrees.
+	Gender string
+	Eleven string
+	Name   string
 }
 
 // storyVoices is the cast list. Every entry is a voice somebody listened
@@ -118,43 +123,65 @@ type storyVoice struct {
 // writes, so that is one actor playing several parts rather than a part
 // being miscast.
 //
+// Where a (language, role, register) has several entries this is a pool
+// rather than a casting: CastStory picks one per Cast Member and will not
+// hand the same voice to two of them. English is deepest because it was
+// auditioned first (cmd/audition) — the other languages still cast a role
+// to one voice, which is correct but leaves two children in an Italian
+// story sharing an actor.
+//
 // Italian and German were picked from the shared-voice library by usage,
 // filtered on the metadata that matches each role — age for the young
 // parts, "deep" for the gruff one, a storyteller description for the
 // narrator. Every id was checked against text-to-dialogue before landing.
 var storyVoices = []storyVoice{
 	// English
-	{Role: "narrator", Language: "en", Eleven: "ZF6FPAbjXT4488VcRRnw", Name: "Amelia"},
-	{Role: "tutor", Language: "en", Eleven: "QMSGabqYzk8YAneQYYvR", Name: "Natalie"},
-	{Role: "warm_grownup", Language: "en", Eleven: "G17SuINrv2H9FC6nvetn", Name: "Christopher"},
-	{Role: "big_gruff", Language: "en", Eleven: "7JxUWWyYwXK8kmqmKEnT", Name: "Chuck"},
-	{Role: "child", Language: "en", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
-	{Role: "small_squeaky", Language: "en", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
-	{Role: "silly", Language: "en", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
+	{Role: "narrator", Language: "en", Gender: "female", Eleven: "ZF6FPAbjXT4488VcRRnw", Name: "Amelia"},
+	{Role: "tutor", Language: "en", Gender: "female", Eleven: "QMSGabqYzk8YAneQYYvR", Name: "Natalie"},
+	{Role: "warm_grownup", Language: "en", Gender: "male", Eleven: "G17SuINrv2H9FC6nvetn", Name: "Christopher"},
+	{Role: "big_gruff", Language: "en", Gender: "male", Eleven: "7JxUWWyYwXK8kmqmKEnT", Name: "Chuck"},
+	{Role: "child", Language: "en", Gender: "male", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
+	{Role: "child", Language: "en", Gender: "female", Eleven: "d8WcCpplp8meHt10UhL8", Name: "Emily"},
+	{Role: "child", Language: "en", Gender: "female", Eleven: "o9B86nZP8mMLaT5FBEzP", Name: "Kathie"},
+	{Role: "child", Language: "en", Gender: "female", Eleven: "Wu9A8zlwvFHoEpuX7MGo", Name: "Libby"},
+	{Role: "child", Language: "en", Gender: "female", Eleven: "wIzYfKZE8c87XZD7bDLH", Name: "Zibby"},
+	{Role: "child", Language: "en", Gender: "male", Eleven: "QNmup2YxeCRVNbrdygyk", Name: "Arpan"},
+	{Role: "child", Language: "en", Gender: "male", Eleven: "iHiL14jSTiWXy4nzDtbq", Name: "Mister Mouse"},
+	{Role: "child", Language: "en", Gender: "male", Eleven: "PoqlHoqJoAfdQ0g8bLK3", Name: "Rick"},
+	{Role: "small_squeaky", Language: "en", Gender: "male", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
+	{Role: "small_squeaky", Language: "en", Gender: "female", Eleven: "Nggzl2QAXh3OijoXD116", Name: "Candy"},
+	{Role: "small_squeaky", Language: "en", Gender: "", Eleven: "sNtVJbzIv3hJALp8Ez9p", Name: "Cassidy Cartoon"},
+	{Role: "small_squeaky", Language: "en", Gender: "male", Eleven: "EaX6rnyDKjJx35tchi80", Name: "Nelson"},
+	{Role: "small_squeaky", Language: "en", Gender: "male", Eleven: "4NJLA7OQNVkeKe4jVdHw", Name: "Sean"},
+	{Role: "silly", Language: "en", Gender: "male", Eleven: "yZ3w1DL4ZAxIdOscv2t8", Name: "Wilf"},
+	{Role: "silly", Language: "en", Gender: "male", Eleven: "dHd5gvgSOzSfduK4CvEg", Name: "Ed"},
+	{Role: "silly", Language: "en", Gender: "female", Eleven: "eppqEXVumQ3CfdndcIBd", Name: "Minnie"},
+	{Role: "silly", Language: "en", Gender: "male", Eleven: "g2W4HAjKvdW93AmsjsOx", Name: "Nathan"},
+	{Role: "silly", Language: "en", Gender: "female", Eleven: "MkTSSXNgnBULS6ek4pon", Name: "Tilly"},
 	// Spanish
-	{Role: "narrator", Language: "es", Eleven: "9rvdnhrYoXoUt4igKpBw", Name: "Mariana"},
-	{Role: "tutor", Language: "es", Eleven: "bN1bDXgDIGX5lw0rtY2B", Name: "Melanie"},
-	{Role: "warm_grownup", Language: "es", Eleven: "dGjL92Li0y7ZUQ3MESQW", Name: "Juan"},
-	{Role: "big_gruff", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
-	{Role: "child", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
-	{Role: "small_squeaky", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
-	{Role: "silly", Language: "es", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	{Role: "narrator", Language: "es", Gender: "female", Eleven: "9rvdnhrYoXoUt4igKpBw", Name: "Mariana"},
+	{Role: "tutor", Language: "es", Gender: "female", Eleven: "bN1bDXgDIGX5lw0rtY2B", Name: "Melanie"},
+	{Role: "warm_grownup", Language: "es", Gender: "male", Eleven: "dGjL92Li0y7ZUQ3MESQW", Name: "Juan"},
+	{Role: "big_gruff", Language: "es", Gender: "male", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	{Role: "child", Language: "es", Gender: "male", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	{Role: "small_squeaky", Language: "es", Gender: "male", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
+	{Role: "silly", Language: "es", Gender: "male", Eleven: "D09EpJbk4um1HKSpeTSc", Name: "Agustin"},
 	// Italian
-	{Role: "narrator", Language: "it", Eleven: "MLpDWJvrjFIdb63xbJp8", Name: "Angelina"},
-	{Role: "tutor", Language: "it", Eleven: "oVJbgLwL0s5pk9e2U6QH", Name: "Manuela"},
-	{Role: "warm_grownup", Language: "it", Eleven: "uScy1bXtKz8vPzfdFsFw", Name: "Antonio"},
-	{Role: "big_gruff", Language: "it", Eleven: "13Cuh3NuYvWOVQtLbRN8", Name: "Marco"},
-	{Role: "child", Language: "it", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
-	{Role: "small_squeaky", Language: "it", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
-	{Role: "silly", Language: "it", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
+	{Role: "narrator", Language: "it", Gender: "female", Eleven: "MLpDWJvrjFIdb63xbJp8", Name: "Angelina"},
+	{Role: "tutor", Language: "it", Gender: "female", Eleven: "oVJbgLwL0s5pk9e2U6QH", Name: "Manuela"},
+	{Role: "warm_grownup", Language: "it", Gender: "male", Eleven: "uScy1bXtKz8vPzfdFsFw", Name: "Antonio"},
+	{Role: "big_gruff", Language: "it", Gender: "male", Eleven: "13Cuh3NuYvWOVQtLbRN8", Name: "Marco"},
+	{Role: "child", Language: "it", Gender: "male", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
+	{Role: "small_squeaky", Language: "it", Gender: "male", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
+	{Role: "silly", Language: "it", Gender: "male", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
 	// German
-	{Role: "narrator", Language: "de", Eleven: "7eVMgwCnXydb3CikjV7a", Name: "Lea"},
-	{Role: "tutor", Language: "de", Eleven: "uvysWDLbKpA4XvpD3GI6", Name: "Leonie"},
-	{Role: "warm_grownup", Language: "de", Eleven: "IWm8DnJ4NGjFI7QAM5lM", Name: "Stephan"},
-	{Role: "big_gruff", Language: "de", Eleven: "czb8zR3V35utWZxvKd9a", Name: "Leo"},
-	{Role: "child", Language: "de", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
-	{Role: "small_squeaky", Language: "de", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
-	{Role: "silly", Language: "de", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
+	{Role: "narrator", Language: "de", Gender: "female", Eleven: "7eVMgwCnXydb3CikjV7a", Name: "Lea"},
+	{Role: "tutor", Language: "de", Gender: "female", Eleven: "uvysWDLbKpA4XvpD3GI6", Name: "Leonie"},
+	{Role: "warm_grownup", Language: "de", Gender: "male", Eleven: "IWm8DnJ4NGjFI7QAM5lM", Name: "Stephan"},
+	{Role: "big_gruff", Language: "de", Gender: "male", Eleven: "czb8zR3V35utWZxvKd9a", Name: "Leo"},
+	{Role: "child", Language: "de", Gender: "male", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
+	{Role: "small_squeaky", Language: "de", Gender: "male", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
+	{Role: "silly", Language: "de", Gender: "male", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
 }
 
 // roleFallback is the gender each uncast role borrows from the curated
@@ -191,24 +218,30 @@ func RoleVoice(role, language string) (Voice, bool) {
 	return VoiceFor(language, roleFallback[role])
 }
 
-// CastDialogue turns speaker roles into vendor voice IDs, resolving each
-// turn in its own language — which is the point of the whole design: the
-// narrator's English line and the tutor's Spanish one are cast separately,
-// so the practiced word is spoken by somebody who actually speaks it.
+// CastDialogue turns speakers into vendor voice IDs by looking each one
+// up in the story's Casting.
 //
-// It also enforces the vendor's ten-voice ceiling here rather than at the
-// HTTP boundary, so a caller learns its packing was too wide before it
-// pays for the request.
-func CastDialogue(turns []DialogueTurn) ([]DialogueInput, error) {
+// A Cast Member keeps one voice in every language they speak. Recasting
+// per language — which is what this did when it resolved turns by role —
+// makes a bilingual child audibly become a different girl for one line
+// and back again. The "spoken by a native" guarantee lives where it
+// belongs instead: the tutor is a Cast Member of their own, pinned to the
+// practiced language, and it is their lines the listener is meant to
+// learn from.
+//
+// The vendor's ten-voice ceiling is enforced here rather than at the HTTP
+// boundary, so a caller learns its packing was too wide before it pays
+// for the request.
+func CastDialogue(turns []DialogueTurn, c Casting) ([]DialogueInput, error) {
 	inputs := make([]DialogueInput, 0, len(turns))
 	seen := map[string]bool{}
 	for i, t := range turns {
-		v, ok := RoleVoice(t.Role, t.Language)
+		v, ok := c.Voice(t.Speaker)
 		if !ok {
-			return nil, fmt.Errorf("turn %d: no voice for role %q in %q", i, t.Role, t.Language)
+			return nil, fmt.Errorf("turn %d: %q is not in the cast", i, t.Speaker)
 		}
 		if v.Eleven == "" {
-			return nil, fmt.Errorf("turn %d: role %q in %q has no ElevenLabs voice", i, t.Role, t.Language)
+			return nil, fmt.Errorf("turn %d: %q has no ElevenLabs voice", i, t.Speaker)
 		}
 		seen[v.Eleven] = true
 		if len(seen) > MaxDialogueVoices {
@@ -219,10 +252,11 @@ func CastDialogue(turns []DialogueTurn) ([]DialogueInput, error) {
 	return inputs, nil
 }
 
-// DialogueTurn is one spoken turn before casting: the role and language
-// the script asked for, not yet resolved to a vendor voice.
+// DialogueTurn is one spoken turn before casting: who says it and in what
+// language. Language describes the text — it is what the packer and the
+// meters read — and no longer decides the voice.
 type DialogueTurn struct {
-	Role     string
+	Speaker  string // a Cast Member id
 	Language string
 	Text     string
 }

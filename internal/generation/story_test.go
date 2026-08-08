@@ -8,9 +8,24 @@ import (
 	"github.com/nicocesar/podcasting_server/internal/tts"
 )
 
-// speech is a shorthand for the segment kind under test.
-func speech(role, lang, text string) Segment {
-	return Segment{Kind: SegSpeech, Speaker: role, Lang: lang, Text: text}
+// speech is a shorthand for the segment kind under test. The fixtures
+// name their cast members after the part they play, which keeps them
+// readable; a real story names them after the characters.
+func speech(speaker, lang, text string) Segment {
+	return Segment{Kind: SegSpeech, Speaker: speaker, Lang: lang, Text: text}
+}
+
+// farmCast covers every speaker the fixtures below use, including the
+// ones only some of them use: a declared member with no lines is legal,
+// and it keeps each test free to swap its segments.
+func farmCast() []CastMember {
+	return []CastMember{
+		{ID: "narrator", Name: "Narrator", Role: "narrator", Voice: "female"},
+		{ID: "tutor", Name: "Tutor", Role: "tutor", Voice: "female"},
+		{ID: "small_squeaky", Name: "Quackers", Role: "small_squeaky", Voice: "male",
+			Description: "a duck who moved into the barn"},
+		{ID: "child", Name: "Emily", Role: "child", Voice: "female"},
+	}
 }
 
 // farmStory is the story the old template got wrong, written the way the
@@ -22,6 +37,7 @@ func farmStory() Story {
 		Summary:  "A duck and a pig move into an empty barn.",
 		Language: "en",
 		Bed:      "soft music box, sleepy, warm",
+		Cast:     farmCast(),
 		Segments: []Segment{
 			speech("narrator", "en", "On the farm there is a big red barn. Today the barn is empty."),
 			speech("tutor", "es", "Vacío."),
@@ -140,7 +156,46 @@ func TestParseStorySubmissionRejects(t *testing.T) {
 			name:   "a speaker outside the cast",
 			mutate: func(s *Story) { s.Segments[0].Speaker = "pato" },
 			base:   "en", target: "es",
-			want: "not one of the available voices",
+			want: "is not in the cast",
+		},
+		{
+			name:   "no cast at all",
+			mutate: func(s *Story) { s.Cast = nil },
+			base:   "en", target: "es",
+			want: "has no cast",
+		},
+		{
+			name: "two cast members sharing an id",
+			mutate: func(s *Story) {
+				s.Cast = append(s.Cast, CastMember{ID: "narrator", Name: "Other", Role: "child", Voice: "male"})
+			},
+			base: "en", target: "es",
+			want: "ids must be unique",
+		},
+		{
+			name:   "a cast member with an invented role",
+			mutate: func(s *Story) { s.Cast[3].Role = "pato" },
+			base:   "en", target: "es",
+			want: "which is not one of",
+		},
+		{
+			name:   "a cast member with no register",
+			mutate: func(s *Story) { s.Cast[3].Voice = "" },
+			base:   "en", target: "es",
+			want: `must be "female" or "male"`,
+		},
+		{
+			name: "a cast over the ceiling",
+			mutate: func(s *Story) {
+				for i := range MaxCast {
+					s.Cast = append(s.Cast, CastMember{
+						ID: "extra" + string(rune('a'+i)), Name: "Extra" + string(rune('A'+i)),
+						Role: "child", Voice: "male",
+					})
+				}
+			},
+			base: "en", target: "es",
+			want: "at most",
 		},
 		{
 			name:   "the practiced language never appearing",

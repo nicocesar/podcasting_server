@@ -93,6 +93,12 @@ func requirePerfFFmpeg(t *testing.T) {
 var storyInput = mustMarshal(Story{
 	Title: "Adventures on the Farm", Summary: "A duck and a pig move into an empty barn.",
 	Language: "en", Bed: "soft music box, sleepy",
+	Cast: []CastMember{
+		{ID: "narrator", Name: "Narrator", Role: "narrator", Voice: "female"},
+		{ID: "tutor", Name: "Tutor", Role: "tutor", Voice: "female"},
+		{ID: "small_squeaky", Name: "Quackers", Role: "small_squeaky", Voice: "male",
+			Description: "a duck who moved into the barn"},
+	},
 	Segments: []Segment{
 		{Kind: SegSpeech, Speaker: "narrator", Lang: "en", Text: "The barn is empty. " + filler(70)},
 		{Kind: SegSpeech, Speaker: "tutor", Lang: "es", Text: "Vacío."},

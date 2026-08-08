@@ -114,34 +114,57 @@ func TestRoleVoiceRejectsAnInventedRole(t *testing.T) {
 	}
 }
 
-func TestCastDialogueCastsEachTurnInItsOwnLanguage(t *testing.T) {
-	turns := []DialogueTurn{
-		{Role: "narrator", Language: "en", Text: "The barn is empty."},
-		{Role: "tutor", Language: "es", Text: "Vacío."},
-		{Role: "narrator", Language: "en", Text: "Empty."},
+// A bilingual character keeps one voice. Recasting per language — which
+// is what casting by role used to do — makes a girl who says one Spanish
+// word audibly become a different girl for that word and back again.
+// The native-speaker guarantee lives on the tutor, who is their own cast
+// member, pinned to the practiced language.
+func TestCastDialogueKeepsOneVoicePerCastMember(t *testing.T) {
+	casting, err := CastStory([]Member{
+		{ID: "narrator", Name: "Narrator", Role: "narrator", Register: "female"},
+		{ID: "tutor", Name: "Tutor", Role: "tutor", Register: "female"},
+		{ID: "emily", Name: "Emily", Role: "child", Register: "female"},
+	}, "en", "es", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	inputs, err := CastDialogue(turns)
+	turns := []DialogueTurn{
+		{Speaker: "emily", Language: "en", Text: "Look, a fountain!"},
+		{Speaker: "emily", Language: "es", Text: "¡Una fuente!"},
+		{Speaker: "tutor", Language: "es", Text: "Fuente. La fuente."},
+	}
+	inputs, err := CastDialogue(turns, casting)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(inputs) != 3 {
 		t.Fatalf("got %d inputs, want 3", len(inputs))
 	}
-	if inputs[0].VoiceID == inputs[1].VoiceID {
-		t.Error("the English and Spanish turns were cast to the same voice")
+	if inputs[0].VoiceID != inputs[1].VoiceID {
+		t.Error("Emily changed voice to say one Spanish word")
 	}
-	if inputs[0].VoiceID != inputs[2].VoiceID {
-		t.Error("the narrator changed voice mid-story")
+	if inputs[1].VoiceID == inputs[2].VoiceID {
+		t.Error("the tutor and Emily share a voice; the practiced line is not a separate speaker")
+	}
+	// The tutor is cast in the language being practiced, not the base.
+	if want, _ := RoleVoice("tutor", "es"); inputs[2].VoiceID != want.Eleven {
+		t.Errorf("tutor cast as %q, want the Spanish tutor voice %q", inputs[2].VoiceID, want.Eleven)
 	}
 }
 
-func TestCastDialogueRejectsAnInventedRole(t *testing.T) {
-	_, err := CastDialogue([]DialogueTurn{{Role: "duck", Language: "en", Text: "quack"}})
+func TestCastDialogueRejectsAnUndeclaredSpeaker(t *testing.T) {
+	casting, err := CastStory([]Member{
+		{ID: "narrator", Name: "Narrator", Role: "narrator", Register: "female"},
+	}, "en", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = CastDialogue([]DialogueTurn{{Speaker: "duck", Language: "en", Text: "quack"}}, casting)
 	if err == nil {
-		t.Fatal("want an error for an unknown role")
+		t.Fatal("want an error for a speaker who is not in the cast")
 	}
 	if !strings.Contains(err.Error(), "duck") {
-		t.Errorf("error should name the bad role, got %q", err)
+		t.Errorf("error should name the undeclared speaker, got %q", err)
 	}
 }
 
@@ -149,12 +172,18 @@ func TestCastDialogueEnforcesTheVoiceCeiling(t *testing.T) {
 	// The vendor caps a request at ten distinct voices. Catching it here
 	// means a caller learns its packing was too wide before paying for
 	// the request.
-	var turns []DialogueTurn
-	for i := 0; i < MaxDialogueVoices+2; i++ {
-		turns = append(turns, DialogueTurn{Role: "narrator", Language: "en", Text: "hello"})
+	casting, err := CastStory([]Member{
+		{ID: "narrator", Name: "Narrator", Role: "narrator", Register: "female"},
+	}, "en", "", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// All one role, so all one voice: well inside the ceiling.
-	if _, err := CastDialogue(turns); err != nil {
+	var turns []DialogueTurn
+	for range MaxDialogueVoices + 2 {
+		turns = append(turns, DialogueTurn{Speaker: "narrator", Language: "en", Text: "hello"})
+	}
+	// All one speaker, so all one voice: well inside the ceiling.
+	if _, err := CastDialogue(turns, casting); err != nil {
 		t.Fatalf("many turns in one voice should be fine: %v", err)
 	}
 }

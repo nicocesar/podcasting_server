@@ -38,14 +38,51 @@ type Story struct {
 	Language string `json:"language,omitempty"`
 	// Bed is one music prompt for the whole story, laid underneath at a
 	// fixed low level. Empty means no music.
-	Bed      string    `json:"bed,omitempty"`
-	Segments []Segment `json:"segments"`
+	Bed string `json:"bed,omitempty"`
+	// Cast is everyone who speaks, declared before the story is written.
+	// Segments name a Cast Member rather than a part, which is what lets
+	// two children in the same story be two different people: a part is
+	// cast once, and casting by part is how a girl ended up voiced by a
+	// boy because `child` had one English voice and it was his.
+	Cast     []CastMember `json:"cast"`
+	Segments []Segment    `json:"segments"`
+}
+
+// CastMember is one person, animal or thing that speaks in the story.
+type CastMember struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Role is a part type from the canon (tts.Roles) and selects the pool
+	// this member is cast from.
+	Role string `json:"role"`
+	// Voice is the vocal register asked for, "female" or "male". It
+	// describes the voice wanted rather than the character: a duck has a
+	// register, not a gender.
+	Voice string `json:"voice"`
+	// Description is one line on who they are, kept with the Episode so
+	// the returning-cast picker has something to show and a later story
+	// can bring them back.
+	Description string `json:"description,omitempty"`
+}
+
+// MaxCast is the most speakers one story may declare. Ten is the vendor's
+// per-request voice ceiling, so a cast at the cap can never overflow a
+// packed request however the planner groups it.
+const MaxCast = tts.MaxDialogueVoices
+
+// Members converts the declared cast into the caster's vocabulary.
+func (st Story) Members() []tts.Member {
+	out := make([]tts.Member, len(st.Cast))
+	for i, c := range st.Cast {
+		out[i] = tts.Member{ID: c.ID, Name: c.Name, Role: c.Role, Register: c.Voice}
+	}
+	return out
 }
 
 // Segment is one thing to render, in order.
 type Segment struct {
 	Kind string `json:"kind"`
-	// Speaker is a role from the canon (tts.Roles), for speech only.
+	// Speaker is the id of a declared Cast Member, for speech only.
 	Speaker string `json:"speaker,omitempty"`
 	// Lang is the language of this segment's text, for speech only. It is
 	// what makes code-switching work: a Spanish word inside an English
@@ -128,6 +165,41 @@ var submitStoryTool = map[string]any{
 				"type":        "string",
 				"description": "One music prompt for the whole story, played quietly underneath from beginning to end. Describe instruments, tempo and mood for a music model, not for a listener. Leave empty for no music.",
 			},
+			"cast": map[string]any{
+				"type": "array",
+				"description": "Everyone who speaks, the narrator included. Decide the cast before writing the story; each spoken segment names one of these by id. " +
+					"Two children are two cast members, not one part used twice — that is what lets them sound like different people. " +
+					fmt.Sprintf("A story for small children rarely needs more than five, and at most %d are allowed.", MaxCast),
+				"maxItems": MaxCast,
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id": map[string]any{
+							"type":        "string",
+							"description": `Short lowercase identifier used by segments, e.g. "emily" or "narrator". Unique within the cast.`,
+						},
+						"name": map[string]any{
+							"type":        "string",
+							"description": `What this character is called in the story, e.g. "Emily". Use "Narrator" for the narrator. A character reusing a name from a previous story keeps that story's voice.`,
+						},
+						"role": map[string]any{
+							"type":        "string",
+							"enum":        tts.RoleIDs(),
+							"description": "The kind of part this is: " + roleHints() + ".",
+						},
+						"voice": map[string]any{
+							"type":        "string",
+							"enum":        []string{"female", "male"},
+							"description": "Vocal register to cast this part in. A property of the voice rather than of the character — for an animal, a machine or an object, pick whichever suits it.",
+						},
+						"description": map[string]any{
+							"type":        "string",
+							"description": "One line on who they are. Kept with the episode, so this character can be brought back in a later story.",
+						},
+					},
+					"required": []string{"id", "name", "role", "voice"},
+				},
+			},
 			"segments": map[string]any{
 				"type":        "array",
 				"description": "The story in order. Each entry is one thing to render: a line of speech, a sound effect, or a pause.",
@@ -141,8 +213,7 @@ var submitStoryTool = map[string]any{
 						},
 						"speaker": map[string]any{
 							"type":        "string",
-							"enum":        tts.RoleIDs(),
-							"description": "Required for speech. Who says this line, chosen from the fixed cast: " + roleHints() + ".",
+							"description": "Required for speech. The id of the cast member who says this line, from the cast declared above.",
 						},
 						"lang": map[string]any{
 							"type":        "string",
@@ -208,6 +279,42 @@ func ParseStorySubmission(input []byte, lengthMinutes int, base, target string) 
 	// several ways at once, and reporting them one at a time costs a
 	// round-trip per problem.
 	var problems []string
+
+	// The cast is checked first and in full, because every speech segment
+	// is checked against it: an undeclared cast would otherwise report one
+	// problem per line of dialogue.
+	cast := map[string]bool{}
+	switch {
+	case len(st.Cast) == 0:
+		problems = append(problems, "submission has no cast — declare everyone who speaks, the narrator included, before the segments")
+	case len(st.Cast) > MaxCast:
+		problems = append(problems, fmt.Sprintf(
+			"the cast has %d members but at most %d are allowed — merge characters or give some of them no lines",
+			len(st.Cast), MaxCast))
+	}
+	for i, m := range st.Cast {
+		switch {
+		case strings.TrimSpace(m.ID) == "":
+			problems = append(problems, fmt.Sprintf("cast member %d has no id", i+1))
+		case cast[m.ID]:
+			problems = append(problems, fmt.Sprintf("two cast members share the id %q — ids must be unique", m.ID))
+		default:
+			cast[m.ID] = true
+		}
+		if strings.TrimSpace(m.Name) == "" {
+			problems = append(problems, fmt.Sprintf("cast member %q has no name", m.ID))
+		}
+		if !tts.ValidRole(m.Role) {
+			problems = append(problems, fmt.Sprintf(
+				"cast member %q has role %q, which is not one of %s",
+				m.ID, m.Role, strings.Join(tts.RoleIDs(), ", ")))
+		}
+		if m.Voice != "female" && m.Voice != "male" {
+			problems = append(problems, fmt.Sprintf(
+				`cast member %q has voice %q, which must be "female" or "male"`, m.ID, m.Voice))
+		}
+	}
+
 	speech := 0
 	for i, s := range st.Segments {
 		switch s.Kind {
@@ -216,10 +323,13 @@ func ParseStorySubmission(input []byte, lengthMinutes int, base, target string) 
 			if strings.TrimSpace(s.SpokenText()) == "" {
 				problems = append(problems, fmt.Sprintf("segment %d is speech with no words in it", i+1))
 			}
-			if !tts.ValidRole(s.Speaker) {
+			// Skipped when there is no cast at all: the missing-cast
+			// problem above already says it, and repeating it per line
+			// would bury it.
+			if len(cast) > 0 && !cast[s.Speaker] {
 				problems = append(problems, fmt.Sprintf(
-					"segment %d has speaker %q, which is not one of the available voices (%s)",
-					i+1, s.Speaker, strings.Join(tts.RoleIDs(), ", ")))
+					"segment %d is spoken by %q, who is not in the cast — every speaker must be declared in `cast`",
+					i+1, s.Speaker))
 			}
 			switch l := PrimaryTag(s.Lang); {
 			case l == "":
@@ -329,7 +439,7 @@ func Plan(st Story, budget int) []Piece {
 		switch s.Kind {
 		case SegSpeech:
 			turn := tts.DialogueTurn{
-				Role:     s.Speaker,
+				Speaker:  s.Speaker,
 				Language: PrimaryTag(s.Lang),
 				Text:     s.Text,
 			}
@@ -362,9 +472,13 @@ const storiesSystemPrompt = `You are the storyteller for a private podcast servi
 Unlike a plain script, your story is produced: it is performed by several voices, over sound effects and music. You write all of that.
 
 How a story is built:
-- The story is a list of segments in order. A segment is one line of speech, one sound effect, or one pause.
-- Every speech segment names a speaker from the fixed cast and the language that line is in. The narrator carries the story; the other voices are the characters in it.
+- First you declare the cast: everyone who speaks, the narrator included. Each one gets a short id, the name the story calls them, a role — the kind of part it is — and the vocal register to cast it in.
+- Then the story itself: a list of segments in order. A segment is one line of speech, one sound effect, or one pause. Every speech segment names the id of the cast member who says it, and the language that line is in.
+- Every character who speaks is their own cast member. Two children in the playground are two cast members, not the same part twice — that is what makes them sound like two different people rather than one child talking to himself.
+- The role is the kind of part, not the person: several cast members may share a role, and the server gives each of them a different voice.
+- The register is a property of the voice you want, not a fact about the character. A girl is cast female and a boy male; for a duck, a tractor or a talking door, pick whichever suits it.
 - Use the cast deliberately. A duck should not be read by the narrator, and a story where every line is the narrator is a story that did not need this program.
+- Names carry between stories. A character who has appeared before keeps their voice if you call them by the same name, so reuse the exact spelling when a returning cast is given to you.
 
 Writing rules:
 - Write for the ear and for the age given. Short sentences. Concrete images. Repetition is good for small children — but vary how repeated lines are performed, so three quacks in a row are three different quacks and not the same one three times.
@@ -376,7 +490,7 @@ Writing rules:
 
 When the listener is practicing a second language:
 - Tell the story in the base language, and weave the practiced language through it — a word, a phrase, a short line at a time, always in a segment of its own marked with that language.
-- Put those segments in the mouth of the tutor voice, or of a character who belongs to that language. They are spoken by a native speaker, so write them as a native speaker would say them, not as a learner's phrasebook entry.
+- Declare a cast member with the tutor role and put those segments in their mouth, or in the mouth of a character who belongs to that language. They are spoken by a native speaker, so write them as a native speaker would say them, not as a learner's phrasebook entry.
 - Introduce a practiced word in context, let the story make its meaning obvious, and bring it back. Do not translate it flatly every single time.
 - Only ever use the two languages you were given.
 

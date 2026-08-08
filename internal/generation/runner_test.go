@@ -351,19 +351,35 @@ func TestStoriesPipeline(t *testing.T) {
 	if ep.Template != "stories" {
 		t.Errorf("episode template = %q", ep.Template)
 	}
-	if len(ep.Characters) != 1 || ep.Characters[0].Name != "Lila" {
-		t.Errorf("episode characters = %+v", ep.Characters)
+	// The cast is what the storyteller declared, with the voice each one
+	// was actually cast to — recorded so a later story can bring them
+	// back sounding like themselves.
+	var names []string
+	for _, c := range ep.Characters {
+		names = append(names, c.Name)
+		if c.VoiceID == "" || c.VoiceName == "" {
+			t.Errorf("%s was saved without the voice they were cast to: %+v", c.Name, c)
+		}
 	}
-	// Extraction tokens joined the meters (100+20 in, 40+10 out), without
-	// counting as a session.
-	if g.SessionsCount != 1 || g.InputTokens != 120 || g.OutputTokens != 50 {
+	if len(names) != 3 || names[0] != "Narrator" || names[2] != "Quackers" {
+		t.Errorf("episode characters = %v, want the declared cast", names)
+	}
+	if got := ep.Characters[2].Description; got != "a duck who moved into the barn" {
+		t.Errorf("the duck's description = %q, want the one the storyteller wrote", got)
+	}
+	// Only the session's tokens: the cast arrives with the story, so
+	// nothing is spent rediscovering it afterwards.
+	if g.SessionsCount != 1 || g.InputTokens != 100 || g.OutputTokens != 40 {
 		t.Errorf("meters = %d sessions, %d/%d tokens", g.SessionsCount, g.InputTokens, g.OutputTokens)
 	}
 }
 
-// A failed extraction never fails the pipeline: the Episode is already
-// published, and the dashboard's backfill button covers the gap.
-func TestCharacterExtractionFailureIsNonFatal(t *testing.T) {
+// Saving the cast asks no model anything. This used to be a test that a
+// failed extraction did not fail the pipeline; now there is no extraction
+// on this path at all, and the stronger property is worth holding: with
+// the completion endpoint returning errors for everything, a story still
+// publishes with its cast intact.
+func TestCastCostsNoSecondModelCall(t *testing.T) {
 	requirePerfFFmpeg(t)
 	st := testStore(t)
 	api := storyAPI()
@@ -383,8 +399,8 @@ func TestCharacterExtractionFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ep.Characters) != 0 {
-		t.Errorf("characters = %+v, want none", ep.Characters)
+	if len(ep.Characters) != 3 {
+		t.Errorf("characters = %+v, want the declared cast saved regardless", ep.Characters)
 	}
 }
 

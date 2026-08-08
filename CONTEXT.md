@@ -330,6 +330,45 @@ caller retries a failure and a retry that re-fires Generations costs
 real money.
 _Avoid_: cron, the scheduler, heartbeat, the job
 
+**Role**:
+A kind of part a story can have — the narrator, a child, a small squeaky
+creature, a gruff one — drawn from a closed canon the storyteller casts
+from. It is a part type, never a person: several members of one story's
+cast may play the same kind of part, and the station gives each of them
+a different voice. The canon is closed so that a model which cannot name
+a voice cannot invent one.
+_Avoid_: character, speaker, voice, persona
+
+**Cast Member**:
+Somebody who speaks in one story — Emily, the duck, the Narrator — named
+by the storyteller before the story is written, and named again by every
+line they say. Each carries a Role and a Vocal Register, and each gets a
+voice of their own: two children in a story are two Cast Members, which
+is what makes them sound like two children rather than one child
+answering himself. A Cast Member who keeps their name across stories
+keeps their voice with it.
+_Avoid_: character (overloaded — a billed glyph is also a character),
+actor, part, role
+
+**Vocal Register**:
+Which of the station's two kinds of voice a part is cast in, female or
+male. A property of the voice wanted rather than a fact about the
+character: a girl is cast female because she is a girl, and a duck, a
+tractor or a talking door is cast whichever way suits it.
+_Avoid_: gender, sex, pitch
+
+**Casting**:
+Deciding which real voice each Cast Member speaks with, once per Episode.
+The narrator and the tutor are settled first and kept back from everyone
+else — the narrator is the station's own voice and is named aloud in the
+credit, the tutor has to be a native speaker of the language being
+practiced. Everyone else is settled from their name, so the same
+character is the same voice next time, and no two of them are ever the
+same voice at once. Where the station has too few voices to keep that
+promise it borrows one from a neighbouring part and says so, rather than
+losing a story that is already written.
+_Avoid_: voice assignment, allocation, matching
+
 **Liveness Window**:
 How recently a User must have been seen — a feed poll, the Dashboard,
 the Beats page — for the Tick to fire their Beats. Seven days by
