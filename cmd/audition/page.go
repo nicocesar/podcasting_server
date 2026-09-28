@@ -287,7 +287,8 @@ footer {
     <h1>Casting call · {{.Language}}</h1>
     <p class="standfirst">Every clip is the station's pinned narrator setting up, then the
     candidate answering — rendered through <strong>text-to-dialogue</strong> on
-    <strong>eleven_v3</strong>, the same endpoint and model an episode uses. Listen for
+    <strong>{{.Model}}</strong>{{if eq .Model .EpisodeModel}}, the same endpoint and model an episode uses{{else}},
+    <em>not</em> the {{.EpisodeModel}} an episode uses — a comparison, not a casting{{end}}. Listen for
     whether the candidate sounds like a <em>different person</em> from the narrator, not
     just whether the voice is good. Keep the ones that do; the button at the bottom writes
     the Go.</p>

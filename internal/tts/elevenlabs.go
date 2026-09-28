@@ -30,12 +30,16 @@ type ElevenLabs struct {
 // language.
 const elevenLabsModel = "eleven_multilingual_v2"
 
-// elevenLabsDialogueModel is the expressive model behind Text-to-Dialogue.
+// DialogueModel is the expressive model behind Text-to-Dialogue.
 // Separate from elevenLabsModel and deliberately not a replacement for it:
-// v3 understands audio tags and matches prosody across speakers, which is
+// it understands audio tags and matches prosody across speakers, which is
 // what the multi-voice programs need, while the single-voice path stays on
-// the model it was tuned and priced against.
-const elevenLabsDialogueModel = "eleven_v3"
+// the model it was tuned and priced against. v4 over v3 because it follows
+// stacked tags in sequence, which is the direction the story prompt asks for.
+//
+// Exported so cmd/audition renders on the same model an episode does: a
+// voice judged by ear on one model and shipped on another was not judged.
+const DialogueModel = "eleven_v4"
 
 // NewElevenLabs returns an engine reading ELEVENLABS_API_KEY. An empty
 // key is an error rather than a silently dead engine: it would otherwise
@@ -123,7 +127,7 @@ func (e *ElevenLabs) SynthesizeDialogue(ctx context.Context, inputs []DialogueIn
 	}
 	body, err := json.Marshal(map[string]any{
 		"inputs":   wire,
-		"model_id": elevenLabsDialogueModel,
+		"model_id": DialogueModel,
 	})
 	if err != nil {
 		return nil, err

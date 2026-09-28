@@ -7,7 +7,7 @@
 // of them is the thing the station actually renders.
 //
 // This renders candidates the way an episode will hear them: through
-// text-to-dialogue, in eleven_v3, answering the pinned narrator of their
+// text-to-dialogue, on tts.DialogueModel, answering the pinned narrator of their
 // language, all on one page. A voice that cannot be rendered that way is
 // not a candidate at all, whatever the shared library says about it, so
 // the failures are as much of the output as the successes.
@@ -44,6 +44,7 @@ func main() {
 	font := flag.String("font", "cmd/server/static/fonts/fraunces-var.woff2", "display face to inline")
 	perSlot := flag.Int("per-slot", 6, "candidates to render per slot")
 	dry := flag.Bool("dry-run", false, "list candidates without spending anything on audio")
+	model := flag.String("model", tts.DialogueModel, "dialogue model to render on; set it to compare models, not to cast")
 	flag.Parse()
 
 	key := os.Getenv("ELEVENLABS_API_KEY")
@@ -59,10 +60,15 @@ func main() {
 	}
 	currentLang = *lang
 
-	c := &client{key: key, http: &http.Client{Timeout: 120 * time.Second}}
+	c := &client{key: key, model: *model, http: &http.Client{Timeout: 120 * time.Second}}
 	ctx := context.Background()
 
-	page := page{Language: *lang, Generated: time.Now().UTC().Format(time.RFC1123)}
+	page := page{
+		Language:     *lang,
+		Model:        *model,
+		EpisodeModel: tts.DialogueModel,
+		Generated:    time.Now().UTC().Format(time.RFC1123),
+	}
 	if !*dry {
 		css, err := fontCSS(*font)
 		if err != nil {
@@ -188,8 +194,9 @@ var scripts = map[string]script{
 }
 
 type client struct {
-	key  string
-	http *http.Client
+	key   string
+	model string
+	http  *http.Client
 }
 
 // sharedVoice is the slice of the shared-library record worth showing.
@@ -271,7 +278,7 @@ func (c *client) dialogue(ctx context.Context, narratorID, candidateID string, s
 			{"text": s.Narrator, "voice_id": narratorID},
 			{"text": s.Candidate, "voice_id": candidateID},
 		},
-		"model_id": "eleven_v3",
+		"model_id": c.model,
 	})
 	if err != nil {
 		return nil, err
@@ -310,11 +317,17 @@ func castVoiceIDs() map[string]bool {
 }
 
 type page struct {
-	Language  string
-	Generated string
-	Cost      int
-	FontCSS   template.CSS
-	Slots     []slotResult
+	Language string
+	// Model is what the takes were rendered on; EpisodeModel is what an
+	// episode renders on. They differ only when -model asked for a
+	// comparison, and the page says so, because a keep made on the wrong
+	// model is not a casting decision.
+	Model        string
+	EpisodeModel string
+	Generated    string
+	Cost         int
+	FontCSS      template.CSS
+	Slots        []slotResult
 }
 
 // fontCSS inlines the station's display face. A data URI rather than a

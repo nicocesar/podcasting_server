@@ -165,7 +165,7 @@ func pick(m Member, language string, taken map[string]bool) (Voice, string) {
 		return voiceOf(v, language), ""
 	}
 	// A neighbouring part in the same register: one actor stretching is
-	// better than two characters sharing a voice, and eleven_v3 performs
+	// better than two characters sharing a voice, and the dialogue model performs
 	// the audio tags that make the stretch work.
 	if v, ok := choose(candidates(language, "", m.Register), m.Name, taken); ok {
 		return voiceOf(v, language), fmt.Sprintf(

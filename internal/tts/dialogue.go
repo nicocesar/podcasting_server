@@ -21,14 +21,20 @@ type DialogueEngine interface {
 
 // DialogueInput is one turn: what is said, and who says it.
 type DialogueInput struct {
-	Text    string // may carry eleven_v3 audio tags, e.g. "[whispers] goodnight"
+	Text    string // may carry audio tags, e.g. "[whispers] goodnight"
 	VoiceID string
 }
 
-// MaxDialogueVoices and MaxDialogueChars are the vendor's limits on one
-// Text-to-Dialogue request. The character cap is a reliability threshold
-// rather than a hard rejection — past it the model starts truncating — so
-// the packer aims well under it (see DialogueCharBudget).
+// MaxDialogueVoices and MaxDialogueChars bound one Text-to-Dialogue
+// request. The character cap is the vendor's, and the same for v3 and v4:
+// a reliability threshold rather than a hard rejection — past it the model
+// starts truncating — so the packer aims well under it (see
+// DialogueCharBudget).
+//
+// The voice cap was the vendor's under v3; the v4 docs say there is no
+// limit on speakers. It stays at 10 anyway, because it is also MaxCast —
+// how many parts a story may declare — and ten is already more voices than
+// a bedtime story can keep distinct in a listener's head.
 const (
 	MaxDialogueVoices = 10
 	MaxDialogueChars  = 2000
@@ -119,7 +125,7 @@ type storyVoice struct {
 //
 // Roles may share a voice on purpose. In Spanish the gruff one and the
 // squeaky one are both Agustin, and Italian and German each give the three
-// young parts to one actor: eleven_v3 performs the audio tags the agent
+// young parts to one actor: the dialogue model performs the audio tags the agent
 // writes, so that is one actor playing several parts rather than a part
 // being miscast.
 //

@@ -88,7 +88,7 @@ type Segment struct {
 	// what makes code-switching work: a Spanish word inside an English
 	// story is its own segment, in "es", spoken by a Spanish voice.
 	Lang string `json:"lang,omitempty"`
-	// Text may carry eleven_v3 audio tags in square brackets, e.g.
+	// Text may carry audio tags in square brackets, e.g.
 	// "[whispers] goodnight" — direction the vendor reads and the
 	// listener never hears.
 	Text string `json:"text,omitempty"`
@@ -222,7 +222,8 @@ var submitStoryTool = map[string]any{
 						"text": map[string]any{
 							"type": "string",
 							"description": "Required for speech. The words to say. You may direct the delivery with audio tags in square brackets, e.g. " +
-								`"[whispers] goodnight, little one" or "[giggling] quack quack!". Tags are performed, not spoken.`,
+								`"[whispers] goodnight, little one" or "[calm][thinking] hmm… [excited] quack quack!". Tags are performed, not spoken, ` +
+								`and stack in order. Tags direct the voice only: sounds go in sfx segments, never in a tag.`,
 						},
 						"cue": map[string]any{
 							"type": "string",
@@ -482,7 +483,10 @@ How a story is built:
 
 Writing rules:
 - Write for the ear and for the age given. Short sentences. Concrete images. Repetition is good for small children — but vary how repeated lines are performed, so three quacks in a row are three different quacks and not the same one three times.
-- Direct the performance with audio tags in square brackets inside the text: [whispers], [giggling], [excited], [sleepy], [gently]. They are performed, never spoken aloud. Use them where the delivery matters, not on every line.
+- Direct the performance with audio tags in square brackets inside the text. They are performed, never spoken aloud. Use them where the delivery matters, not on every line.
+  - A tag is direction to an actor, in plain words: emotion ([excited], [nervous], [sleepy], [calm]), manner ([whispers], [softly], [under her breath], [shouting]), reactions ([giggles], [sighs], [yawns], [gasps], [thinking]), or pacing ([slowly], [pause], [quick and playful]).
+  - Tags can be stacked and are followed in order: "[calm][thinking] hmm… [brightening] oh! I know!" changes the delivery mid-line. A tag lasts until the next one, so put a new tag where the delivery turns.
+  - Tags are for the voice only. Never write a sound in a tag — no [door slams], [thunder], [splash]. Sounds are sfx segments, so they are placed and levelled in the mix; a sound tag inside speech would be a second, unmixed copy of it.
 - Sound effects are punctuation, not decoration. Prefer the ready-made effects listed in the tool schema, because those are known quantities; describe a new one only when nothing fits.
 - Character dialogue is spoken prose. No markdown, no headings, no bullet points, no URLs, no stage directions in the text itself — the tags and the segment structure are where direction goes.
 - Open by inviting the listener in; close with a soft, sleep-friendly sign-off.

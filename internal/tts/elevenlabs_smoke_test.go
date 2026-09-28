@@ -46,6 +46,46 @@ func TestElevenLabsSmoke(t *testing.T) {
 	}
 }
 
+// TestElevenLabsDialogueSmoke renders one short two-voice take on
+// DialogueModel, with stacked tags, through the same SynthesizeDialogue an
+// episode uses. TestElevenLabsSmoke never reaches the dialogue model, so
+// without this a model id the endpoint refuses only shows up as a failed
+// story. Same opt-in: ELEVENLABS_SMOKE=1 go test ./internal/tts -run DialogueSmoke -v
+func TestElevenLabsDialogueSmoke(t *testing.T) {
+	key := os.Getenv("ELEVENLABS_API_KEY")
+	if os.Getenv("ELEVENLABS_SMOKE") == "" || key == "" {
+		t.Skip("set ELEVENLABS_SMOKE=1 and ELEVENLABS_API_KEY to hit the real API")
+	}
+	e, err := NewElevenLabs(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	narrator, ok := RoleVoice("narrator", "en")
+	if !ok {
+		t.Fatal("no English narrator")
+	}
+	duck, ok := RoleVoice("silly", "en")
+	if !ok {
+		t.Fatal("no English silly voice")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	b, err := e.SynthesizeDialogue(ctx, []DialogueInput{
+		{Text: "[calm][thinking] And what did the duck say?", VoiceID: narrator.Eleven},
+		{Text: "[giggles] Quack! [whispers] quack.", VoiceID: duck.Eleven},
+	})
+	if err != nil {
+		t.Fatalf("%s: %v", DialogueModel, err)
+	}
+	t.Logf("%s returned %d bytes", DialogueModel, len(b))
+	if len(b) < 1000 {
+		t.Fatalf("suspiciously small audio: %d bytes", len(b))
+	}
+	if !bytes.HasPrefix(b, []byte("ID3")) && b[0] != 0xff {
+		t.Fatalf("does not look like MP3: % x", b[:8])
+	}
+}
+
 // TestElevenLabsNeedsKey guards the deliberate choice to fail fast on a
 // missing key rather than register a dead engine in the dropdown.
 func TestElevenLabsNeedsKey(t *testing.T) {

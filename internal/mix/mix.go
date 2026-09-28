@@ -70,8 +70,8 @@ const (
 	// so that a caller who forgets to say gets the untouched behaviour
 	// rather than a processed one.
 	//
-	// Speech is never leveled part-by-part on purpose: eleven_v3 audio
-	// tags are performance direction, and a story where "[whispers]
+	// Speech is never leveled part-by-part on purpose: audio tags are
+	// performance direction, and a story where "[whispers]
 	// goodnight" is normalised to the same loudness as a shout is a story
 	// whose direction has been thrown away.
 	Speech Kind = iota
