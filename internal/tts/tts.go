@@ -46,12 +46,23 @@ type Voice struct {
 
 // Voices is the curated list, in dropdown order. The first entry per
 // Language is its default. The accents are a deliberate bit of
-// personality: English speaks British, Spanish speaks Argentinian.
-// Google has no es-AR locale, so its Spanish fallback is Latin American
-// (es-US) — an accent shift when the edge-tts → Google fallback fires.
-// ElevenLabs holds both accents, so it is the only engine that never
-// shifts. Its IDs are shared-library voices, named in the comments
-// because the ID alone says nothing about who you are hearing.
+// personality: English speaks British, Spanish speaks Argentinian, German
+// speaks Munich. Google has no es-AR locale, so its Spanish fallback is
+// Latin American (es-US) — an accent shift when the edge-tts → Google
+// fallback fires. ElevenLabs holds both accents, so it is the only engine
+// that never shifts. Its IDs are shared-library voices, named in the
+// comments because the ID alone says nothing about who you are hearing.
+//
+// The Munich accent is ElevenLabs-only for the same reason: neither
+// edge-tts nor Google ships a Bavarian voice, so on those two engines
+// German is standard de-DE and the accent is what the fallback costs.
+//
+// Language is a BCP-47 tag, not always a bare primary tag: Belgian Dutch
+// is nl-BE because Flemish is the point of offering it — a listener who
+// asks for it and is handed Netherlands Dutch has been given the wrong
+// language. Dutch is its own language, not a German accent: nl-BE never
+// borrows a de voice, and the dropdown labels say "Nederlands (België)"
+// and "Deutsch (München)" so the two are not read as the same offer.
 var Voices = []Voice{
 	// Amelia - Enthusiastic and Expressive (British)
 	{Language: "en", Label: "English", Gender: "female", Edge: "en-GB-SoniaNeural", Google: "en-GB-Neural2-A", GoogleLang: "en-GB", Eleven: "ZF6FPAbjXT4488VcRRnw",
@@ -71,12 +82,26 @@ var Voices = []Voice{
 	// Antonio Farina - Expressive and Warm
 	{Language: "it", Label: "Italiano", Gender: "male", Edge: "it-IT-DiegoNeural", Google: "it-IT-Neural2-F", GoogleLang: "it-IT", Eleven: "uScy1bXtKz8vPzfdFsFw",
 		EdgeName: "Diego", GoogleName: "Neural Due F", ElevenName: "Antonio"},
-	// Lea - Clear and Feminine
-	{Language: "de", Label: "Deutsch", Gender: "female", Edge: "de-DE-KatjaNeural", Google: "de-DE-Neural2-G", GoogleLang: "de-DE", Eleven: "7eVMgwCnXydb3CikjV7a",
-		EdgeName: "Katja", GoogleName: "Neural Zwei G", ElevenName: "Lea"},
-	// Stephan - Warm and Friendly
-	{Language: "de", Label: "Deutsch", Gender: "male", Edge: "de-DE-ConradNeural", Google: "de-DE-Neural2-H", GoogleLang: "de-DE", Eleven: "IWm8DnJ4NGjFI7QAM5lM",
-		EdgeName: "Conrad", GoogleName: "Neural Zwei H", ElevenName: "Stephan"},
+	// Anna - Optimistic and Warm (Bavarian, from Munich)
+	{Language: "de", Label: "Deutsch (München)", Gender: "female", Edge: "de-DE-KatjaNeural", Google: "de-DE-Neural2-G", GoogleLang: "de-DE", Eleven: "wDvyXJwxWHsjOKSUVvpG",
+		EdgeName: "Katja", GoogleName: "Neural Zwei G", ElevenName: "Anna"},
+	// Benjamin - Podcast & Radio (standard German, slight Bavarian accent)
+	{Language: "de", Label: "Deutsch (München)", Gender: "male", Edge: "de-DE-ConradNeural", Google: "de-DE-Neural2-H", GoogleLang: "de-DE", Eleven: "gRJR8Fqocw86Vixo4cZV",
+		EdgeName: "Conrad", GoogleName: "Neural Zwei H", ElevenName: "Benjamin"},
+	// Petra Vlaams - Energetic, Warm and Professional (Flemish)
+	{Language: "nl-BE", Label: "Nederlands (België)", Gender: "female", Edge: "nl-BE-DenaNeural", Google: "nl-BE-Wavenet-C", GoogleLang: "nl-BE", Eleven: "ANHrhmaFeVN0QJaa0PhL",
+		EdgeName: "Dena", GoogleName: "Wavenet Cee", ElevenName: "Petra"},
+	// Hans Claesen - Professional Narrator (Flemish)
+	{Language: "nl-BE", Label: "Nederlands (België)", Gender: "male", Edge: "nl-BE-ArnaudNeural", Google: "nl-BE-Wavenet-D", GoogleLang: "nl-BE", Eleven: "s7Z6uboUuE4Nd8Q2nye6",
+		EdgeName: "Arnaud", GoogleName: "Wavenet Dee", ElevenName: "Hans"},
+	// Antonia - Mellow, Warm and Calm
+	{Language: "ro", Label: "Română", Gender: "female", Edge: "ro-RO-AlinaNeural", Google: "ro-RO-Wavenet-B", GoogleLang: "ro-RO", Eleven: "3z9q8Y7plHbvhDZehEII",
+		EdgeName: "Alina", GoogleName: "Wavenet Be", ElevenName: "Antonia"},
+	// Ciprian Pop - Friendly and Reassuring. Google ships no classic male
+	// Romanian voice — Standard and Wavenet are female-only there — so the
+	// male fallback is a Chirp 3 HD voice, the one family that has one.
+	{Language: "ro", Label: "Română", Gender: "male", Edge: "ro-RO-EmilNeural", Google: "ro-RO-Chirp3-HD-Charon", GoogleLang: "ro-RO", Eleven: "h3aQ5g69oxB0wpernpfx",
+		EdgeName: "Emil", GoogleName: "Charon", ElevenName: "Ciprian"},
 }
 
 // Languages returns one Voice per Language, in dropdown order, for the

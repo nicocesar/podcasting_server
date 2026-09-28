@@ -3,7 +3,10 @@ package tts
 import (
 	"bytes"
 	"context"
+	"io"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -101,5 +104,59 @@ func TestEveryVoiceHasElevenID(t *testing.T) {
 		if v.Eleven == "" {
 			t.Errorf("voice %s/%s has no ElevenLabs ID", v.Language, v.Gender)
 		}
+	}
+}
+
+// TestElevenLabsVoicesAreInTheLibrary is the cheap half of the smoke
+// test: it spends nothing, and it catches the failure that adding a
+// language actually hits.
+//
+// A shared-library voice ID is not usable just because the shared-voices
+// search returned it. Until the voice is added to the account's own
+// library ("Add to my voices"), every request for it comes back 404
+// voice_not_found — so a language can be fully curated here, pass every
+// unit test, and then fail at synthesis for a reason nothing in the code
+// can see. Story Time has no fallback to hide it: dialogue is
+// ElevenLabs-only.
+//
+// It checks the curated dropdown voices and the whole story cast, since
+// a role voice is just as opaque and just as absent:
+//
+//	ELEVENLABS_SMOKE=1 go test ./internal/tts -run VoicesAreInTheLibrary -v
+func TestElevenLabsVoicesAreInTheLibrary(t *testing.T) {
+	key := os.Getenv("ELEVENLABS_API_KEY")
+	if os.Getenv("ELEVENLABS_SMOKE") == "" || key == "" {
+		t.Skip("set ELEVENLABS_SMOKE=1 and ELEVENLABS_API_KEY to hit the real API")
+	}
+	ids := map[string]string{} // id -> who wants it
+	for _, v := range Voices {
+		ids[v.Eleven] = v.Language + "/" + v.Gender + " (" + v.ElevenName + ")"
+	}
+	for _, sv := range storyVoices {
+		ids[sv.Eleven] = sv.Language + "/" + sv.Role + " (" + sv.Name + ")"
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	for id, who := range ids {
+		t.Run(who, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+				"https://api.elevenlabs.io/v1/voices/"+id, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("xi-api-key", key)
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+				t.Fatalf("voice %s for %s is not in the account library (%d: %s) — "+
+					"add it from the shared library before this language ships",
+					id, who, resp.StatusCode, strings.TrimSpace(string(body)))
+			}
+		})
 	}
 }

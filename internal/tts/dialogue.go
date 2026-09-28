@@ -180,14 +180,36 @@ var storyVoices = []storyVoice{
 	{Role: "child", Language: "it", Gender: "male", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
 	{Role: "small_squeaky", Language: "it", Gender: "male", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
 	{Role: "silly", Language: "it", Gender: "male", Eleven: "t3hJ92dgZhDVtsff084B", Name: "Chris"},
-	// German
-	{Role: "narrator", Language: "de", Gender: "female", Eleven: "7eVMgwCnXydb3CikjV7a", Name: "Lea"},
+	// German. The narrator and the warm grown-up are the Munich pair from
+	// Voices, so a German story opens in the accent the dropdown promised;
+	// the rest of the cast is standard German, because the shared library's
+	// Bavarian shelf is mostly Austrian and Viennese and none of it is cast
+	// for these parts.
+	{Role: "narrator", Language: "de", Gender: "female", Eleven: "wDvyXJwxWHsjOKSUVvpG", Name: "Anna"},
 	{Role: "tutor", Language: "de", Gender: "female", Eleven: "uvysWDLbKpA4XvpD3GI6", Name: "Leonie"},
-	{Role: "warm_grownup", Language: "de", Gender: "male", Eleven: "IWm8DnJ4NGjFI7QAM5lM", Name: "Stephan"},
+	{Role: "warm_grownup", Language: "de", Gender: "male", Eleven: "gRJR8Fqocw86Vixo4cZV", Name: "Benjamin"},
 	{Role: "big_gruff", Language: "de", Gender: "male", Eleven: "czb8zR3V35utWZxvKd9a", Name: "Leo"},
 	{Role: "child", Language: "de", Gender: "male", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
 	{Role: "small_squeaky", Language: "de", Gender: "male", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
 	{Role: "silly", Language: "de", Gender: "male", Eleven: "aTTiK3YzK3dXETpuDE2h", Name: "Ben"},
+	// Belgian Dutch. Every id here is accent=flemish on the shared library
+	// rather than plain nl: a Netherlands-Dutch actor in a Flemish story is
+	// the same miscasting the language exists to avoid.
+	{Role: "narrator", Language: "nl-BE", Gender: "female", Eleven: "ANHrhmaFeVN0QJaa0PhL", Name: "Petra"},
+	{Role: "tutor", Language: "nl-BE", Gender: "female", Eleven: "wwW0aOSbbYgXMec1zRTp", Name: "Dauphine"},
+	{Role: "warm_grownup", Language: "nl-BE", Gender: "male", Eleven: "s7Z6uboUuE4Nd8Q2nye6", Name: "Hans"},
+	{Role: "big_gruff", Language: "nl-BE", Gender: "male", Eleven: "4SZMuFG3NOs5lWy1q5Wf", Name: "Luc"},
+	{Role: "child", Language: "nl-BE", Gender: "female", Eleven: "4Q02te4SdfFsVbcIKmbk", Name: "Elenor"},
+	{Role: "small_squeaky", Language: "nl-BE", Gender: "female", Eleven: "4Q02te4SdfFsVbcIKmbk", Name: "Elenor"},
+	{Role: "silly", Language: "nl-BE", Gender: "male", Eleven: "9kBSa5emtWArU7U0792v", Name: "Diederik"},
+	// Romanian
+	{Role: "narrator", Language: "ro", Gender: "female", Eleven: "3z9q8Y7plHbvhDZehEII", Name: "Antonia"},
+	{Role: "tutor", Language: "ro", Gender: "female", Eleven: "gbLy9ep70G3JW53cTzFC", Name: "Corina"},
+	{Role: "warm_grownup", Language: "ro", Gender: "male", Eleven: "h3aQ5g69oxB0wpernpfx", Name: "Ciprian"},
+	{Role: "big_gruff", Language: "ro", Gender: "male", Eleven: "OlBp4oyr3FBAGEAtJOnU", Name: "Jora"},
+	{Role: "child", Language: "ro", Gender: "female", Eleven: "GRHbHyXbUO8nF4YexVTa", Name: "Anca"},
+	{Role: "small_squeaky", Language: "ro", Gender: "male", Eleven: "5asM3ZxsegvXfXI5vqKQ", Name: "Bogdan"},
+	{Role: "silly", Language: "ro", Gender: "male", Eleven: "5asM3ZxsegvXfXI5vqKQ", Name: "Bogdan"},
 }
 
 // roleFallback is the gender each uncast role borrows from the curated

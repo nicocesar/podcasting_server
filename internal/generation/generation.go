@@ -425,6 +425,12 @@ var languageNames = map[string]string{
 	"es": "Spanish (español)",
 	"it": "Italian (italiano)",
 	"de": "German (Deutsch)",
+	"ro": "Romanian (română)",
+	// Spelled out because the agent has to be told which language this is
+	// twice over: Dutch as spoken in Flanders, not Netherlands Dutch, and
+	// not German — the one mistake a model asked for "Belgian" is most
+	// likely to make, since Belgium also speaks French and borders both.
+	"nl-BE": "Belgian Dutch, also called Flemish (Vlaams) — Dutch as spoken in Flanders, Belgium. Not Netherlands Dutch, and not German",
 }
 
 // languageName names a language for the agent.
