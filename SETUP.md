@@ -229,8 +229,10 @@ EDGE_TTS_SMOKE=1 go test ./internal/tts -run EdgeSmoke -v
 
 Beats do not fire on their own, and a Generation that Cloud Run stalls is
 not picked up on its own either. Both are the job of `POST /tick`, which
-Cloud Scheduler calls hourly (ADR 0028). **A deployment without this step
-looks completely healthy and quietly never fires a Beat** — which is why
+Cloud Scheduler calls every fifteen minutes (ADR 0028) — a Beat's time of
+day is only honoured to within one Tick (ADR 0030). **A deployment
+without this step looks completely healthy and quietly never fires a
+Beat** — which is why
 `/admin` carries a card saying when the last pass landed, and warns when
 the answer is "never".
 
@@ -252,9 +254,9 @@ gcloud run services update podcasting-server --region=${REGION} \
 export URL=$(gcloud run services describe podcasting-server \
   --region=${REGION} --format='value(status.url)')
 
-gcloud scheduler jobs create http podcast-tick \
+gcloud scheduler jobs create http Tick \
   --location=${REGION} \
-  --schedule="0 * * * *" \
+  --schedule="0,15,30,45 * * * *" \
   --time-zone=Etc/UTC \
   --uri="${URL}/tick" \
   --http-method=POST \
