@@ -250,9 +250,20 @@ func run(log *slog.Logger) error {
 			// Anthropic Console for prompt work); flip this env var to
 			// "true" to go back to deleting them.
 			DeleteSessions: env("GENERATION_DELETE_SESSIONS", "false") == "true",
+			// WORK_URL is the service's own run.app URL: each run is
+			// handed to a request there, so Cloud Run can bill per
+			// request and still give the run its CPU (ADR 0035). It
+			// rides on TICK_TOKEN, and without both runs stay in a
+			// goroutine — which on Cloud Run needs CPU always allocated.
+			WorkURL:   strings.TrimSpace(os.Getenv("WORK_URL")),
+			WorkToken: strings.TrimSpace(os.Getenv("TICK_TOKEN")),
 		})
 		go generator.Bootstrap(ctx)
-		log.Info("generation: enabled", "model", env("GENERATION_MODEL", "claude-sonnet-5"))
+		runs := "in goroutines (WORK_URL or TICK_TOKEN not set)"
+		if generator.Dispatches() {
+			runs = "in requests to WORK_URL"
+		}
+		log.Info("generation: enabled", "model", env("GENERATION_MODEL", "claude-sonnet-5"), "runs", runs)
 	} else {
 		log.Info("generation: disabled (ANTHROPIC_API_KEY not set)")
 	}

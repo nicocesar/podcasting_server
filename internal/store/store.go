@@ -57,7 +57,7 @@ var reservedUsernames = func() map[string]bool {
 		"admin", "api", "auth", "beats", "callback", "cover", "episode", "episodes",
 		"f", "feed", "generate", "generations", "google", "healthz", "image",
 		"invite", "invites", "login", "logout", "me", "settings", "share",
-		"static", "strand", "strands", "tick", "usage", "user", "users",
+		"static", "strand", "strands", "tick", "usage", "user", "users", "work",
 		// Roles and system identities not to be impersonated.
 		"about", "abuse", "anonymous", "everyone", "guest", "help", "host",
 		"mail", "moderator", "mod", "null", "official", "owner", "postmaster",
@@ -408,6 +408,11 @@ type Generation struct {
 	// rather than json:"-" so the fs backend persists it from the
 	// embedded struct without a line in generationRecord.
 	Dismissed bool `json:"dismissed,omitempty" datastore:"dismissed,noindex"`
+	// LeaseUntil says a request somewhere is running this Generation and
+	// other instances should leave it alone until then (ADR 0035). Set
+	// when a dispatched run starts, cleared when it fails; a run killed
+	// outright leaves it to expire, and the next Tick resumes it after.
+	LeaseUntil time.Time `json:"-" datastore:"lease_until,noindex"`
 
 	// Checkpoints.
 	SessionID    string `json:"-" datastore:"session_id,noindex"` // managed-agent session

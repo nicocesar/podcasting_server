@@ -417,6 +417,9 @@ func New(cfg Config) (http.Handler, error) {
 	// Keys, and a credential that could make the station spend on a timer
 	// is exactly what ADR 0010 keeps out of a Generator's reach.
 	mux.HandleFunc("POST /tick", s.tickAuth(s.handleTick))
+	// A Generation's run, held inside a request so Cloud Run allocates it
+	// CPU (ADR 0035). Only the runner's own Kick calls it, on TICK_TOKEN.
+	mux.HandleFunc("POST /work/generations/{user}/{id}", s.workAuth(s.handleWork))
 
 	// Admin, on two credentials by design.
 	//

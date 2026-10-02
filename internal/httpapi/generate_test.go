@@ -200,6 +200,13 @@ func newServerTick(t *testing.T, gen generation.Config, opt generation.TickOptio
 	gen.Model = "claude-test"
 	gen.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	gen.PollInterval = 5 * time.Millisecond
+	// Unstarted, so a test that sets WorkToken can point WorkURL back at
+	// this very server before the Runner is built — the deployed shape,
+	// where the service dispatches runs to itself.
+	ts := httptest.NewUnstartedServer(nil)
+	if gen.WorkToken != "" {
+		gen.WorkURL = "http://" + ts.Listener.Addr().String()
+	}
 	handler, err := New(Config{
 		Store:         st,
 		AdminToken:    adminToken,
@@ -213,7 +220,8 @@ func newServerTick(t *testing.T, gen generation.Config, opt generation.TickOptio
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(handler)
+	ts.Config.Handler = handler
+	ts.Start()
 	t.Cleanup(ts.Close)
 	return ts, st
 }

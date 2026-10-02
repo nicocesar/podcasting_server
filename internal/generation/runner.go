@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,6 +63,14 @@ type Config struct {
 	// published. Off by default: kept sessions stay inspectable in the
 	// Anthropic Console, which is how the prompts get improved.
 	DeleteSessions bool
+	// WorkURL and WorkToken move a run inside a request (ADR 0035): Kick
+	// POSTs {WorkURL}/work/generations/{user}/{id} with WorkToken as a
+	// Bearer and the run happens in that request's handler, where Cloud
+	// Run's request-based billing allocates CPU. Either empty runs it in
+	// a goroutine instead — the laptop story, and the only shape before
+	// ADR 0035.
+	WorkURL   string
+	WorkToken string
 }
 
 // Runner drives Generations through their stages. It is the checkpointed
@@ -96,6 +106,9 @@ type Runner struct {
 	poll           time.Duration
 	composeBackoff time.Duration
 	deleteSessions bool
+	workURL        string // empty: Kick runs in a goroutine
+	workToken      string
+	workClient     *http.Client
 
 	mu       sync.Mutex
 	running  map[string]bool   // "{user}/{id}" → a goroutine owns it
@@ -130,10 +143,31 @@ func NewRunner(cfg Config) *Runner {
 		composeBackoff: backoff,
 		deleteSessions: cfg.DeleteSessions,
 		running:        make(map[string]bool),
-		firing:         make(map[string]bool),
-		agentIDs:       make(map[string]string),
+		// Both or neither: a URL without a token would be refused at the
+		// other end on every Kick, which is worse than not dispatching.
+		workURL:   workURL(cfg),
+		workToken: cfg.WorkToken,
+		// The run is the response: the request stays open for as long as
+		// the pipeline does, so the client allows the run's own ceiling
+		// plus room to say how it ended.
+		workClient: &http.Client{Timeout: runTimeout + 5*time.Minute},
+		firing:     make(map[string]bool),
+		agentIDs:   make(map[string]string),
 	}
 }
+
+// workURL is cfg.WorkURL without a trailing slash, or empty unless both
+// halves of the dispatch are configured.
+func workURL(cfg Config) string {
+	if cfg.WorkURL == "" || cfg.WorkToken == "" {
+		return ""
+	}
+	return strings.TrimRight(cfg.WorkURL, "/")
+}
+
+// Dispatches reports whether Kick hands runs to requests (ADR 0035)
+// rather than goroutines.
+func (r *Runner) Dispatches() bool { return r.workURL != "" }
 
 // EngineNames lists the configured TTS engines in chain order, for the
 // voice-provider dropdown on /me/generate. Only engines that actually
@@ -248,28 +282,126 @@ func (r *Runner) provision(ctx context.Context, tpl Template) error {
 	return nil
 }
 
-// Kick starts (or resumes) the pipeline for g in a goroutine, unless one
-// is already running it in this process. Concurrent replicas could in
+// Kick starts (or resumes) the pipeline for g without waiting for it,
+// unless this process is already running it. Concurrent replicas could in
 // principle both resume the same Generation after a deploy; at this
 // scale the worst case is duplicated work and a suffixed slug.
+//
+// With a WorkURL the run is handed to a request (ADR 0035) — possibly
+// this instance's own, possibly another's — so that Cloud Run allocates
+// CPU for it; without one it runs in a goroutine here.
 func (r *Runner) Kick(g store.Generation) {
+	if r.workURL == "" {
+		go r.Work(g)
+		return
+	}
+	r.mu.Lock()
+	running := r.running[g.UserID+"/"+g.ID]
+	r.mu.Unlock()
+	if running {
+		return
+	}
+	go r.dispatch(g)
+}
+
+// Work drives g to the end of the pipeline on the calling goroutine, and
+// reports false without doing anything if this process is already
+// running it. It is the body of a Kick, and of the request a dispatched
+// Kick becomes.
+func (r *Runner) Work(g store.Generation) bool {
 	key := g.UserID + "/" + g.ID
 	r.mu.Lock()
 	if r.running[key] {
 		r.mu.Unlock()
-		return
+		return false
 	}
 	r.running[key] = true
 	r.mu.Unlock()
-
-	go func() {
-		defer func() {
-			r.mu.Lock()
-			delete(r.running, key)
-			r.mu.Unlock()
-		}()
-		r.run(g)
+	defer func() {
+		r.mu.Lock()
+		delete(r.running, key)
+		r.mu.Unlock()
 	}()
+	r.run(g)
+	return true
+}
+
+// leaseFor is how long a dispatched run holds its Generation: the run's
+// own ceiling plus slack, so a lease outlives the run it guards and is
+// stale only once that run is certainly over.
+const leaseFor = runTimeout + 5*time.Minute
+
+// WorkLeased is the request half of a dispatched Kick: it runs the
+// stored Generation to the end, unless it is finished or a run elsewhere
+// still holds its lease, in which case it reports false at once.
+//
+// The lease is what the in-process running map cannot be. A dispatched
+// run can land on any instance, and a deploy now lets the old instance
+// finish its in-flight runs while the new one's Bootstrap resumes every
+// Active Generation; without a lease in the store, every deploy during a
+// run would pay for it twice. Two instances reading the record in the
+// same instant can still both take it — the race Kick has always
+// documented — but no longer as a matter of course.
+func (r *Runner) WorkLeased(ctx context.Context, userID, id string) (bool, error) {
+	g, err := r.store.GetGeneration(ctx, userID, id)
+	if err != nil {
+		return false, err
+	}
+	now := time.Now().UTC()
+	if !g.Active || now.Before(g.LeaseUntil) {
+		return false, nil
+	}
+	r.mu.Lock()
+	running := r.running[userID+"/"+id]
+	r.mu.Unlock()
+	if running {
+		return false, nil
+	}
+	g.LeaseUntil = now.Add(leaseFor)
+	if err := r.store.PutGeneration(ctx, g); err != nil {
+		return false, err
+	}
+	return r.Work(g), nil
+}
+
+// dispatch asks the service to run g inside a request, and holds that
+// request open until the run ends: its handler is the run, and an open
+// request is what Cloud Run allocates CPU to.
+//
+// A failed dispatch is logged and traced, not retried and not run here
+// instead. Running it here is the stall ADR 0035 exists to avoid, and
+// whether a request that timed out ever started its run cannot be told
+// from this end — a local fallback would risk paying for the run twice.
+// The Generation stays Active, so the next Tick's resume pass Kicks it
+// again.
+func (r *Runner) dispatch(g store.Generation) {
+	url := r.workURL + "/work/generations/" + g.UserID + "/" + g.ID
+	// Logged rather than traced: the trace lives on the Generation, and
+	// the record this goroutine holds is the run's starting point, not
+	// what the run has written since.
+	fail := func(kv ...any) {
+		r.log.Warn("generation: dispatch failed; the next Tick retries it",
+			append([]any{"user", g.UserID, "id", g.ID}, kv...)...)
+	}
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		fail("err", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+r.workToken)
+	resp, err := r.workClient.Do(req)
+	if err != nil {
+		fail("err", err)
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusConflict:
+		// Ran to the end, or was already running where it landed.
+	default:
+		fail("status", resp.StatusCode)
+	}
 }
 
 // Retry re-arms a failed Generation from its last completed checkpoint:
@@ -355,6 +487,7 @@ func (r *Runner) fail(g store.Generation, cause error) {
 	g.FailedStage = g.Stage
 	g.Stage = store.GenFailed
 	g.Active = false
+	g.LeaseUntil = time.Time{} // a Retry must not wait out a dead run's lease
 	g.Error = cause.Error()
 	if err := r.store.PutGeneration(ctx, g); err != nil {
 		r.log.Error("generation: could not record failure", "user", g.UserID, "id", g.ID, "err", err)

@@ -670,13 +670,14 @@ type generationRecord struct {
 	Cast         []store.Character  `json:"cast,omitempty"`
 	Trace        []store.TraceEntry `json:"trace,omitempty"`
 	TraceDropped int                `json:"trace_dropped,omitempty"`
+	LeaseUntil   time.Time          `json:"lease_until,omitzero"`
 }
 
 func newGenerationRecord(g store.Generation) generationRecord {
 	return generationRecord{
 		Generation: g,
 		Active:     g.Active, SessionID: g.SessionID, Script: g.Script, Cast: g.Cast,
-		Trace: g.Trace, TraceDropped: g.TraceDropped,
+		Trace: g.Trace, TraceDropped: g.TraceDropped, LeaseUntil: g.LeaseUntil,
 	}
 }
 
@@ -686,6 +687,7 @@ func (r generationRecord) generation(userID, id string) store.Generation {
 	g.Active, g.SessionID, g.Script = r.Active, r.SessionID, r.Script
 	g.Cast = r.Cast
 	g.Trace, g.TraceDropped = r.Trace, r.TraceDropped
+	g.LeaseUntil = r.LeaseUntil
 	return g
 }
 

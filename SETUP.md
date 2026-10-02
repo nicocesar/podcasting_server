@@ -298,3 +298,37 @@ answers `200` even when a pass hit an error partway through — Cloud
 Scheduler retries a non-2xx, and a retry that re-fires Generations costs
 real money, so a failure that arrives after the first firing is reported
 in the `error` field rather than in the status code.
+
+## 13. Runs inside requests (keeps Cloud Run on per-request billing)
+
+A Generation runs for up to 45 minutes. On Cloud Run's default
+request-based billing an instance only has CPU while it is handling a
+request, so a run detached from its request stalls. The fix is to make
+the run *be* a request (ADR 0035): the server POSTs its own
+`/work/generations/...` route and the run happens inside that request.
+It needs the Tick's `TICK_TOKEN` (step 12) and the service's own URL:
+
+```sh
+export RUN_URL=$(gcloud run services describe podcasting-server \
+  --region=${REGION} --format='value(status.url)')
+
+# The run.app URL, not BASE_URL: the request is held open for the whole
+# run, and nothing should sit between the service and itself.
+gcloud run services update podcasting-server --region=${REGION} \
+  --update-env-vars=WORK_URL=${RUN_URL} \
+  --timeout=3600
+```
+
+The startup log says which way runs go (`generation: enabled ... runs="in
+requests to WORK_URL"`). Once a Generation has completed that way, put the
+service on request-based billing:
+
+```sh
+gcloud run services update podcasting-server --region=${REGION} \
+  --cpu-throttling
+```
+
+**Do it in that order.** Request-based billing without `WORK_URL` stalls
+every run; `WORK_URL` with instance-based billing works but pays for an
+instance around the clock — which, with a Tick every fifteen minutes, is
+every hour of every day.
