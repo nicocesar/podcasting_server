@@ -240,13 +240,14 @@ appointment, and a scheduler job has no business holding it.
 
 ```sh
 openssl rand -hex 24 | tr -d '\n' | \
-  gcloud secrets create podcast-tick-token --data-file=-
+  gcloud secrets create TICK_TOKEN --data-file=-
 
-gcloud secrets add-iam-policy-binding podcast-tick-token \
+gcloud secrets add-iam-policy-binding TICK_TOKEN \
   --member=serviceAccount:${SA} --role=roles/secretmanager.secretAccessor
 
+# ENV_VAR=SECRET_NAME:VERSION — the env var and the secret share a name.
 gcloud run services update podcasting-server --region=${REGION} \
-  --update-secrets=TICK_TOKEN=podcast-tick-token:latest
+  --update-secrets=TICK_TOKEN=TICK_TOKEN:latest
 
 export URL=$(gcloud run services describe podcasting-server \
   --region=${REGION} --format='value(status.url)')
@@ -257,7 +258,7 @@ gcloud scheduler jobs create http podcast-tick \
   --time-zone=Etc/UTC \
   --uri="${URL}/tick" \
   --http-method=POST \
-  --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret=podcast-tick-token)" \
+  --headers="Authorization=Bearer $(gcloud secrets versions access latest --secret=TICK_TOKEN)" \
   --attempt-deadline=180s
 ```
 
